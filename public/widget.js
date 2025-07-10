@@ -110,7 +110,7 @@
               ? `
                 ${salePercent > 0
                   ? `<div class="sale_wrapper">
-                      <div class="sale_percent">-${salePercent}%</div>
+                      <div class="sale_percent">${salePercent}%</div>
                     </div>`
                   : ''
                 }
@@ -280,8 +280,20 @@
       .main_Grid_${pageId} {
         width: 95%;
         margin: 0 auto;
+        gab:10px!important;
         row-gap:30px!important
       }
+      .main_Grid_${pageId} .prd_desc{padding-bottom:5px;
+      font-size:13px;color:#666;
+      } 
+      .main_Grid_${pageId} .prd_name{padding-bottom:5px;} 
+      .main_Grid_${pageId} .prd_price{font-size: 15px;} 
+      .main_Grid_${pageId} .prd_coupon{
+        margin-left: 5px;
+        float: left;
+        font-weight: 500;
+      } 
+      
     }
 
   `;
