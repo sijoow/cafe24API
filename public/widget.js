@@ -91,9 +91,9 @@
       const couponPercent = p.benefit_percentage               || null;
 
       // 할인율 계산
-    const salePercent = saleText
-      ? Math.round((p.price - p.sale_price)/p.price*100)
-      : null;
+      const salePercent = saleText
+        ? Math.round((origPrice - p.sale_price) / origPrice * 100)
+        : null;
 
       return `
         <li>
@@ -105,12 +105,13 @@
             <div class="prd_name">${p.product_name}</div>
           </a>
 
-          <div class="prd_price"${(!saleText && couponText) ? ' style="display:none;"' : ''}>
+          <!-- 쿠폰이 있으면 아예 숨김 -->
+          <div class="prd_price"${couponText ? ' style="display:none;"' : ''}>
             ${saleText
               ? `
                 ${salePercent > 0
                   ? `<div class="sale_wrapper">
-                      <div class="sale_percent">${salePercent}%</div>
+                      <div class="sale_percent">-${salePercent}%</div>
                     </div>`
                   : ''
                 }
@@ -120,6 +121,7 @@
             }
           </div>
 
+          <!-- 쿠폰이 있으면 이 부분만 보임 -->
           ${couponText ? `
             <div class="coupon_wrapper">
               <div class="prd_coupon_percent">${couponPercent}%</div>
@@ -130,6 +132,7 @@
       `;
     }).join('');
     ul.innerHTML = items;
+
 
   }
 
