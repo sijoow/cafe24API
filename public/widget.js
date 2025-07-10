@@ -69,7 +69,7 @@
   function renderProducts(ul, products, cols) {
     ul.style.display             = 'grid';
     ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
-    ul.style.gap                 = '10px';
+    ul.style.gap                 = '20px';
     ul.style.maxWidth            = '800px';
     ul.style.margin              = '0 auto';
 
@@ -193,15 +193,8 @@
   // ─── 2) CSS 동적 주입 ──────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
-    //쿠폰 있을떄 css
-    .main_Grid_${pageId} .prd_desc{} 
-    .main_Grid_${pageId} .prd_name{} 
-    .main_Grid_${pageId} .prd_price{} 
-    .main_Grid_${pageId} .prd_coupon{} 
-    .main_Grid_${pageId} .prd_coupon_percent{} 
   
     /* 전역 grid row 간격 */
-    .main_Grid { gap-row:20px; }
 
     /* 탭 버튼 스타일 */
     .tabs_${pageId} {
@@ -231,30 +224,32 @@
     }
 
     /* 쿠폰 퍼센트/금액 스타일 (스코프 적용) */
-    .main_Grid_${pageId} .prd_coupon_percent {
-      font-size:14px;
-      color:#d4380d;
-    }
-    .main_Grid_${pageId} .prd_coupon {
-      margin-top:4px;
-      font-size:14px;
-      color:#d4380d;
-    }
-    .main_Grid_${pageId} .coupon_price {
-      font-weight:bold;
+    .main_Grid_${pageId}{row-gap:50px}
+    .main_Grid_${pageId} li{color:#000;}
+    .main_Grid_${pageId} .prd_desc{padding-bottom:3px;
+     font-size:14px;color:#666;
+    } 
+    .main_Grid_${pageId} .prd_name{padding-bottom:3px;} 
+    .main_Grid_${pageId} .prd_price{font-size: 16px;} 
+    .main_Grid_${pageId} .prd_coupon{
+      margin-left: 5px;
+      float: left;
+      font-weight: 500;
+    } 
+    .main_Grid_${pageId} .prd_coupon_percent{
+      float: left;
+      color: red;
+      font-size: 16px;
+    } 
+
+    @media (max-width: 400px) {
+      .main_Grid_${pageId} {
+        width: 95%;
+        margin: 0 auto;
+        row-gap:30px
+      }
     }
 
-    /* 기타 설명/원가 스타일 */
-    .main_Grid_${pageId} .prd_desc {
-      font-size:13px;
-      color:#666;
-      margin:4px 0;
-    }
-    .main_Grid_${pageId} .orig_price {
-      margin-left:8px;
-      text-decoration:line-through;
-      color:#999;
-    }
   `;
   document.head.appendChild(style);
 
