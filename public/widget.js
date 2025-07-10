@@ -105,7 +105,7 @@
             (!saleText && couponText) ? ' style="display:none;"' : ''
           }>
             ${saleText
-              ? `<span class="sale_price">${saleText}</span>`
+              ? `<span class="sale_price">${p.product_name}</span>`
               : priceText
             }
           </div>
