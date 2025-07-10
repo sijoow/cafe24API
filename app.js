@@ -986,7 +986,8 @@ app.get('/api/products/:product_no', async (req, res) => {
       product_no,               
       product_code:   p.product_code,
       product_name:   p.product_name,
-      price:          p.price,            // 원가
+      price: p.price,            // 원가
+      summary_description: p.summary_description || '',  
       sale_price,                          // 즉시할인가
       benefit_price,                       // 쿠폰 할인가
       benefit_percentage,                  // 쿠폰 퍼센트
