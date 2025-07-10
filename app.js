@@ -918,35 +918,41 @@ app.get('/api/products', async (req, res) => {
     res.status(500).json({ error: '전체 상품 조회 실패' });
   }
 });
-
-// ─── 단일 상품 상세 조회 (할인가 포함) ───────────────────────────────────────
+// ─── 수정할 부분: 단일 상품 상세 조회 (할인가 포함) ─────────────────────────
 app.get('/api/products/:product_no', async (req, res) => {
   try {
     const shop_no    = 1;
     const product_no = req.params.product_no;
+    const baseUrl    = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin`;
 
-    // 1) 기본 상품 정보 조회
-    const urlProd  = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}`;
-    const dataProd = await apiRequest('GET', urlProd, {}, { shop_no });
-    const p        = dataProd.product ?? (Array.isArray(dataProd.products) ? dataProd.products[0] : null);
-    if (!p) {
-      return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
-    }
+    // 1) 기본 상품 정보
+    const prodData = await apiRequest(
+      'GET',
+      `${baseUrl}/products/${product_no}`,
+      {},
+      { shop_no }
+    );
+    const p = prodData.product ?? (Array.isArray(prodData.products) && prodData.products[0]);
+    if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
 
-    // 2) 할인가(discountprice) 조회
-    const urlDis   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
-    const dataDis  = await apiRequest('GET', urlDis, {}, { shop_no });
-    // pc_discount_price가 null이 아니면 할인가, 아니면 null
-    const rawSale  = dataDis.discountprice?.pc_discount_price;
-    const sale_price = rawSale != null ? Number(rawSale) : null;
+    // 2) 할인 가격(discountprice) 조회
+    const disData = await apiRequest(
+      'GET',
+      `${baseUrl}/products/${product_no}/discountprice`,
+      {},
+      { shop_no }
+    );
+    // pc_discount_price가 있으면 숫자로, 없으면 null
+    const rawSale    = disData.discountprice?.pc_discount_price;
+    const sale_price = rawSale != null ? parseFloat(rawSale) : null;
 
-    // 3) 응답 매핑
+    // 3) 응답 구성
     res.json({
       product_no:   p.product_no,
       product_code: p.product_code,
       product_name: p.product_name,
-      price:        p.price,           // 원가
-      sale_price,                     // 할인가 (숫자 타입)
+      price:        p.price,       // 원가
+      sale_price,                  // 방금 받아온 할인가
       list_image:   p.list_image
     });
   } catch (err) {

@@ -91,9 +91,9 @@
       const couponPercent = p.benefit_percentage               || null;
 
       // 할인율 계산
-      const salePercent = saleText
-        ? Math.round((origPrice - p.sale_price) / origPrice * 100)
-        : null;
+    const salePercent = saleText
+      ? Math.round((p.price - p.sale_price)/p.price*100)
+      : null;
 
       return `
         <li>
