@@ -213,7 +213,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-    .product_list_widget{padding-bottom:20px;}
+    .product_list_widget{padding-top:20px;padding-bottom:20px;}
     /* 전역 grid row 간격 */
     /* 탭 버튼 스타일 */
     .tabs_${pageId} {
@@ -253,7 +253,6 @@
     .main_Grid_${pageId} .prd_name{padding-bottom:3px;} 
     .main_Grid_${pageId} .prd_price{font-size: 16px;} 
     .main_Grid_${pageId} .prd_coupon{
-      margin-left: 5px;
       float: left;
       font-weight: 500;
     } 
@@ -261,11 +260,11 @@
       float: left;
       color: #ff0000;
       font-size: 16px;
+      padding-right:5px;
     } 
     /*즉시 할인율*/
 
       .main_Grid_${pageId} .sale_price{
-        margin-left: 5px;
         float: left;
         font-weight: 500;
       } 
@@ -273,6 +272,7 @@
         float: left;
         color: #ff0000;
         font-size: 16px;
+        padding-right:5px;
       } 
 
 
@@ -289,7 +289,6 @@
       .main_Grid_${pageId} .prd_name{padding-bottom:5px;} 
       .main_Grid_${pageId} .prd_price{font-size: 15px;} 
       .main_Grid_${pageId} .prd_coupon{
-        margin-left: 5px;
         float: left;
         font-weight: 500;
       } 
