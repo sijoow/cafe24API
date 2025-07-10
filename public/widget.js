@@ -204,6 +204,7 @@
   // ─── 2) CSS 동적 주입 ──────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
+  .main_Grid_${pageId}{margin-top:10px}
     /*글자 3줄이상 수정*/
     .main_Grid_${pageId} .prd_name {
         display: -webkit-box;
