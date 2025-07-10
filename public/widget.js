@@ -84,10 +84,16 @@
       return '-';
     }
     const items = products.map(p => {
-      const priceText     = formatKRW(p.price);
-      const saleText      = p.sale_price    != null ? formatKRW(p.sale_price)    : null;
+      const origPrice     = p.price;                               // 원가 (숫자)
+      const priceText     = formatKRW(origPrice);
+      const saleText      = p.sale_price    != null ? formatKRW(p.sale_price) : null;
       const couponText    = p.benefit_price != null ? formatKRW(p.benefit_price) : null;
-      const couponPercent = p.benefit_percentage          || null;
+      const couponPercent = p.benefit_percentage               || null;
+
+      // ─── 새로 추가: 할인가 대비 할인율 계산 (정수 %)
+      const salePercent = saleText
+        ? Math.round((origPrice - p.sale_price) / origPrice * 100)
+        : null;
 
       return `
         <li>
@@ -102,7 +108,13 @@
           <!-- saleText가 있으면 무조건 보이고, saleText 없고 couponText 있을 땐 숨김 -->
           <div class="prd_price"${(!saleText && couponText) ? ' style="display:none;"' : ''}>
             ${saleText
-              ? `<span class="sale_price">${saleText}</span>`
+              ? `
+               <div class="sale_wrapper">
+                <div class="sale_price">${saleText}</div>
+                <!-- 할인율 표시 -->
+                <div class="sale_percent">-${salePercent}%</div>
+                </div>
+              `
               : priceText
             }
           </div>
@@ -241,6 +253,19 @@
       color: red;
       font-size: 16px;
     } 
+    /*즉시 할인율*/
+
+      .main_Grid_${pageId} .sale_price{
+        margin-left: 5px;
+        float: left;
+        font-weight: 500;
+      } 
+      .main_Grid_${pageId} .sale_percent{
+        float: left;
+        color: red;
+        font-size: 16px;
+      } 
+
 
     @media (max-width: 400px) {
       .main_Grid_${pageId} {
