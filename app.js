@@ -919,27 +919,34 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// ─── 단일 상품 상세 조회 ─────────────────────────────────────────────────
+// ─── 단일 상품 상세 조회 (할인가 포함) ───────────────────────────────────────
 app.get('/api/products/:product_no', async (req, res) => {
   try {
     const shop_no    = 1;
     const product_no = req.params.product_no;
-    const url        = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}`;
-    const data       = await apiRequest('GET', url, {}, { shop_no });
-    console.log(`▶️ Caf24 /products/${req.params.product_no} raw response:`, JSON.stringify(data, null, 2));
 
-    const p = data.product ?? (Array.isArray(data.products) ? data.products[0] : null);
-
+    // 1) 기본 상품 정보 조회
+    const urlProd  = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}`;
+    const dataProd = await apiRequest('GET', urlProd, {}, { shop_no });
+    const p        = dataProd.product ?? (Array.isArray(dataProd.products) ? dataProd.products[0] : null);
     if (!p) {
       return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
     }
 
-    // 슬림하게 매핑해서 반환
+    // 2) 할인가(discountprice) 조회
+    const urlDis   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
+    const dataDis  = await apiRequest('GET', urlDis, {}, { shop_no });
+    // pc_discount_price가 null이 아니면 할인가, 아니면 null
+    const rawSale  = dataDis.discountprice?.pc_discount_price;
+    const sale_price = rawSale != null ? Number(rawSale) : null;
+
+    // 3) 응답 매핑
     res.json({
       product_no:   p.product_no,
       product_code: p.product_code,
       product_name: p.product_name,
-      price:        p.price,
+      price:        p.price,           // 원가
+      sale_price,                     // 할인가 (숫자 타입)
       list_image:   p.list_image
     });
   } catch (err) {

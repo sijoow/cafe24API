@@ -83,12 +83,11 @@
       }
       return '-';
     }
-
     const items = products.map(p => {
       const priceText     = formatKRW(p.price);
-      const saleText      = p.sale_price != null    ? formatKRW(p.sale_price)    : null;
+      const saleText      = p.sale_price    != null ? formatKRW(p.sale_price)    : null;
       const couponText    = p.benefit_price != null ? formatKRW(p.benefit_price) : null;
-      const couponPercent = p.benefit_percentage || null;
+      const couponPercent = p.benefit_percentage          || null;
 
       return `
         <li>
@@ -101,16 +100,14 @@
           </a>
 
           <!-- saleText가 있으면 무조건 보이고, saleText 없고 couponText 있을 땐 숨김 -->
-          <div class="prd_price"${
-            (!saleText && couponText) ? ' style="display:none;"' : ''
-          }>
+          <div class="prd_price"${(!saleText && couponText) ? ' style="display:none;"' : ''}>
             ${saleText
-              ? `<span class="sale_price">${p.product_name}</span>`
+              ? `<span class="sale_price">${saleText}</span>`
               : priceText
             }
           </div>
 
-          <!-- couponText가 있을 땐 이 부분만 추가로 보임 -->
+          <!-- couponText가 있을 땐 이 부분만 보임 -->
           ${couponText ? `
             <div class="coupon_wrapper">
               <div class="prd_coupon_percent">${couponPercent}%</div>
