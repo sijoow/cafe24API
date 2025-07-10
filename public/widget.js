@@ -94,21 +94,23 @@
         <li>
           <a href="/product/detail/${p.product_no}" class="prd_link">
             <img src="${p.list_image}"
-                 alt="${p.product_name}"
-                 style="width:100%;display:block" />
+                alt="${p.product_name}"
+                style="width:100%;display:block" />
             <div class="prd_desc">${p.summary_description||''}</div>
             <div class="prd_name">${p.product_name}</div>
           </a>
 
-          <!-- 쿠폰 있으면 숨김 -->
-          <div class="prd_price"${couponText ? ' style="display:none;"' : ''}>
+          <!-- saleText가 있으면 무조건 보이고, saleText 없고 couponText 있을 땐 숨김 -->
+          <div class="prd_price"${
+            (!saleText && couponText) ? ' style="display:none;"' : ''
+          }>
             ${saleText
-              ? `<span class="coupon_price">${saleText}</span>`
+              ? `<span class="sale_price">${saleText}</span>`
               : priceText
             }
           </div>
 
-          <!-- 쿠폰 할인가만 보임 -->
+          <!-- couponText가 있을 땐 이 부분만 추가로 보임 -->
           ${couponText ? `
             <div class="coupon_wrapper">
               <div class="prd_coupon_percent">${couponPercent}%</div>
@@ -118,7 +120,6 @@
         </li>
       `;
     }).join('');
-
     ul.innerHTML = items;
   }
 
