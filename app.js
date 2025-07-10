@@ -919,74 +919,78 @@ app.get('/api/products', async (req, res) => {
   }
 });
 // ─── 단일 상품 상세 조회 (쿠폰할인가 포함) ─────────────────────────
+// 기존 app.get('/api/products/:product_no') 부분을 통째로 교체하세요.
 app.get('/api/products/:product_no', async (req, res) => {
   try {
     const shop_no    = 1;
     const product_no = req.params.product_no;
+    // data-coupon-nos 에서 넘어오는 쿠폰번호들
     const coupon_query = req.query.coupon_no || '';
     const coupon_nos   = coupon_query.split(',').filter(Boolean);
 
-    // 1) 상품 기본 정보
+    // 1) 기본 상품 정보
     const prodUrl  = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}`;
     const prodData = await apiRequest('GET', prodUrl, {}, { shop_no });
-    const p        = prodData.product ?? (Array.isArray(prodData.products) && prodData.products[0]);
+    const p = prodData.product ?? prodData.products?.[0];
     if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
 
-    // 2) 즉시할인 가격 조회 (원래 로직 유지)
-    const disUrl  = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
-    const disData = await apiRequest('GET', disUrl, {}, { shop_no });
-    const rawSale = disData.discountprice?.pc_discount_price;
+    // 2) 즉시할인가 조회 (원래 있던 로직)
+    const disUrl   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
+    const disData  = await apiRequest('GET', disUrl, {}, { shop_no });
+    const rawSale  = disData.discountprice?.pc_discount_price;
     const sale_price = rawSale != null ? parseFloat(rawSale) : null;
 
-    // 3) 쿠폰정보 조회 & 계산
+    // 3) 쿠폰별 benefit 계산
     const coupons = await Promise.all(coupon_nos.map(async no => {
       const urlCoupon = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/coupons`;
       const cRes = await apiRequest('GET', urlCoupon, {}, {
         shop_no,
         coupon_no: no,
-        fields: ['coupon_no','available_product','available_product_list',
-                 'available_category','available_category_list',
-                 'benefit_amount','benefit_percentage'].join(',')
+        fields: [
+          'coupon_no',
+          'available_product','available_product_list',
+          'available_category','available_category_list',
+          'benefit_amount','benefit_percentage'
+        ].join(',')
       });
       return cRes.coupons?.[0] || null;
     }));
     const validCoupons = coupons.filter(c=>c);
 
-    // 카테고리 정보가 없으니, 상품단위로만 체크
     let benefit_price = null;
     let benefit_percentage = null;
     validCoupons.forEach(coupon => {
+      // 상품 단위 적용 가능 여부
       const pList = coupon.available_product_list || [];
       const ok = coupon.available_product === 'U'
-              || (coupon.available_product === 'I' && pList.includes(product_no))
-              || (coupon.available_product === 'E' && !pList.includes(product_no));
+              || (coupon.available_product === 'I' && pList.includes(parseInt(product_no,10)))
+              || (coupon.available_product === 'E' && !pList.includes(parseInt(product_no,10)));
       if (!ok) return;
-      // 퍼센트 > 금액 우선
+
+      // 퍼센트 우선
       const orig = parseFloat(p.price);
       const pct  = parseFloat(coupon.benefit_percentage||0);
       const amt  = parseFloat(coupon.benefit_amount||0);
       let bPrice = null;
       if (pct>0)      bPrice = +(orig*(100-pct)/100).toFixed(2);
       else if (amt>0) bPrice = +(orig-amt).toFixed(2);
-      if (bPrice != null) {
-        // 더 높은 % 쿠폰을 우선
-        if (pct > (benefit_percentage||0)) {
-          benefit_price       = bPrice;
-          benefit_percentage  = pct;
-        }
+
+      if (bPrice != null && pct > (benefit_percentage||0)) {
+        benefit_price      = bPrice;
+        benefit_percentage = pct;
       }
     });
 
-    // 4) 결과 응답
+    // 4) 최종 응답
     res.json({
-      product_no:          p.product_no,
-      product_code:        p.product_code,
-      product_name:        p.product_name,
-      price:               p.price,           // 원가
-      sale_price,                            // 즉시할인
-      benefit_price,                         // 쿠폰할인가
-      benefit_percentage,                    // 쿠폰%
-      list_image:          p.list_image
+      product_no,               
+      product_code:   p.product_code,
+      product_name:   p.product_name,
+      price:          p.price,            // 원가
+      sale_price,                          // 즉시할인가
+      benefit_price,                       // 쿠폰 할인가
+      benefit_percentage,                  // 쿠폰 퍼센트
+      list_image:     p.list_image
     });
   } catch (err) {
     console.error('단일 상품 조회 실패', err);
