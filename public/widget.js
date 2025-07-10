@@ -224,7 +224,9 @@
     }
 
     /* 쿠폰 퍼센트/금액 스타일 (스코프 적용) */
-    .main_Grid_${pageId}{row-gap:50px}
+    .main_Grid_${pageId} img{padding-bottom:10px;}
+     .main_Grid_${pageId}{row-gap:50px} 
+    .main_Grid_${pageId}{row-gap:50px!important}
     .main_Grid_${pageId} li{color:#000;}
     .main_Grid_${pageId} .prd_desc{padding-bottom:3px;
      font-size:14px;color:#666;
@@ -246,7 +248,7 @@
       .main_Grid_${pageId} {
         width: 95%;
         margin: 0 auto;
-        row-gap:30px
+        row-gap:30px!important
       }
     }
 
