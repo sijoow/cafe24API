@@ -110,10 +110,10 @@
             ${saleText
               ? `
                <div class="sale_wrapper">
+                <div class="sale_percent">${salePercent}%</div>
+                </div>
                 <div class="sale_price">${saleText}</div>
                 <!-- 할인율 표시 -->
-                <div class="sale_percent">-${salePercent}%</div>
-                </div>
               `
               : priceText
             }
