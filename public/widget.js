@@ -84,13 +84,13 @@
       return '-';
     }
     const items = products.map(p => {
-      const origPrice     = p.price;                               // 원가 (숫자)
+      const origPrice     = p.price;
       const priceText     = formatKRW(origPrice);
-      const saleText      = p.sale_price    != null ? formatKRW(p.sale_price) : null;
+      const saleText      = p.sale_price    != null ? formatKRW(p.sale_price)    : null;
       const couponText    = p.benefit_price != null ? formatKRW(p.benefit_price) : null;
       const couponPercent = p.benefit_percentage               || null;
 
-      // ─── 새로 추가: 할인가 대비 할인율 계산 (정수 %)
+      // 할인율 계산
       const salePercent = saleText
         ? Math.round((origPrice - p.sale_price) / origPrice * 100)
         : null;
@@ -105,21 +105,21 @@
             <div class="prd_name">${p.product_name}</div>
           </a>
 
-          <!-- saleText가 있으면 무조건 보이고, saleText 없고 couponText 있을 땐 숨김 -->
           <div class="prd_price"${(!saleText && couponText) ? ' style="display:none;"' : ''}>
             ${saleText
               ? `
-               <div class="sale_wrapper">
-                <div class="sale_percent">${salePercent}%</div>
-                </div>
+                ${salePercent > 0
+                  ? `<div class="sale_wrapper">
+                      <div class="sale_percent">-${salePercent}%</div>
+                    </div>`
+                  : ''
+                }
                 <div class="sale_price">${saleText}</div>
-                <!-- 할인율 표시 -->
               `
               : priceText
             }
           </div>
 
-          <!-- couponText가 있을 땐 이 부분만 보임 -->
           ${couponText ? `
             <div class="coupon_wrapper">
               <div class="prd_coupon_percent">${couponPercent}%</div>
@@ -130,6 +130,7 @@
       `;
     }).join('');
     ul.innerHTML = items;
+
   }
 
   // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────────
@@ -203,9 +204,16 @@
   // ─── 2) CSS 동적 주입 ──────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
-  
+    /*글자 3줄이상 수정*/
+    .main_Grid_${pageId} .prd_name {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    .product_list_widget{padding-bottom:20px;}
     /* 전역 grid row 간격 */
-
     /* 탭 버튼 스타일 */
     .tabs_${pageId} {
       display: grid;
