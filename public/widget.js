@@ -259,7 +259,7 @@
     } 
     .main_Grid_${pageId} .prd_coupon_percent{
       float: left;
-      color: red;
+      color: #ff0000;
       font-size: 16px;
     } 
     /*즉시 할인율*/
@@ -271,7 +271,7 @@
       } 
       .main_Grid_${pageId} .sale_percent{
         float: left;
-        color: red;
+        color: #ff0000;
         font-size: 16px;
       } 
 
@@ -284,7 +284,7 @@
         row-gap:30px!important
       }
       .main_Grid_${pageId} .prd_desc{padding-bottom:5px;
-      font-size:13px;color:#666;
+      font-size:12px;color:#666;
       } 
       .main_Grid_${pageId} .prd_name{padding-bottom:5px;} 
       .main_Grid_${pageId} .prd_price{font-size: 15px;} 
@@ -293,7 +293,12 @@
         float: left;
         font-weight: 500;
       } 
-      
+     .main_Grid_${pageId} .prd_price{font-size: 15px;} 
+      .main_Grid_${pageId} .sale_percent{
+        float: left;
+        color: #ff0000;
+        font-size: 15px;
+      } 
     }
 
   `;
