@@ -150,17 +150,12 @@ async function apiRequest(method, url, data = {}, params = {}, mall_id) {
 
 // ─── 6) 매장 이메일(fetch) ────────────────────────────────────────────
 async function fetchCafeMail(mall_id) {
-  try {
-    const url  = `https://${mall_id}.cafe24api.com/api/v2/admin/shop`;
-    const data = await apiRequest('GET', url, {}, {}, mall_id);
-    const shop = data.shop || {};
-    const email = shop.biz_email || shop.mng_email || null;
-    console.log(`▶️ [${mall_id}] café24 메일:`, email);
-    return email;
-  } catch (e) {
-    console.error(`❌ [${mall_id}] café24 메일 가져오기 실패`, e.message);
-    return null;
-  }
+  const url  = `https://${mall_id}.cafe24api.com/api/v2/admin/shops`;
+  // shop_no=1 파라미터 추가
+  const data = await apiRequest('GET', url, {}, { shop_no: 1 }, mall_id);
+  // data.shops는 배열이므로 [0]번째를 꺼내서 사용
+  const shop = (data.shops && data.shops[0]) || {};
+  return shop.biz_email || shop.mng_email || null;
 }
 
 // ─── 7) 초기화 순서: DB → 인덱스(기본몰) → 토큰(기본몰) → 메일 → 서버 ───
