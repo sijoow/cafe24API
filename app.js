@@ -87,39 +87,31 @@ async function saveTokensToDB(mall_id, newAT, newRT, mail) {
     { upsert: true }
   );
 }
-
 async function refreshAccessToken(mall_id) {
   const url   = `https://${mall_id}.cafe24api.com/api/v2/oauth/token`;
-  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+  const creds = Buffer
+    .from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`)
+    .toString('base64');
+
+  // grant_type, refresh_token, shop_no 모두 폼 데이터에 담아야 합니다
   const params = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken
+    grant_type:    'refresh_token',
+    refresh_token: refreshToken,
+    shop_no:       '1'           // ← 이 줄을 꼭 추가하세요
   });
+
   const r = await axios.post(url, params.toString(), {
     headers: {
       'Content-Type':  'application/x-www-form-urlencoded',
       'Authorization': `Basic ${creds}`
     }
   });
+
   accessToken  = r.data.access_token;
   refreshToken = r.data.refresh_token;
   await saveTokensToDB(mall_id, accessToken, refreshToken);
 }
 
-async function loadTokensFromDB(mall_id) {
-  const doc = await tokenCol().findOne({ mall_id });
-  if (doc) {
-    accessToken  = doc.accessToken;
-    refreshToken = doc.refreshToken;
-    console.log(`▶️ [${mall_id}] tokens loaded from DB`);
-  } else {
-    console.log(`▶️ [${mall_id}] token not found in DB, 환경변수로 초기화`);
-    // 당신이 ENV에 넣어둔 토큰이 있으면, 그걸로 세팅해 주고 DB에 저장
-    accessToken  = process.env.ACCESS_TOKEN;
-    refreshToken = process.env.REFRESH_TOKEN;
-    await saveTokensToDB(mall_id, accessToken, refreshToken);
-  }
-}
 
 // 모든 /api 호출 전에 mall_id별 토큰 로드
 app.use('/api', async (req, res, next) => {
