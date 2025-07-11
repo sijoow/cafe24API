@@ -620,57 +620,46 @@ app.get('/api/analytics/:pageId/devices-by-date', async (req, res) => {
 
 // ─── 방문·클릭 트래킹 ────────────────────────────────────────────────────
 app.post('/api/track', async (req, res) => {
+  // 1) DB 연결 상태 확인
+  console.log('[TRACK] db initialized?', !!db);
+  // 2) 요청 바디 확인
+  console.log('[TRACK] payload:', JSON.stringify(req.body));
+
   try {
     const { pageId, pageUrl, visitorId, referrer, device, type, element, timestamp } = req.body;
+
+    // 3) 필수 필드 누락 여부
     if (!pageId || !visitorId || !type || !timestamp) {
+      console.warn('[TRACK] Missing fields:', { pageId, visitorId, type, timestamp });
       return res.status(400).json({ error: '필수 필드 누락' });
     }
 
-    // 삭제된 이벤트 무시
-    if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
-    const ev = await db.collection('events').findOne(
-      { _id: new ObjectId(pageId) },
-      { projection: { _id: 1 } }
-    );
-    if (!ev) return res.sendStatus(204);
+    // 4) visits 컬렉션 가져오기 (mallId 지원시 visitsCol(mallId))
+    const col = visitsCol(/*mallId*/);
+    console.log('[TRACK] Using visits collection:', col.collectionName);
 
-    // KST 변환 & dateKey
-     const kstTs = dayjs(timestamp).tz('Asia/Seoul').toDate();
-     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
+    // 5) 이벤트 유효성 확인
+    if (!ObjectId.isValid(pageId)) {
+      console.warn('[TRACK] Invalid pageId, skipping:', pageId);
+      return res.sendStatus(204);
+    }
+    const ev = await db.collection('events')
+      .findOne({ _id: new ObjectId(pageId) }, { projection: { _id: 1 } });
+    if (!ev) {
+      console.warn('[TRACK] Event not found, skipping:', pageId);
+      return res.sendStatus(204);
+    }
 
-    // pageUrl 에서 pathname만 뽑아내는 안전 함수
-    const getPathname = (urlStr) => {
-      try {
-        return new URL(urlStr).pathname;
-      } catch {
-        // urlStr 이 이미 "/some/path.html" 형태라면 그대로 반환
-        return urlStr;
-      }
+    // 6) 날짜 변환 및 업데이트 객체 준비
+    const kstTs  = dayjs(timestamp).tz('Asia/Seoul').toDate();
+    const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
+
+    const getPathname = urlStr => {
+      try { return new URL(urlStr).pathname; }
+      catch { return urlStr; }
     };
     const path = getPathname(pageUrl);
 
-    // 콘솔 로그
-    switch (type) {
-      case 'view':
-        console.log(`[DB][방문] visitor=${visitorId} page=${pageId} url=${path} date=${dateKey}`);
-        break;
-      case 'revisit':
-        console.log(`[DB][재방문] visitor=${visitorId} page=${pageId} url=${path} date=${dateKey}`);
-        break;
-      case 'click':
-        if (element === 'product') {
-          console.log(`[DB][URL클릭] visitor=${visitorId} page=${pageId} url=${path}`);
-        } else if (element === 'coupon') {
-          console.log(`[DB][쿠폰클릭] visitor=${visitorId} page=${pageId} coupon=${element}`);
-        } else {
-          console.log(`[DB][CLICK] visitor=${visitorId} page=${pageId} element=${element}`);
-        }
-        break;
-      default:
-        console.log(`[DB][UNKNOWN] type=${type} visitor=${visitorId}`);
-    }
-
-    // 한 문서에 카운트 누적
     const filter = { pageId, visitorId, dateKey };
     const update = {
       $set: {
@@ -682,19 +671,23 @@ app.post('/api/track', async (req, res) => {
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
     };
-    if (type === 'view') {
-      update.$inc.viewCount = 1;
-    } else if (type === 'revisit') {
-      update.$inc.revisitCount = 1;
-    } else if (type === 'click') {
+    if (type === 'view')    update.$inc.viewCount      = 1;
+    if (type === 'revisit') update.$inc.revisitCount   = 1;
+    if (type === 'click') {
       update.$inc.clickCount     = 1;
       if (element === 'product') update.$inc.urlClickCount    = 1;
       if (element === 'coupon')  update.$inc.couponClickCount = 1;
     }
 
-    await visitsCol().updateOne(filter, update, { upsert: true });
-    return res.sendStatus(204);
+    // 7) filter/update 찍어보기
+    console.log('[TRACK] filter:', filter);
+    console.log('[TRACK] update:', JSON.stringify(update));
 
+    // 8) DB에 upsert
+    const result = await col.updateOne(filter, update, { upsert: true });
+    console.log('[TRACK] updateOne result:', result.result);
+
+    return res.sendStatus(204);
   } catch (err) {
     console.error('❌ TRACK ERROR', err);
     return res.status(500).json({ error: '트래킹 실패' });
