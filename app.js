@@ -78,14 +78,18 @@ async function initIndexes(mall_id) {
 // ─── 4) 토큰 관리 ───────────────────────────────────────────────────
 let accessToken, refreshToken;
 
-async function saveTokensToDB(mall_id, newAT, newRT, mail) {
-  const upd = { mall_id, accessToken:newAT, refreshToken:newRT, updatedAt:new Date() };
-  if (mail) upd.cafeMail = mail;
-  await tokenCol().updateOne(
-    { mall_id },
-    { $set: upd },
-    { upsert: true }
-  );
+async function loadTokensFromDB(mall_id) {
+  const doc = await tokenCol().findOne({ mall_id });
+  if (doc) {
+    accessToken  = doc.accessToken;
+    refreshToken = doc.refreshToken;
+    console.log(`▶️ [${mall_id}] tokens loaded from DB`);
+  } else {
+    console.log(`▶️ [${mall_id}] token not found in DB, 환경변수로 초기화`);
+    accessToken  = process.env.ACCESS_TOKEN;
+    refreshToken = process.env.REFRESH_TOKEN;
+    await saveTokensToDB(mall_id, accessToken, refreshToken);
+  }
 }
 async function refreshAccessToken(mall_id) {
   const url   = `https://${mall_id}.cafe24api.com/api/v2/oauth/token`;
@@ -152,13 +156,16 @@ async function fetchCafeMail(mall_id) {
 // ─── 7) 초기화 순서: DB → 인덱스(기본몰) → 토큰(기본몰) → 메일 → 서버 ───
 initDb()
   .then(() => initIndexes(CAFE24_MALLID))
-  .then(() => loadTokensFromDB(CAFE24_MALLID))
+  .then(() => loadTokensFromDB(CAFE24_MALLID))    // 여기서 loadTokensFromDB가 정의되어 있어야 함
   .then(() => fetchCafeMail(CAFE24_MALLID))
   .then(mail => mail && saveTokensToDB(CAFE24_MALLID, accessToken, refreshToken, mail))
   .then(() => {
     app.listen(PORT, () => console.log(`▶️ Server running on port ${PORT}`));
   })
-  .catch(err => { console.error('❌ 초기화 실패', err); process.exit(1); });
+  .catch(err => {
+    console.error('❌ 초기화 실패', err);
+    process.exit(1);
+  });
 // ─── Multer 설정 (임시 디스크 저장) ─────────────────────────────────
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
