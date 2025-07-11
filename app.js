@@ -143,7 +143,63 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
     throw err;
   }
 }
+// 1) OAuth 콜백용 라우트 추가
+app.get('/redirect', async (req, res) => {
+  const { code, shop } = req.query;
+  if (!code || !shop) {
+    return res
+      .status(400)
+      .json({ error: 'code 또는 shop 파라미터가 필요합니다.' });
+  }
 
+  try {
+    // 2) 카페24 토큰 교환 엔드포인트
+    const tokenUrl = `https://${shop}.cafe24api.com/api/v2/oauth/token`;
+    const creds    = Buffer.from(
+      `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
+    ).toString('base64');
+    const params   = new URLSearchParams({
+      grant_type:   'authorization_code',
+      code,
+      client_id:    CAFE24_CLIENT_ID,
+      client_secret: CAFE24_CLIENT_SECRET,
+      redirect_uri:  process.env.REDIRECT_URI, // env 에 설정한 콜백 URL
+      shop
+    }).toString();
+
+    // 3) 토큰 교환 요청
+    const tokenResp = await axios.post(tokenUrl, params, {
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`,
+      }
+    });
+
+    const { access_token, refresh_token } = tokenResp.data;
+
+    // 4) DB에 mallId(shop) 키로 upsert
+    await db.collection('tokens').updateOne(
+      { mallId: shop },
+      {
+        $set: {
+          accessToken:  access_token,
+          refreshToken: refresh_token,
+          updatedAt:    new Date(),
+        }
+      },
+      { upsert: true }
+    );
+
+    console.log(`✔️ [${shop}] OAuth 인증 성공, 토큰 저장 완료`);
+    return res.json({ ok: true });
+
+  } catch (err) {
+    console.error('[REDIRECT ERROR]', err.response?.data || err);
+    return res
+      .status(500)
+      .json({ error: 'OAuth 인증에 실패했습니다.' });
+  }
+});
 // ─── 핸들러 분리 ──────────────────────────────────────────────────
 async function handleGetAllCategories(req, res) {
   const mallId = req.params.mallId || DEFAULT_MALL;
@@ -195,12 +251,19 @@ async function handleGetAllCoupons(req, res) {
     res.status(500).json({ error: '쿠폰 조회 실패' });
   }
 }
-
+async function preloadTokensFromDb() {
+  const docs = await db.collection('tokens').find().toArray();
+  docs.forEach(({ mallId, accessToken, refreshToken }) => {
+    globalTokens[mallId] = { accessToken, refreshToken };
+  });
+  console.log('▶️ Preloaded tokens for', Object.keys(globalTokens));
+}
 // ─── 서버 시작 전 초기화 ─────────────────────────────────────────────
 ;(async () => {
   try {
     await initDb();
     await initIndexes();
+    await preloadTokensFromDb();      // ← 여기 추가
     app.listen(PORT, () => console.log(`▶️ Server running on port ${PORT}`));
   } catch (err) {
     console.error('❌ 초기화 실패', err);
