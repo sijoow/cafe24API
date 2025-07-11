@@ -102,19 +102,30 @@ async function saveTokens(mallId, at, rt) {
 async function loadTokens(mallId) {
   return globalTokens[mallId] || globalTokens[DEFAULT_MALL];
 }
-async function refreshAccessToken(mallId, refreshToken) {
-  const url    = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-  const creds  = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-  const params = new URLSearchParams({ grant_type:'refresh_token', refresh_token:refreshToken });
-  const r      = await axios.post(url, params.toString(), {
-    headers:{
-      'Content-Type':'application/x-www-form-urlencoded',
-      'Authorization':`Basic ${creds}`
+async function refreshAccessToken(mallId, oldRefreshToken) {
+  try {
+    const url    = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+    const creds  = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+    const params = new URLSearchParams({ grant_type:'refresh_token', refresh_token:oldRefreshToken });
+    const r      = await axios.post(url, params.toString(), {
+      headers: {
+        'Content-Type':'application/x-www-form-urlencoded',
+        'Authorization':`Basic ${creds}`,
+      }
+    });
+    await saveTokens(mallId, r.data.access_token, r.data.refresh_token);
+    return r.data;
+  } catch (err) {
+    if (err.response?.data?.error === 'invalid_grant') {
+      console.warn(`❗[${mallId}] refresh_token 이 만료되어 기존 토큰을 삭제합니다.`);
+      await db.collection('tokens').deleteOne({ mallId });
+      // 더 이상 자동 리프레시 시도하지 않고, 재인증을 유도
+      throw new Error('refresh_token이 유효하지 않습니다. 앱을 재설치해주세요.');
     }
-  });
-  await saveTokens(mallId, r.data.access_token, r.data.refresh_token);
-  return { accessToken:r.data.access_token, refreshToken:r.data.refresh_token };
+    throw err;
+  }
 }
+
 async function apiRequest(mallId, method, path, data = {}, params = {}) {
   let { accessToken, refreshToken } = await loadTokens(mallId);
   const url = `https://${mallId}.cafe24api.com${path}`;
