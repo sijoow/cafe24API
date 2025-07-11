@@ -42,12 +42,28 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── 1) mall_id 추출 미들웨어 ───────────────────────────────────────
 app.use('/api', (req, res, next) => {
-  const m = req.query.mall_id;
-  if (!m) return res.status(400).json({ error: 'mall_id 쿼리스트링이 필요합니다.' });
-  req.mall_id = m;
+  const {
+    mall_id,
+    shop_no,
+    user_id,
+    user_name,
+    timestamp,
+    hmac,
+    // … 필요하다면 nation, lang 등도
+  } = req.query;
+
+  if (!mall_id || !shop_no || !timestamp || !hmac) {
+    return res.status(400).json({ error: '필수 인증 파라미터가 누락되었습니다.' });
+  }
+
+  req.mall_id   = mall_id;
+  req.shop_no   = parseInt(shop_no, 10);
+  req.user      = { id: user_id, name: decodeURIComponent(user_name) };
+  req.ts        = timestamp;
+  req.clientHmac = hmac;
+
   next();
 });
-
 // ─── 2) MongoDB 연결 및 헬퍼 ───────────────────────────────────────
 let db;
 async function initDb() {
