@@ -118,6 +118,23 @@ async function refreshAccessToken() {
   refreshToken = r.data.refresh_token;
   await saveTokensToDB(accessToken, refreshToken);
 }
+  async function apiRequest(method, url, data = {}, params = {}) {
+    try {
+      const resp = await axios({ method, url, data, params, headers: {
+        Authorization:         `Bearer ${accessToken}`,
+        'Content-Type':        'application/json',
+        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+      }});
+      return resp.data;
+    } catch (err) {
+      if (err.response?.status === 401) {
+        await refreshAccessToken();
+        return apiRequest(method, url, data, params);
+      }
+      console.error('❌ Caf24 API Error:', err.response?.status, err.response?.data);
+      throw err;
+    }
+  }
 
 // ─── 앱 초기화 & 라우트 등록 ─────────────────────────────────────────
 ;(async () => {
@@ -205,24 +222,6 @@ async function refreshAccessToken() {
       }
     });
 
-async function apiRequest(method, url, data = {}, params = {}) {
-  console.log(`▶️ Caf24 API 호출 → ${method.toUpperCase()} ${url}`, params);
-  try {
-    const resp = await axios({ method, url, data, params, headers: {
-      Authorization:         `Bearer ${accessToken}`,
-      'Content-Type':        'application/json',
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-    }});
-    return resp.data;
-  } catch (err) {
-    console.error('❌ Caf24 API 응답 오류', err.response?.status, err.response?.data);
-    if (err.response?.status === 401) {
-      await refreshAccessToken();
-      return apiRequest(method, url, data, params);
-    }
-    throw err;
-  }
-}
 
 // ─── 기본 Ping ───────────────────────────────────────────────────────
 app.get('/api/ping', (_, res) => {
@@ -1038,4 +1037,4 @@ app.put('/api/events/:id', async (req, res) => {
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   }
-})();  // ← 여기서 async IIFE를 닫고 즉시 호출해야 합니다.
+})(); 
