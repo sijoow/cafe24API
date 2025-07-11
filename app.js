@@ -44,6 +44,41 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+
+// app.js (Express 서버 쪽)
+app.get('/api/oauth/callback', async (req, res) => {
+  const { code, state } = req.query;
+  if (!code) {
+    return res.status(400).send('code가 없습니다.');
+  }
+  try {
+    // 1) 카페24 토큰 교환 요청
+    const tokenUrl = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/oauth/token`;
+    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const params   = new URLSearchParams({
+      grant_type:    'authorization_code',
+      code,
+      redirect_uri:  process.env.CAFE24_REDIRECT_URI   // .env에 미리 설정해두세요
+    });
+    const { data }  = await axios.post(tokenUrl, params.toString(), {
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`,
+      }
+    });
+
+    // 2) 새로 받은 토큰 DB 저장
+    await saveTokensToDB(data.access_token, data.refresh_token);
+
+    // 3) 프론트 리다이렉트
+    return res.redirect(`${process.env.FRONTEND_BASE_URL}/admin`);  // 관리자 페이지 등으로
+  } catch (err) {
+    console.error('OAuth 콜백 처리 실패', err.response?.data || err);
+    return res.status(500).send('OAuth 처리 중 오류 발생');
+  }
+});
+
+
 // ─── MongoDB 연결 & visits 컬렉션 헬퍼 ───────────────────────────────
 let db;
 async function initDb() {
