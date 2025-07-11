@@ -44,40 +44,42 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 // ─── MongoDB 연결 ───────────────────────────────────────────────────
-let db;
 async function initDb() {
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
   db = client.db(DB_NAME);
-  console.log('▶️ MongoDB connected');
+  console.log('▶️ MongoDB connected to', DB_NAME);
 }
 
 // ─── 인덱스 설정 ────────────────────────────────────────────────────
 async function initIndexes() {
-  // (1) tokens 에 mallId 유니크 인덱스
+  console.log('🔧 Setting up indexes...');
+  // tokens.mallId 유니크 인덱스
   await db.collection('tokens')
     .createIndex({ mallId: 1 }, { unique: true });
-  console.log('▶️ tokens.mallId 유니크 인덱스 설정');
+  console.log('✔️ tokens.mallId 유니크 인덱스 생성');
 
-  // (2) 기존에 저장된 mallId들로 visits_<mallId> 인덱스도 미리 걸어두기
+  // 기존에 저장된 mallId들로 visits_<mallId> 인덱스 일괄 생성
   const malls = await db.collection('tokens').distinct('mallId');
-  await Promise.all(malls.map(mallId =>
-    db.collection(`visits_${mallId}`)
+  console.log('▶️ 기존 등록된 mallId:', malls);
+  await Promise.all(malls.map(mallId => {
+    console.log(`  → visits_${mallId} 컬렉션 인덱스 생성 중…`);
+    return db.collection(`visits_${mallId}`)
       .createIndex(
         { pageId:1, visitorId:1, dateKey:1 },
         { unique: true, name: 'unique_per_user_day' }
       )
-  ));
-  console.log('▶️ visits_<mallId> 인덱스 일괄 설정 완료');
-}
-
-// ─── mallId별 visits 헬퍼 ──────────────────────────────────────────
-function visitsCol(mallId) {
-  return db.collection(`visits_${mallId}`);
+      .then(() => console.log(`   ✔️ visits_${mallId} 인덱스 생성 완료`));
+  }));
+  console.log('✔️ 모든 visits_<mallId> 인덱스 설정 완료');
 }
 
 // ─── 토큰 헬퍼 ─────────────────────────────────────────────────────
 async function saveTokens(mallId, accessToken, refreshToken) {
+  console.log(`🗄️  Saving tokens for [${mallId}]`, {
+    at: accessToken.slice(0,10) + '…',
+    rt: refreshToken.slice(0,10) + '…',
+  });
   await db.collection('tokens').updateOne(
     { mallId },
     { $set: { accessToken, refreshToken, updatedAt: new Date() } },
@@ -86,74 +88,43 @@ async function saveTokens(mallId, accessToken, refreshToken) {
 }
 
 async function loadTokens(mallId) {
+  console.log(`🔍 Loading tokens for [${mallId}]`);
   const doc = await db.collection('tokens').findOne({ mallId });
   if (!doc) {
+    console.warn(`⚠️ No tokens found for [${mallId}]`);
     throw new Error(`토큰이 없습니다: ${mallId} 먼저 OAuth 설치 콜백을 실행하세요.`);
   }
+  console.log(`✔️ Loaded tokens for [${mallId}]`, {
+    at: doc.accessToken.slice(0,10) + '…',
+    rt: doc.refreshToken.slice(0,10) + '…',
+    updatedAt: doc.updatedAt,
+  });
   return { accessToken: doc.accessToken, refreshToken: doc.refreshToken };
 }
 
 async function refreshAccessToken(mallId, currentRefreshToken) {
+  console.log(`♻️  Refreshing access token for [${mallId}]`);
   const creds = Buffer.from(
     `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
   ).toString('base64');
-
   const url    = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
   const params = new URLSearchParams({
     grant_type:    'refresh_token',
     refresh_token: currentRefreshToken,
   });
-
   const { data } = await axios.post(url, params.toString(), {
     headers: {
       'Content-Type':  'application/x-www-form-urlencoded',
       'Authorization': `Basic ${creds}`,
     },
   });
-
+  console.log(`✔️ Token refreshed for [${mallId}]`, {
+    newAT: data.access_token.slice(0,10) + '…',
+    newRT: data.refresh_token.slice(0,10) + '…',
+  });
   await saveTokens(mallId, data.access_token, data.refresh_token);
   return { accessToken: data.access_token, refreshToken: data.refresh_token };
 }
-
-// ─── 공통 API 호출 (dynamic mallId) ─────────────────────────────────
-async function apiRequest(mallId, method, url, data = {}, params = {}) {
-  let { accessToken, refreshToken } = await loadTokens(mallId);
-
-  try {
-    const resp = await axios({
-      method, url, data, params,
-      headers: {
-        Authorization:         `Bearer ${accessToken}`,
-        'Content-Type':        'application/json',
-        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-      }
-    });
-    return resp.data;
-
-  } catch (err) {
-    if (err.response?.status === 401) {
-      // 토큰 만료 시 갱신 후 재시도
-      ({ accessToken, refreshToken } =
-        await refreshAccessToken(mallId, refreshToken));
-      return apiRequest(mallId, method, url, data, params);
-    }
-    throw err;
-  }
-}
-
-// ─── 초기화 순서: DB → 인덱스 → 서버 시작 ─────────────────────────────
-initDb()
-  .then(initIndexes)
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`▶️ Server running on port ${PORT}`);
-    });
-  })
-  .catch(err => {
-    console.error('❌ 초기화 실패', err);
-    process.exit(1);
-  });
-
   
 // ─── Multer 설정 (임시 디스크 저장) ─────────────────────────────────
 const uploadDir = path.join(__dirname, 'uploads');
