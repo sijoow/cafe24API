@@ -189,6 +189,13 @@ async function handleGetAllCoupons(req, res) {
     res.status(500).json({ error: '쿠폰 조회 실패' });
   }
 }
+// (1) 기본 경로 – DEFAULT_MALL 환경변수 사용
+app.get('/api/categories/all', handleGetAllCategories);
+app.get('/api/coupons',       handleGetAllCoupons);
+
+// (2) 동적 mallId 경로 – req.params.mallId 사용
+app.get('/api/:mallId/categories/all', handleGetAllCategories);
+app.get('/api/:mallId/coupons', handleGetAllCoupons);
 
 // ─── 서버 시작 전 초기화 ─────────────────────────────────────────────
 ;(async () => {
