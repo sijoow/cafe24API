@@ -118,23 +118,25 @@ async function refreshAccessToken() {
   refreshToken = r.data.refresh_token;
   await saveTokensToDB(accessToken, refreshToken);
 }
-  async function apiRequest(method, url, data = {}, params = {}) {
-    try {
-      const resp = await axios({ method, url, data, params, headers: {
-        Authorization:         `Bearer ${accessToken}`,
-        'Content-Type':        'application/json',
-        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-      }});
-      return resp.data;
-    } catch (err) {
-      if (err.response?.status === 401) {
-        await refreshAccessToken();
-        return apiRequest(method, url, data, params);
-      }
-      console.error('❌ Caf24 API Error:', err.response?.status, err.response?.data);
-      throw err;
+async function apiRequest(mallId, method, path, data = {}, params = {}) {
+  // 1) mallId 에 맞는 토큰 로드
+  let { accessToken, refreshToken } = await loadTokens(mallId);
+  // 2) 요청
+  const url = `https://${mallId}.cafe24api.com${path}`;
+  try {
+    return await axios({ method, url, data, params, headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'X-Cafe24-Api-Version': CAFE24_API_VERSION
+    }});
+  } catch (err) {
+    if (err.response?.status === 401) {
+      // 리프레시
+      ({ accessToken, refreshToken } = await refreshAccessToken(mallId, refreshToken));
+      return apiRequest(mallId, method, path, data, params);
     }
+    throw err;
   }
+}
 
 // ─── 앱 초기화 & 라우트 등록 ─────────────────────────────────────────
 ;(async () => {
