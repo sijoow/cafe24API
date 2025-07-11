@@ -86,6 +86,35 @@ async function refreshAccessToken(mallId, refreshToken) {
   await saveTokensToDB(mallId, r.data.access_token, r.data.refresh_token);
   return r.data.access_token;
 }
+
+// app.js (Express)
+app.get('/', (req, res) => {
+  const { mall_id, shop_no } = req.query;
+  if (!mall_id) {
+    // 일반 파일 서빙
+    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
+  // state 인코딩
+  const state = Buffer
+    .from(JSON.stringify({ mall_id, shop_no }))
+    .toString('base64');
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id:     CAFE24_CLIENT_ID,
+    redirect_uri:  CAFE24_REDIRECT_URI,
+    scope:         'mall.read_category,mall.read_product,mall.write_product',
+    state
+  });
+
+  // 카페24 OAuth 동의 화면으로 리다이렉트
+  return res.redirect(`https://${mall_id}.cafe24api.com/api/v2/oauth/authorize?${params}`);
+});
+
+// 그 다음에 app.use(express.static(…)) 를 두면,
+// mall_id 쿼리가 없을 땐 React 앱이 서빙됩니다.
+
+
 async function apiRequest(mallId, method, url, data = {}, params = {}) {
   let { accessToken, refreshToken } = await getTokensFromDB(mallId);
   try {
