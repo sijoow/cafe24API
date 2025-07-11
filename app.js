@@ -1,24 +1,26 @@
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
 
-const express       = require('express');
-const path          = require('path');
-const bodyParser    = require('body-parser');
-const fs            = require('fs');
-const cors          = require('cors');
-const compression   = require('compression');
-const axios         = require('axios');
-const multer        = require('multer');
+const express     = require('express');
+const path        = require('path');
+const bodyParser  = require('body-parser');
+const fs          = require('fs');
+const cors        = require('cors');
+const compression = require('compression');
+const axios       = require('axios');
+const multer      = require('multer');
+const dayjs       = require('dayjs');
+const utc         = require('dayjs/plugin/utc');
+const tz          = require('dayjs/plugin/timezone');
 const { MongoClient, ObjectId } = require('mongodb');
-const dayjs         = require('dayjs');
-const utc           = require('dayjs/plugin/utc');
-const tz            = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(tz);
 
 const {
   MONGODB_URI,
   DB_NAME,
+  ACCESS_TOKEN,
+  REFRESH_TOKEN,
   CAFE24_CLIENT_ID,
   CAFE24_CLIENT_SECRET,
   CAFE24_API_VERSION,
@@ -32,9 +34,38 @@ const {
   R2_PUBLIC_BASE,
 } = process.env;
 
-// ─── 전역 DB 변수 ────────────────────────────────────────────────
+// ─── 전역 변수 ─────────────────────────────────────────────────────
 let db;
+let accessToken  = ACCESS_TOKEN;
+let refreshToken = REFRESH_TOKEN;
 
+// ─── Express 앱 생성 ───────────────────────────────────────────────
+const app = express();
+app.use(cors());
+app.use(compression());
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ─── Multer 설정 ───────────────────────────────────────────────────
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename:    (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
+});
+const upload = multer({ storage });
+
+// ─── R2 클라이언트 ─────────────────────────────────────────────────
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const s3Client = new S3Client({
+  region:   R2_REGION,
+  endpoint: R2_ENDPOINT,
+  credentials: { accessKeyId: R2_ACCESS_KEY, secretAccessKey: R2_SECRET_KEY },
+  forcePathStyle: true,
+});
+
+// ─── MongoDB 연결/인덱스/토큰 헬퍼 ──────────────────────────────────
 async function initDb() {
   const client = new MongoClient(MONGODB_URI, { useUnifiedTopology: true });
   await client.connect();
@@ -42,82 +73,171 @@ async function initDb() {
   console.log('▶️ MongoDB connected to', DB_NAME);
 }
 
-async function initIndexes() {
-  console.log('🔧 Setting up indexes...');
-  // tokens.mallId 유니크 인덱스
-  await db.collection('tokens').createIndex({ mallId: 1 }, { unique: true });
-  console.log('✔️ tokens.mallId unique index created');
-
-  // 기존 저장된 mallId들로 visits_<mallId> 인덱스 생성
-  const malls = await db.collection('tokens').distinct('mallId');
-  console.log('▶️ existing mallIds:', malls);
-  await Promise.all(malls.map(mallId =>
-    db.collection(`visits_${mallId}`)
-      .createIndex({ pageId:1, visitorId:1, dateKey:1 }, { unique: true, name: 'unique_per_user_day' })
-      .then(() => console.log(`   ✔️ visits_${mallId} index created`))
-  ));
-  console.log('✔️ all visits_<mallId> indexes created');
-}
-
-// ─── visits 헬퍼 (싱글-몰 버전) ────────────────────────────────────
 function visitsCol() {
   return db.collection(`visits_${CAFE24_MALLID}`);
 }
 
-// ─── 토큰 헬퍼 ─────────────────────────────────────────────────────
-async function saveTokens(mallId, accessToken, refreshToken) {
-  console.log(`🗄️  Saving tokens for [${mallId}]`);
-  await db.collection('tokens').updateOne(
-    { mallId },
-    { $set: { accessToken, refreshToken, updatedAt: new Date() } },
+async function initIndexes() {
+  console.log('🔧 Setting up indexes for', `visits_${CAFE24_MALLID}`);
+  const col = visitsCol();
+  try { await col.dropIndex('unique_per_user_day'); } catch {}
+  await col.createIndex(
+    { pageId:1, visitorId:1, dateKey:1 },
+    { unique: true, name: 'unique_per_user_day' }
+  );
+  console.log(`✔️ Index created on ${col.collectionName}`);
+  await db.collection('token').createIndex({ updatedAt: 1 });
+}
+
+async function saveTokensToDB(newAT, newRT) {
+  await db.collection('token').updateOne(
+    {}, { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
     { upsert: true }
   );
 }
-
-async function loadTokens(mallId) {
-  console.log(`🔍 Loading tokens for [${mallId}]`);
-  const doc = await db.collection('tokens').findOne({ mallId });
-  if (!doc) {
-    console.warn(`⚠️ No tokens found for [${mallId}]`);
-    throw new Error(`토큰이 없습니다: ${mallId} 먼저 OAuth 설치 콜백을 실행하세요.`);
+async function getTokenFromDB() {
+  const doc = await db.collection('token').findOne({});
+  if (doc) {
+    accessToken  = doc.accessToken;
+    refreshToken = doc.refreshToken;
+  } else {
+    await saveTokensToDB(accessToken, refreshToken);
   }
-  console.log(`✔️ Loaded tokens for [${mallId}]`);
-  return { accessToken: doc.accessToken, refreshToken: doc.refreshToken };
 }
-
-async function refreshAccessToken(mallId, currentRefreshToken) {
-  console.log(`♻️  Refreshing token for [${mallId}]`);
+async function refreshAccessToken() {
+  const url    = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/oauth/token`;
   const creds  = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-  const url    = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-  const params = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: currentRefreshToken });
-  const { data } = await axios.post(url, params.toString(), {
+  const params = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken });
+  const r      = await axios.post(url, params.toString(), {
     headers: {
       'Content-Type':  'application/x-www-form-urlencoded',
       'Authorization': `Basic ${creds}`,
     },
   });
-  console.log(`✔️ Token refreshed for [${mallId}]`);
-  await saveTokens(mallId, data.access_token, data.refresh_token);
-  return { accessToken: data.access_token, refreshToken: data.refresh_token };
+  accessToken  = r.data.access_token;
+  refreshToken = r.data.refresh_token;
+  await saveTokensToDB(accessToken, refreshToken);
 }
 
-async function apiRequest(mallId, method, url, data = {}, params = {}) {
-  let { accessToken, refreshToken } = await loadTokens(mallId);
+// ─── Caf24 API 호출 헬퍼 ───────────────────────────────────────────
+async function apiRequest(method, url, data = {}, params = {}) {
   try {
-    return (await axios({ method, url, data, params, headers: {
+    const resp = await axios({ method, url, data, params, headers: {
       Authorization:         `Bearer ${accessToken}`,
       'Content-Type':        'application/json',
       'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-    }})).data;
+    }});
+    return resp.data;
   } catch (err) {
-    console.error('❌ Caf24 API Error:', err.message);
-    if (err.response) {
-      console.error('   status:', err.response.status);
-      console.error('   data  :', err.response.data);
-    }
     if (err.response?.status === 401) {
-      ({ accessToken, refreshToken } = await refreshAccessToken(mallId, refreshToken));
-      return apiRequest(mallId, method, url, data, params);
+      await refreshAccessToken();
+      return apiRequest(method, url, data, params);
+    }
+    console.error('❌ Caf24 API Error:', err.response?.status, err.response?.data);
+    throw err;
+  }
+}
+
+// ─── 앱 초기화 & 라우트 등록 ─────────────────────────────────────────
+;(async () => {
+  try {
+    await initDb();
+    await getTokenFromDB();
+    await initIndexes();
+    console.log(`▶️ final accessToken=${accessToken.slice(0,10)}…`);
+
+    // ─── 여기부터 라우트 정의 ────────────────────────────────────────
+
+    // Ping
+    app.get('/api/ping', (_, res) => {
+      res.json({ ok: true, time: new Date().toISOString() });
+    });
+
+    // 이미지 업로드
+    app.post('/api/uploads/image', upload.single('file'), async (req, res) => {
+      const localPath  = req.file.path;
+      const key        = req.file.filename;
+      const fileStream = fs.createReadStream(localPath);
+      try {
+        await s3Client.send(new PutObjectCommand({
+          Bucket:      R2_BUCKET_NAME,
+          Key:         key,
+          Body:        fileStream,
+          ContentType: req.file.mimetype,
+          ACL:         'public-read',
+        }));
+        res.json({ url: `${R2_PUBLIC_BASE}/${key}` });
+      } catch (err) {
+        console.error('파일 업로드 에러', err);
+        res.status(500).json({ error: '파일 업로드 실패' });
+      } finally {
+        fs.unlink(localPath, ()=>{});
+      }
+    });
+
+    // 이벤트 이미지 삭제
+    app.delete('/api/events/:eventId/images/:imageId', async (req, res) => {
+      try {
+        const ev  = await db.collection('events').findOne({ _id: new ObjectId(req.params.eventId) });
+        if (!ev) return res.status(404).json({ error: '이벤트가 없습니다' });
+        const img = ev.images.find(i => String(i._id) === req.params.imageId);
+        if (img?.src) {
+          const key = new URL(img.src).pathname.replace(/^\//,'');
+          await s3Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
+        }
+        await db.collection('events').updateOne(
+          { _id: new ObjectId(req.params.eventId) },
+          { $pull: { images: { _id: new ObjectId(req.params.imageId) } } }
+        );
+        res.json({ success: true });
+      } catch (err) {
+        console.error('이벤트 이미지 삭제 에러', err);
+        res.status(500).json({ error: '이미지 삭제 실패' });
+      }
+    });
+
+    // 이벤트 삭제 & visits 정리
+    app.delete('/api/events/:id', async (req, res) => {
+      try {
+        const ev = await db.collection('events').findOne({ _id: new ObjectId(req.params.id) });
+        if (!ev) return res.status(404).json({ error: '이벤트가 없습니다' });
+
+        // R2 이미지 삭제
+        const keys = (ev.images||[]).map(img => {
+          const path = img.src.startsWith('http')
+            ? new URL(img.src).pathname
+            : `/${img.src}`;
+          return path.replace(/^\//,'');
+        });
+        await Promise.all(keys.map(key =>
+          s3Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }))
+        ));
+
+        // 이벤트 & visits 삭제
+        await db.collection('events').deleteOne({ _id: new ObjectId(req.params.id) });
+        await visitsCol().deleteMany({ pageId: req.params.id });
+
+        res.json({ success: true });
+      } catch (err) {
+        console.error('이벤트 삭제 에러', err);
+        res.status(500).json({ error: '삭제 실패' });
+      }
+    });
+
+async function apiRequest(method, url, data = {}, params = {}) {
+  console.log(`▶️ Caf24 API 호출 → ${method.toUpperCase()} ${url}`, params);
+  try {
+    const resp = await axios({ method, url, data, params, headers: {
+      Authorization:         `Bearer ${accessToken}`,
+      'Content-Type':        'application/json',
+      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+    }});
+    return resp.data;
+  } catch (err) {
+    console.error('❌ Caf24 API 응답 오류', err.response?.status, err.response?.data);
+    if (err.response?.status === 401) {
+      await refreshAccessToken();
+      return apiRequest(method, url, data, params);
     }
     throw err;
   }
@@ -505,46 +625,57 @@ app.get('/api/analytics/:pageId/devices-by-date', async (req, res) => {
 
 // ─── 방문·클릭 트래킹 ────────────────────────────────────────────────────
 app.post('/api/track', async (req, res) => {
-  // 1) DB 연결 상태 확인
-  console.log('[TRACK] db initialized?', !!db);
-  // 2) 요청 바디 확인
-  console.log('[TRACK] payload:', JSON.stringify(req.body));
-
   try {
     const { pageId, pageUrl, visitorId, referrer, device, type, element, timestamp } = req.body;
-
-    // 3) 필수 필드 누락 여부
     if (!pageId || !visitorId || !type || !timestamp) {
-      console.warn('[TRACK] Missing fields:', { pageId, visitorId, type, timestamp });
       return res.status(400).json({ error: '필수 필드 누락' });
     }
 
-    // 4) visits 컬렉션 가져오기 (mallId 지원시 visitsCol(mallId))
-    const col = visitsCol(/*mallId*/);
-    console.log('[TRACK] Using visits collection:', col.collectionName);
+    // 삭제된 이벤트 무시
+    if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
+    const ev = await db.collection('events').findOne(
+      { _id: new ObjectId(pageId) },
+      { projection: { _id: 1 } }
+    );
+    if (!ev) return res.sendStatus(204);
 
-    // 5) 이벤트 유효성 확인
-    if (!ObjectId.isValid(pageId)) {
-      console.warn('[TRACK] Invalid pageId, skipping:', pageId);
-      return res.sendStatus(204);
-    }
-    const ev = await db.collection('events')
-      .findOne({ _id: new ObjectId(pageId) }, { projection: { _id: 1 } });
-    if (!ev) {
-      console.warn('[TRACK] Event not found, skipping:', pageId);
-      return res.sendStatus(204);
-    }
+    // KST 변환 & dateKey
+     const kstTs = dayjs(timestamp).tz('Asia/Seoul').toDate();
+     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
 
-    // 6) 날짜 변환 및 업데이트 객체 준비
-    const kstTs  = dayjs(timestamp).tz('Asia/Seoul').toDate();
-    const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
-
-    const getPathname = urlStr => {
-      try { return new URL(urlStr).pathname; }
-      catch { return urlStr; }
+    // pageUrl 에서 pathname만 뽑아내는 안전 함수
+    const getPathname = (urlStr) => {
+      try {
+        return new URL(urlStr).pathname;
+      } catch {
+        // urlStr 이 이미 "/some/path.html" 형태라면 그대로 반환
+        return urlStr;
+      }
     };
     const path = getPathname(pageUrl);
 
+    // 콘솔 로그
+    switch (type) {
+      case 'view':
+        console.log(`[DB][방문] visitor=${visitorId} page=${pageId} url=${path} date=${dateKey}`);
+        break;
+      case 'revisit':
+        console.log(`[DB][재방문] visitor=${visitorId} page=${pageId} url=${path} date=${dateKey}`);
+        break;
+      case 'click':
+        if (element === 'product') {
+          console.log(`[DB][URL클릭] visitor=${visitorId} page=${pageId} url=${path}`);
+        } else if (element === 'coupon') {
+          console.log(`[DB][쿠폰클릭] visitor=${visitorId} page=${pageId} coupon=${element}`);
+        } else {
+          console.log(`[DB][CLICK] visitor=${visitorId} page=${pageId} element=${element}`);
+        }
+        break;
+      default:
+        console.log(`[DB][UNKNOWN] type=${type} visitor=${visitorId}`);
+    }
+
+    // 한 문서에 카운트 누적
     const filter = { pageId, visitorId, dateKey };
     const update = {
       $set: {
@@ -556,23 +687,19 @@ app.post('/api/track', async (req, res) => {
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
     };
-    if (type === 'view')    update.$inc.viewCount      = 1;
-    if (type === 'revisit') update.$inc.revisitCount   = 1;
-    if (type === 'click') {
+    if (type === 'view') {
+      update.$inc.viewCount = 1;
+    } else if (type === 'revisit') {
+      update.$inc.revisitCount = 1;
+    } else if (type === 'click') {
       update.$inc.clickCount     = 1;
       if (element === 'product') update.$inc.urlClickCount    = 1;
       if (element === 'coupon')  update.$inc.couponClickCount = 1;
     }
 
-    // 7) filter/update 찍어보기
-    console.log('[TRACK] filter:', filter);
-    console.log('[TRACK] update:', JSON.stringify(update));
-
-    // 8) DB에 upsert
-    const result = await col.updateOne(filter, update, { upsert: true });
-    console.log('[TRACK] updateOne result:', result.result);
-
+    await visitsCol().updateOne(filter, update, { upsert: true });
     return res.sendStatus(204);
+
   } catch (err) {
     console.error('❌ TRACK ERROR', err);
     return res.status(500).json({ error: '트래킹 실패' });
@@ -921,7 +1048,13 @@ app.put('/api/events/:id', async (req, res) => {
   }
 });
 
-// ─── 서버 시작 ───────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`▶️ Server running on port ${PORT}`);
-});
+    // ─── 서버 시작 ───────────────────────────────────────────────────────
+    app.listen(PORT, () => {
+      console.log(`▶️ Server running on port ${PORT}`);
+    });
+
+  } catch (err) {
+    console.error('❌ 초기화 실패', err);
+    process.exit(1);
+  }
+})();  // ← 여기서 async IIFE를 닫고 즉시 호출해야 합니다.
