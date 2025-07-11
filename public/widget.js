@@ -1,5 +1,5 @@
 ;(function(){
-  // ─── 0) 스크립트 엘리먼트 & 설정값 가져오기 ─────────────────────────
+  // ─── 0) 스크립트 엘리먼트 찾기 & 설정값 가져오기 ─────────────────────────
   let script = document.currentScript;
   if (!script || !script.dataset.pageId) {
     script = Array.from(document.getElementsByTagName('script')).find(s =>
@@ -10,31 +10,21 @@
     console.warn('⚠️ Widget 스크립트를 찾을 수 없습니다.');
     return;
   }
-
-  const API_BASE    = script.dataset.apiBase.replace(/\/$/, ''); 
-  const MALL_ID     = script.dataset.mallId;
-  const pageId      = script.dataset.pageId;
-  const tabCount    = parseInt(script.dataset.tabCount, 10) || 0;
-  const activeColor = script.dataset.activeColor || '#1890ff';
-  const couponNos   = script.dataset.couponNos || '';
-  const directNos   = script.dataset.directNos || '';
-
-  // 기본 API 경로
-  const API = `${API_BASE}/api`;
-  const MALL_QS = `mall_id=${encodeURIComponent(MALL_ID)}`;
-  const COUPON_QS = couponNos
-    ? `coupon_no=${encodeURIComponent(couponNos)}`
-    : '';
+  const API_BASE      = script.dataset.apiBase;
+  const pageId        = script.dataset.pageId;
+  const tabCount      = parseInt(script.dataset.tabCount, 10) || 0;
+  const activeColor   = script.dataset.activeColor || '#1890ff';
+  const couponNos     = script.dataset.couponNos || '';
+  const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
+  const couponQSAppend= couponNos ? `&coupon_no=${couponNos}` : '';
+  const directNos     = script.dataset.directNos || '';
 
   // ─── visitorId 관리 ────────────────────────────────────────────
   const visitorId = (() => {
     const key = 'appVisitorId';
     let id = localStorage.getItem(key);
     if (!id) {
-      id = (crypto.randomUUID && crypto.randomUUID()) || 
-           ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,c=>
-             (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-           );
+      id = crypto.randomUUID();
       localStorage.setItem(key, id);
     }
     return id;
@@ -55,32 +45,25 @@
     return true;
   }
 
-  // ─── Device 감지 ────────────────────────────────────
+  // ─── Device 감지 & 트랙 전송 헬퍼 ────────────────────────────
   const ua = navigator.userAgent;
   const device = /Android/i.test(ua) ? 'Android'
                : /iPhone|iPad|iPod/i.test(ua) ? 'iOS'
                : 'PC';
-
-  function track(type) {
-    const qs = [ MALL_QS ].join('&');
-    fetch(`${API}/track?${qs}`, {
+  function track(payload) {
+    fetch(`${API_BASE}/api/track`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pageId,
-        pageUrl,
-        visitorId,
-        type,
-        device,
-        referrer: document.referrer || 'direct',
-        timestamp: new Date().toISOString()
-      })
+      body: JSON.stringify(payload)
     }).catch(e => console.error('TRACK ERROR', e));
   }
 
-  // ─── 페이지뷰 or 재방문 트랙 ─────────────────────────────────
-  if (shouldTrack()) track('view');
-  else              track('revisit');
+  // ─── 페이지뷰/재방문 트래킹 ─────────────────────────────────
+  if (shouldTrack()) {
+    track({ pageId, pageUrl, visitorId, type: 'view', device, referrer: document.referrer || 'direct', timestamp: new Date().toISOString() });
+  } else {
+    track({ pageId, pageUrl, visitorId, type: 'revisit', device, referrer: document.referrer || 'direct', timestamp: new Date().toISOString() });
+  }
 
   // ─── 제품 목록 렌더링 헬퍼 ────────────────────────────────────
   function renderProducts(ul, products, cols) {
@@ -90,48 +73,74 @@
     ul.style.maxWidth            = '800px';
     ul.style.margin              = '0 auto';
 
-    function fmtKRW(val) {
-      let num = typeof val === 'number' ? val : parseFloat(String(val).replace(/,/g,''));
-      return isNaN(num) ? '-' : `${num.toLocaleString('ko-KR')}원`;
+    function formatKRW(val) {
+      if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
+      if (typeof val === 'string') {
+        const t = val.trim();
+        if (t.endsWith('원')) return t;
+        const num = parseFloat(t.replace(/,/g,'')) || 0;
+        return `${num.toLocaleString('ko-KR')}원`;
+      }
+      return '-';
     }
+    const items = products.map(p => {
+      const origPrice     = p.price;
+      const priceText     = formatKRW(origPrice);
+      const saleText      = p.sale_price    != null ? formatKRW(p.sale_price)    : null;
+      const couponText    = p.benefit_price != null ? formatKRW(p.benefit_price) : null;
+      const couponPercent = p.benefit_percentage               || null;
 
-    ul.innerHTML = products.map(p => {
-      const orig  = parseFloat(p.price) || 0;
-      const sale  = p.sale_price    != null ? p.sale_price    : null;
-      const coup  = p.benefit_price != null ? p.benefit_price : null;
-      const pctS  = p.benefit_percentage || null;
-      const red   = sale != null ? Math.round((orig - sale)/orig*100) : null;
+      // 할인율 계산
+      const salePercent = saleText
+        ? Math.round((origPrice - p.sale_price) / origPrice * 100)
+        : null;
+
       return `
-      <li>
-        <a href="/product/detail/${p.product_no}" class="prd_link">
-          <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block">
-          <div class="prd_desc">${p.summary_description||''}</div>
-          <div class="prd_name">${p.product_name}</div>
-        </a>
-        ${coup
-          ? `<div class="coupon_wrapper">
-               <div class="prd_coupon_percent">${pctS}%</div>
-               <div class="prd_coupon">${fmtKRW(coup)}</div>
-             </div>`
-          : `<div class="prd_price">
-               ${sale != null
-                 ? `<div class="sale_wrapper">
-                      <div class="sale_percent">-${red}%</div>
-                    </div>
-                    <div class="sale_price">${fmtKRW(sale)}</div>`
-                 : fmtKRW(orig)
-               }
-             </div>`
-        }
-      </li>`;
+        <li>
+          <a href="/product/detail/${p.product_no}" class="prd_link">
+            <img src="${p.list_image}"
+                alt="${p.product_name}"
+                style="width:100%;display:block" />
+            <div class="prd_desc">${p.summary_description||''}</div>
+            <div class="prd_name">${p.product_name}</div>
+          </a>
+
+          <!-- 쿠폰이 있으면 아예 숨김 -->
+          <div class="prd_price"${couponText ? ' style="display:none;"' : ''}>
+            ${saleText
+              ? `
+                ${salePercent > 0
+                  ? `<div class="sale_wrapper">
+                      <div class="sale_percent">-${salePercent}%</div>
+                    </div>`
+                  : ''
+                }
+                <div class="sale_price">${saleText}</div>
+              `
+              : priceText
+            }
+          </div>
+
+          <!-- 쿠폰이 있으면 이 부분만 보임 -->
+          ${couponText ? `
+            <div class="coupon_wrapper">
+              <div class="prd_coupon_percent">${couponPercent}%</div>
+              <div class="prd_coupon">${couponText}</div>
+            </div>
+          ` : ''}
+        </li>
+      `;
     }).join('');
+    ul.innerHTML = items;
+
+
   }
 
-  // ─── 1) 이벤트 데이터 로드 & 이미지 → {#images} 교체 ───────────────
-  fetch(`${API}/events/${pageId}?${MALL_QS}`)
-    .then(r => r.json())
+  // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────────
+  fetch(`${API_BASE}/api/events/${pageId}`)
+    .then(res => res.json())
     .then(ev => {
-      // 이미지 영역
+      // 1-1) 이미지 영역 치환
       const imagesHtml = ev.images.map((img, idx) => {
         const regs = (img.regions||[]).map(r => {
           const l = (r.xRatio*100).toFixed(2),
@@ -139,124 +148,161 @@
                 w = (r.wRatio*100).toFixed(2),
                 h = (r.hRatio*100).toFixed(2);
           if (r.coupon) {
-            return `<button style="
-              position:absolute; left:${l}%; top:${t}%;
-              width:${w}%; height:${h}%; border:none;opacity:0;
-              cursor:pointer;"
-              onclick="downloadCoupon('${r.coupon}')"></button>`;
+            return `<button
+  style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;border:none;cursor:pointer;opacity:0"
+  onclick="downloadCoupon('${r.coupon}')"></button>`;
           } else {
             const href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
-            return `<a style="
-              position:absolute; left:${l}%; top:${t}%;
-              width:${w}%; height:${h}%"
-              href="${href}" target="_blank" rel="noreferrer"></a>`;
+            return `<a
+  style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
+  href="${href}" target="_blank" rel="noreferrer"></a>`;
           }
         }).join('');
         return `
-          <div style="position:relative;margin:0 auto;max-width:800px">
-            <img src="${img.src}" style="width:100%;display:block" data-img-index="${idx}">
-            ${regs}
-          </div>`;
-      }).join('');
-      // 안전하게 교체할 컨테이너
-      const wrap = document.querySelector('#widget-images');
-      if (wrap) wrap.innerHTML = imagesHtml;
-      else     console.warn('컨테이너 #widget-images 가 없습니다.');
+  <div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
+    <img src="${img.src}"
+         style="max-width:100%;height:auto;display:block;margin:0 auto;"
+         data-img-index="${idx}" />
+    ${regs}
+  </div>`;
+      }).join('\n');
+      document.body.innerHTML = document.body.innerHTML.replace('{#images}', imagesHtml);
 
-      // 상품 그리드
+      // 1-2) 상품 그리드: directNos 우선 → 카테고리 API 호출
       document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
         const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
         const limit    = ul.dataset.count || 300;
         const category = ul.dataset.cate;
-        const direct   = ul.dataset.directNos || directNos;
-        if (direct) {
-          const ids = direct.split(',').map(s=>s.trim()).filter(Boolean);
+        const ulDirect = ul.dataset.directNos || directNos;
+
+        if (ulDirect) {
+          const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
           Promise.all(ids.map(no =>
-            fetch(`${API}/products/${no}?${MALL_QS}&${COUPON_QS}`)
-              .then(r=>r.json())
-          )).then(ps => {
-            renderProducts(ul, ps, cols);
-          }).catch(e=>console.error(e));
+            fetch(`${API_BASE}/api/products/${no}${couponQSStart}`)
+              .then(r => r.json())
+              .then(p => ({
+                product_no:          p.product_no,
+                product_name:        p.product_name,
+                summary_description: p.summary_description || '',
+                price:               p.price,
+                list_image:          p.list_image,
+                sale_price:          p.sale_price    || null,
+                benefit_price:       p.benefit_price || null,
+                benefit_percentage:  p.benefit_percentage || null,
+              }))
+          ))
+          .then(products => renderProducts(ul, products, cols))
+          .catch(err => console.error('DIRECT GRID ERROR', err));
+
         } else {
-          fetch(`${API}/categories/${category}/products?${MALL_QS}&limit=${limit}&${COUPON_QS}`)
-            .then(r=>r.json())
-            .then(ps=>renderProducts(ul, ps, cols))
-            .catch(e=>console.error(e));
+          fetch(`${API_BASE}/api/categories/${category}/products?limit=${limit}${couponQSAppend}`)
+            .then(r => r.json())
+            .then(products => renderProducts(ul, products, cols))
+            .catch(err => console.error('PRODUCT GRID ERROR', err));
         }
       });
     })
-    .catch(e => console.error('EVENT LOAD ERROR', e));
+    .catch(err => console.error('EVENT LOAD ERROR', err));
 
   // ─── 2) CSS 동적 주입 ──────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
-  .main_Grid_${pageId} { margin-top:10px; }
-  .main_Grid_${pageId} .prd_name {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tabs_${pageId} {
-    display: grid;
-    gap: 8px;
-    max-width: 800px;
-    margin: 16px auto;
-    grid-template-columns: repeat(${tabCount},1fr);
-  }
-  .tabs_${pageId} button {
-    padding: 8px;
-    font-size: 16px;
-    border: none;
-    background: #f5f5f5;
-    color: #333;
-    cursor: pointer;
-    border-radius: 4px;
-    display:-webkit-box;
-    -webkit-line-clamp:2;
-    -webkit-box-orient:vertical;
-    overflow:hidden;
-    text-overflow:ellipsis;
-  }
-  .tabs_${pageId} button.active {
-    background-color: ${activeColor};
-    color: #fff;
-  }
-  .main_Grid_${pageId} {
-    display:grid;
-    row-gap:50px !important;
-    gap:20px;
-  }
-  .main_Grid_${pageId} li { color:#000; }
-  .main_Grid_${pageId} .prd_desc { padding-bottom:3px; font-size:14px; color:#666; }
-  .main_Grid_${pageId} .prd_price, .main_Grid_${pageId} .sale_price, .main_Grid_${pageId} .prd_coupon {
-    font-weight:500;
-    font-size:16px;
-  }
-  .main_Grid_${pageId} .sale_percent,
-  .main_Grid_${pageId} .prd_coupon_percent {
-    color:#ff0000;
-    padding-right:5px;
-  }
-  @media (max-width:400px) {
-    .main_Grid_${pageId} {
-      width:95%;
-      margin:0 auto;
-      gap:10px !important;
-      row-gap:30px !important;
+  .main_Grid_${pageId}{margin-top:10px}
+    /*글자 3줄이상 수정*/
+    .main_Grid_${pageId} .prd_name {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    .product_list_widget{padding-top:20px;padding-bottom:20px;}
+    /* 전역 grid row 간격 */
+    /* 탭 버튼 스타일 */
+    .tabs_${pageId} {
+      display: grid;
+      gap: 8px;
+      max-width: 800px;
+      margin: 16px auto;
+      grid-template-columns: repeat(${tabCount},1fr);
     }
-    .main_Grid_${pageId} .prd_desc { font-size:12px; }
-    .main_Grid_${pageId} .prd_price,
-    .main_Grid_${pageId} .sale_price,
-    .main_Grid_${pageId} .prd_coupon {
-      font-size:15px;
+    .tabs_${pageId} button {
+      padding:8px;
+      font-size:16px;
+      border:none;
+      background:#f5f5f5;
+      color:#333;
+      cursor:pointer;
+      border-radius:4px;
+      display:-webkit-box;
+      -webkit-line-clamp:2;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
-    .main_Grid_${pageId} .sale_percent,
-    .main_Grid_${pageId} .prd_coupon_percent {
-      font-size:15px;
+    .tabs_${pageId} button.active {
+      background-color:${activeColor};
+      color:#fff;
     }
-  }
+
+    /* 쿠폰 퍼센트/금액 스타일 (스코프 적용) */
+    .main_Grid_${pageId} img{padding-bottom:10px;}
+     .main_Grid_${pageId}{row-gap:50px} 
+    .main_Grid_${pageId}{row-gap:50px!important}
+    .main_Grid_${pageId} li{color:#000;}
+    .main_Grid_${pageId} .prd_desc{padding-bottom:3px;
+     font-size:14px;color:#666;
+    } 
+    .main_Grid_${pageId} .prd_name{padding-bottom:3px;} 
+    .main_Grid_${pageId} .prd_price{font-size: 16px;} 
+    .main_Grid_${pageId} .prd_coupon{
+      float: left;
+      font-weight: 500;
+    } 
+    .main_Grid_${pageId} .prd_coupon_percent{
+      float: left;
+      color: #ff0000;
+      font-size: 16px;
+      padding-right:5px;
+    } 
+    /*즉시 할인율*/
+
+      .main_Grid_${pageId} .sale_price{
+        float: left;
+        font-weight: 500;
+      } 
+      .main_Grid_${pageId} .sale_percent{
+        float: left;
+        color: #ff0000;
+        font-size: 16px;
+        padding-right:5px;
+      } 
+
+
+    @media (max-width: 400px) {
+      .main_Grid_${pageId} {
+        width: 95%;
+        margin: 0 auto;
+        gab:10px!important;
+        row-gap:30px!important
+      }
+      .main_Grid_${pageId} .prd_desc{padding-bottom:5px;
+      font-size:12px;color:#666;
+      } 
+      .main_Grid_${pageId} .prd_name{padding-bottom:5px;} 
+      .main_Grid_${pageId} .prd_price{font-size: 15px;} 
+      .main_Grid_${pageId} .prd_coupon{
+        float: left;
+        font-weight: 500;
+      } 
+     .main_Grid_${pageId} .prd_price{font-size: 15px;} 
+      .main_Grid_${pageId} .sale_percent{
+        float: left;
+        color: #ff0000;
+        font-size: 15px;
+      } 
+    }
+
   `;
   document.head.appendChild(style);
 
@@ -271,4 +317,5 @@
     const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${coupon}`;
     window.location.href = url + `&opener_url=${encodeURIComponent(location.href)}`;
   };
+
 })();
