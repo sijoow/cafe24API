@@ -784,11 +784,19 @@ async function saveTokensToDB(mallId, newAT, newRT) {
       { upsert: true }
     );
 }
-
 async function loadTokens(mallId) {
   const doc = await db.collection('tokens').findOne({ mallId });
-  if (!doc) throw new Error(`토큰을 찾을 수 없습니다. mallId=${mallId}`);
+  if (!doc) throw new Error(`토큰이 없습니다 (mallId=${mallId})`);
   return { accessToken: doc.accessToken, refreshToken: doc.refreshToken };
+}
+
+// mallId 별로 access/refresh 토큰을 저장(업데이트)하는 함수
+async function saveTokens(mallId, newAccessToken, newRefreshToken) {
+  await db.collection('tokens').updateOne(
+    { mallId },
+    { $set: { accessToken: newAccessToken, refreshToken: newRefreshToken, updatedAt: new Date() } },
+    { upsert: true }
+  );
 }
 
 // (기존) 앱 시작 전에 전역 기본 mallId 로 토큰을 미리 로드하길 원하시면…
