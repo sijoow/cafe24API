@@ -70,15 +70,29 @@ async function initDb() {
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected to', DB_NAME);
 }
-
 async function initIndexes() {
   console.log('🔧 Setting up indexes');
-  await db.collection('tokens').createIndex(
+
+  const tokensCol = db.collection('tokens');
+
+  // 기존에 'mallId_1' 인덱스가 있으면 제거
+  try {
+    await tokensCol.dropIndex('mallId_1');
+    console.log('🗑  Dropped old index mallId_1');
+  } catch (e) {
+    // 이미 없으면 무시
+  }
+
+  // 원하는 이름으로 새 인덱스 생성
+  await tokensCol.createIndex(
     { mallId: 1 },
     { unique: true, name: 'idx_tokens_mallId' }
   );
-  console.log('✔️ Indexes created');
+  console.log('✔️ Created idx_tokens_mallId on tokens');
+
+  // (필요하다면 visits 컬렉션 인덱스도 여기에 추가)
 }
+
 
 // ─── OAuth 토큰 헬퍼 ────────────────────────────────────────────────
 let globalTokens = { [DEFAULT_MALL]: { accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN } };
