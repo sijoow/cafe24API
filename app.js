@@ -686,10 +686,10 @@ app.post('/api/track', async (req, res) => {
   }
 });
 
-
-app.get('/api/categories/:category_no/products', async (req, res) => {
+// ─── 카테고리 내 상품 + 다중 쿠폰 조회 ───────────────────────────────
+app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
   try {
-    const category_no    = req.params.category_no;
+    const { mallId, category_no } = req.params;
     const coupon_query   = req.query.coupon_no || '';
     const coupon_nos     = coupon_query ? coupon_query.split(',') : [];
     const limit          = parseInt(req.query.limit, 10)  || 100;
@@ -699,7 +699,7 @@ app.get('/api/categories/:category_no/products', async (req, res) => {
 
     // ─── 0) 복수 쿠폰 정보 조회 ───────────────────────────────────────
     const coupons = await Promise.all(coupon_nos.map(async no => {
-      const urlCoupon = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/coupons`;
+      const urlCoupon = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
       const resCoupon = await apiRequest('GET', urlCoupon, {}, {
         shop_no,
         coupon_no: no,
@@ -718,7 +718,7 @@ app.get('/api/categories/:category_no/products', async (req, res) => {
     const validCoupons = coupons.filter(c => c);
 
     // ─── 1) 카테고리-상품 매핑 조회 ─────────────────────────────────
-    const urlCats = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/categories/${category_no}/products`;
+    const urlCats = `https://${mallId}.cafe24api.com/api/v2/admin/categories/${category_no}/products`;
     const catRes  = await apiRequest('GET', urlCats, {}, {
       shop_no,
       display_group,
@@ -735,7 +735,7 @@ app.get('/api/categories/:category_no/products', async (req, res) => {
     if (!productNos.length) return res.json([]);
 
     // ─── 3) 상품 상세 정보 조회 ──────────────────────────────────────
-    const urlProds  = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products`;
+    const urlProds  = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
     const detailRes = await apiRequest('GET', urlProds, {}, {
       shop_no,
       product_no: productNos.join(','),
@@ -743,15 +743,13 @@ app.get('/api/categories/:category_no/products', async (req, res) => {
     });
     const details = detailRes.products || [];
 
-    // ─── 4) 할인 가격(discountprice) 일괄 조회 ───────────────────────
+    // ─── 4) 할인 가격 일괄 조회 ───────────────────────────────────────
     const discountMap = {};
     await Promise.all(productNos.map(async no => {
-      const urlDis = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${no}/discountprice`;
+      const urlDis = `https://${mallId}.cafe24api.com/api/v2/admin/products/${no}/discountprice`;
       const disRes = await apiRequest('GET', urlDis, {}, { shop_no });
       const rawPrice = disRes.discountprice?.pc_discount_price;
-      discountMap[no] = rawPrice != null
-        ? parseFloat(rawPrice)
-        : null;
+      discountMap[no] = rawPrice != null ? parseFloat(rawPrice) : null;
     }));
 
     // ─── 5) 상세 객체 맵핑 ─────────────────────────────────────────
@@ -760,30 +758,26 @@ app.get('/api/categories/:category_no/products', async (req, res) => {
       return m;
     }, {});
 
-    // ─── format helper ───────────────────────────────────────────────
-    const formatKRW = num =>
-      num != null
-        ? Number(num).toLocaleString('ko-KR') + '원'
-        : null;
+    // ─── 가격 포맷 헬퍼 ──────────────────────────────────────────────
+    const formatKRW = num => num != null
+      ? Number(num).toLocaleString('ko-KR') + '원'
+      : null;
 
     // ─── 6) 쿠폰 적용 여부 + 할인가 계산 함수 ───────────────────────
     function calcCouponInfos(prodNo) {
       return validCoupons
         .map(coupon => {
-          // (기존 로직 그대로)
           const pMode = coupon.available_product;
           const pList = coupon.available_product_list || [];
-          const prodOk =
-            pMode === 'U' ||
-            (pMode === 'I' && pList.includes(prodNo)) ||
-            (pMode === 'E' && !pList.includes(prodNo));
+          const prodOk = pMode === 'U'
+            || (pMode === 'I' && pList.includes(prodNo))
+            || (pMode === 'E' && !pList.includes(prodNo));
 
           const cMode = coupon.available_category;
           const cList = coupon.available_category_list || [];
-          const catOk =
-            cMode === 'U' ||
-            (cMode === 'I' && cList.includes(parseInt(category_no, 10))) ||
-            (cMode === 'E' && !cList.includes(parseInt(category_no, 10)));
+          const catOk = cMode === 'U'
+            || (cMode === 'I' && cList.includes(parseInt(category_no, 10)))
+            || (cMode === 'E' && !cList.includes(parseInt(category_no, 10)));
 
           if (!prodOk || !catOk) return null;
 
@@ -793,17 +787,15 @@ app.get('/api/categories/:category_no/products', async (req, res) => {
           let benefit_price = null;
           if (pct > 0)      benefit_price = +(origPrice * (100 - pct) / 100).toFixed(2);
           else if (amt > 0) benefit_price = +(origPrice - amt).toFixed(2);
-
           if (benefit_price == null) return null;
 
           return {
             coupon_no:          coupon.coupon_no,
             benefit_percentage: pct,
-            benefit_price:      benefit_price
+            benefit_price
           };
         })
         .filter(x => x)
-        // ← 여기서 %가 높은 순으로 정렬
         .sort((a, b) => b.benefit_percentage - a.benefit_percentage);
     }
 
@@ -824,18 +816,17 @@ app.get('/api/categories/:category_no/products', async (req, res) => {
 
     // ─── 8) slim 배열(필요한 필드만 & 포맷팅) ───────────────────────
     const slim = full.map(p => {
-      const infos = (p.couponInfos || []);
-      const first = infos.length ? infos[0] : null;
-    
+      const infos = p.couponInfos || [];
+      const first = infos[0] || null;
       return {
         product_no:          p.product_no,
         product_name:        p.product_name,
         price:               formatKRW(parseFloat(p.price)),
         summary_description: p.summary_description,
         list_image:          p.list_image,
-        sale_price:          (p.sale_price != null && +p.sale_price !== +p.price)
-                               ? formatKRW(p.sale_price)
-                               : null,
+        sale_price:          p.sale_price != null && +p.sale_price !== +p.price
+                              ? formatKRW(p.sale_price)
+                              : null,
         benefit_price:       first ? formatKRW(first.benefit_price) : null,
         benefit_percentage:  first ? first.benefit_percentage : null,
         couponInfos:         infos.length ? infos : null
@@ -850,181 +841,6 @@ app.get('/api/categories/:category_no/products', async (req, res) => {
       message: '카테고리 내 상품 조회 실패',
       error:   err.message
     });
-  }
-});
-// ─── 전체 상품 조회 (페이징 + 검색 지원) ─────────────────────────────────
-app.get('/api/products', async (req, res) => {
-  try {
-    const shop_no = 1;
-    const limit   = parseInt(req.query.limit, 10)  || 1000;
-    const offset  = parseInt(req.query.offset, 10) || 0;
-    const q       = (req.query.q || '').trim();
-    const url     = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products`;
-
-    // 기본 파라미터
-    const params = { shop_no, limit, offset };
-    // 검색어가 있으면 Café24 API에 필터 파라미터 추가
-    if (q) {
-      params['search[product_name]'] = q;
-    }
-
-    const data  = await apiRequest('GET', url, {}, params);
-    const slim  = (data.products || []).map(p => ({
-      product_no:   p.product_no,
-      product_code: p.product_code,
-      product_name: p.product_name,
-      price:        p.price,
-      list_image:   p.list_image
-    }));
-
-    res.json({
-      products: slim,
-      total:    data.total_count
-    });
-  } catch (err) {
-    console.error('전체 상품 조회 실패', err);
-    res.status(500).json({ error: '전체 상품 조회 실패' });
-  }
-});
-// ─── 단일 상품 상세 조회 (쿠폰할인가 포함) ─────────────────────────
-// 기존 app.get('/api/products/:product_no') 부분을 통째로 교체하세요.
-app.get('/api/products/:product_no', async (req, res) => {
-  try {
-    const shop_no    = 1;
-    const product_no = req.params.product_no;
-    // data-coupon-nos 에서 넘어오는 쿠폰번호들
-    const coupon_query = req.query.coupon_no || '';
-    const coupon_nos   = coupon_query.split(',').filter(Boolean);
-
-    // 1) 기본 상품 정보
-    const prodUrl  = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}`;
-    const prodData = await apiRequest('GET', prodUrl, {}, { shop_no });
-    const p = prodData.product ?? prodData.products?.[0];
-    if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
-
-    // 2) 즉시할인가 조회 (원래 있던 로직)
-    const disUrl   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
-    const disData  = await apiRequest('GET', disUrl, {}, { shop_no });
-    const rawSale  = disData.discountprice?.pc_discount_price;
-    const sale_price = rawSale != null ? parseFloat(rawSale) : null;
-
-    // 3) 쿠폰별 benefit 계산
-    const coupons = await Promise.all(coupon_nos.map(async no => {
-      const urlCoupon = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/coupons`;
-      const cRes = await apiRequest('GET', urlCoupon, {}, {
-        shop_no,
-        coupon_no: no,
-        fields: [
-          'coupon_no',
-          'available_product','available_product_list',
-          'available_category','available_category_list',
-          'benefit_amount','benefit_percentage'
-        ].join(',')
-      });
-      return cRes.coupons?.[0] || null;
-    }));
-    const validCoupons = coupons.filter(c=>c);
-
-    let benefit_price = null;
-    let benefit_percentage = null;
-    validCoupons.forEach(coupon => {
-      // 상품 단위 적용 가능 여부
-      const pList = coupon.available_product_list || [];
-      const ok = coupon.available_product === 'U'
-              || (coupon.available_product === 'I' && pList.includes(parseInt(product_no,10)))
-              || (coupon.available_product === 'E' && !pList.includes(parseInt(product_no,10)));
-      if (!ok) return;
-
-      // 퍼센트 우선
-      const orig = parseFloat(p.price);
-      const pct  = parseFloat(coupon.benefit_percentage||0);
-      const amt  = parseFloat(coupon.benefit_amount||0);
-      let bPrice = null;
-      if (pct>0)      bPrice = +(orig*(100-pct)/100).toFixed(2);
-      else if (amt>0) bPrice = +(orig-amt).toFixed(2);
-
-      if (bPrice != null && pct > (benefit_percentage||0)) {
-        benefit_price      = bPrice;
-        benefit_percentage = pct;
-      }
-    });
-
-    // 4) 최종 응답
-    res.json({
-      product_no,               
-      product_code:   p.product_code,
-      product_name:   p.product_name,
-      price: p.price,            // 원가
-      summary_description: p.summary_description || '',  
-      sale_price,                          // 즉시할인가
-      benefit_price,                       // 쿠폰 할인가
-      benefit_percentage,                  // 쿠폰 퍼센트
-      list_image:     p.list_image
-    });
-  } catch (err) {
-    console.error('단일 상품 조회 실패', err);
-    res.status(500).json({ error: '단일 상품 조회 실패' });
-  }
-});
-
-// ─── 이벤트 생성: classification.directProducts, tabDirectProducts 저장 ────
-app.post('/api/events', async (req, res) => {
-  try {
-    const nowKst = dayjs().tz('Asia/Seoul').toDate();
-    const { classification, ...rest } = req.body;
-
-    const doc = {
-      ...rest,
-      classification: {
-        tabs:               classification.tabs              || [],
-        activeColor:        classification.activeColor       || '#1890ff',
-        directProducts:     classification.directProducts    || [],
-        tabDirectProducts:  classification.tabDirectProducts || {},
-      },
-      createdAt: nowKst,
-      updatedAt: nowKst,
-      images: (rest.images||[]).map(img => ({
-        _id: new ObjectId(), ...img,
-        regions: (img.regions||[]).map(r => ({ _id: new ObjectId(), ...r }))
-      }))
-    };
-
-    const result = await eventsCol().insertOne(doc);
-    res.json({ _id: result.insertedId, ...doc });
-  } catch (err) {
-    console.error('이벤트 생성 실패', err);
-    res.status(400).json({ error: '이벤트 생성 실패' });
-  }
-});
-
-// ─── 이벤트 수정: directProducts, tabDirectProducts 업데이트 ───────────────
-app.put('/api/events/:id', async (req, res) => {
-  try {
-    const objId    = new ObjectId(req.params.id);
-    const nowKst   = dayjs().tz('Asia/Seoul').toDate();
-    const { classification, ...rest } = req.body;
-
-    const setPayload = {
-      ...rest,
-      updatedAt: nowKst,
-      'classification.tabs':              classification.tabs              || [],
-      'classification.activeColor':       classification.activeColor       || '#1890ff',
-      'classification.directProducts':    classification.directProducts    || [],
-      'classification.tabDirectProducts': classification.tabDirectProducts || {}
-    };
-
-    const result = await eventsCol().updateOne(
-      { _id: objId },
-      { $set: setPayload }
-    );
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: '이벤트가 없습니다' });
-    }
-    const updated = await eventsCol().findOne({ _id: objId });
-    res.json({ success: true, data: updated });
-  } catch (err) {
-    console.error('이벤트 수정 실패', err);
-    res.status(500).json({ error: '이벤트 수정 실패' });
   }
 });
 
