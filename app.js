@@ -97,7 +97,8 @@ async function refreshAccessToken(mall_id) {
   const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
   const params = new URLSearchParams({
     grant_type:    'refresh_token',
-    refresh_token: refreshToken
+    refresh_token: refreshToken,
+    shop_no:       '1'
   });
   const r = await axios.post(url, params.toString(), {
     headers: {
@@ -109,7 +110,6 @@ async function refreshAccessToken(mall_id) {
   refreshToken = r.data.refresh_token;
   await saveTokensToDB(mall_id, accessToken, refreshToken);
 }
-
 
 
 
