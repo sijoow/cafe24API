@@ -96,25 +96,42 @@ async function refreshAccessToken(mallId, refreshToken) {
   await saveTokens(mallId, r.data.access_token, r.data.refresh_token);
   return { accessToken:r.data.access_token, refreshToken:r.data.refresh_token };
 }
-
-// ─── Caf24 API 호출 헬퍼 ────────────────────────────────────────────
-async function apiRequest(mallId, method, path, data={}, params={}) {
+async function apiRequest(mallId, method, path, data = {}, params = {}) {
+  // 1) mallId 토큰 load
   let { accessToken, refreshToken } = await loadTokens(mallId);
+
+  // 2) 실제 요청
   const url = `https://${mallId}.cafe24api.com${path}`;
   try {
-    const resp = await axios({ method, url, data, params, headers:{
+    const resp = await axios({ method, url, data, params, headers: {
       Authorization: `Bearer ${accessToken}`,
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+      'X-Cafe24-Api-Version': CAFE24_API_VERSION
     }});
     return resp.data;
   } catch (err) {
+    // 401 나오면 리프레시 + 재시도
     if (err.response?.status === 401) {
-      ({ accessToken, refreshToken } = await refreshAccessToken(mallId, refreshToken));
+      // refresh
+      const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+      const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+      const body = new URLSearchParams({ grant_type:'refresh_token', refresh_token: refreshToken }).toString();
+      const r = await axios.post(tokenUrl, body, {
+        headers:{
+          'Content-Type':'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${creds}`
+        }
+      });
+      accessToken  = r.data.access_token;
+      refreshToken = r.data.refresh_token;
+      await saveTokens(mallId, accessToken, refreshToken);
+
+      // 다시 원래 요청
       return apiRequest(mallId, method, path, data, params);
     }
     throw err;
   }
 }
+
 
 // ─── 서버 시작 전 초기화 ─────────────────────────────────────────────
 ;(async () => {
