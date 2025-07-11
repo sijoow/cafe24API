@@ -91,30 +91,25 @@ async function loadTokensFromDB(mall_id) {
     await saveTokensToDB(mall_id, accessToken, refreshToken);
   }
 }
+
 async function refreshAccessToken(mall_id) {
   const url   = `https://${mall_id}.cafe24api.com/api/v2/oauth/token`;
-  const creds = Buffer
-    .from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`)
-    .toString('base64');
-
-  // grant_type, refresh_token, shop_no 모두 폼 데이터에 담아야 합니다
+  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
   const params = new URLSearchParams({
     grant_type:    'refresh_token',
-    refresh_token: refreshToken,
-    shop_no:       '1'           // ← 이 줄을 꼭 추가하세요
+    refresh_token: refreshToken
   });
-
   const r = await axios.post(url, params.toString(), {
     headers: {
       'Content-Type':  'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${creds}`
+      'Authorization': `Basic ${creds}`,
     }
   });
-
   accessToken  = r.data.access_token;
   refreshToken = r.data.refresh_token;
   await saveTokensToDB(mall_id, accessToken, refreshToken);
 }
+
 
 
 // 모든 /api 호출 전에 mall_id별 토큰 로드
@@ -146,9 +141,11 @@ async function apiRequest(method, url, data = {}, params = {}, mall_id) {
 
 // ─── 6) 매장 이메일(fetch) ────────────────────────────────────────────
 async function fetchCafeMail(mall_id) {
+  // 복수 경로를 쓰는 경우
   const url = `https://${mall_id}.cafe24api.com/api/v2/admin/shops`;
-  // shop_no=1 은 필수
+  // shop_no는 반드시 넣어야 합니다
   const data = await apiRequest('GET', url, {}, { shop_no: 1 }, mall_id);
+  // shops 배열의 첫 번째 항목이 해당 매장 정보
   const shop = (data.shops && data.shops[0]) || {};
   return shop.biz_email || shop.mng_email || null;
 }
