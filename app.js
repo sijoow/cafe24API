@@ -44,7 +44,7 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── MongoDB 연결 & visits 컬렉션 헬퍼 ───────────────────────────────
+// ─── MongoDB 연결 & 컬렉션 헬퍼 ────────────────────────────────────
 let db;
 async function initDb() {
   const client = new MongoClient(MONGODB_URI);
@@ -52,104 +52,88 @@ async function initDb() {
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected');
 }
+
 const VISITS_COLLECTION = `visits_${CAFE24_MALLID}`;
 function visitsCol() {
   return db.collection(VISITS_COLLECTION);
 }
-
-// ─── events 컬렉션 헬퍼 ────────────────────────────────────────────
 function eventsCol() {
   return db.collection('events');
 }
 
-// ─── visits 컬렉션 인덱스 설정 ────────────────────────────────────
+// ─── visits 인덱스 설정 ───────────────────────────────────────────
 async function initIndexes() {
   const col = visitsCol();
   try { await col.dropIndex('unique_per_user_day'); } catch {}
   await col.createIndex(
-    { pageId: 1, visitorId: 1, dateKey: 1 },
+    { pageId:1, visitorId:1, dateKey:1 },
     { unique: true, name: 'unique_per_user_day' }
   );
   console.log(`▶️ ${VISITS_COLLECTION} 인덱스 설정 완료 (user/day 단위)`);
   await db.collection('token').createIndex({ updatedAt: 1 });
 }
+
+// ─── Café24 OAuth 토큰 관리 ─────────────────────────────────────────
 let accessToken  = ACCESS_TOKEN;
 let refreshToken = REFRESH_TOKEN;
 
-// ① 상점 이메일(shop_email) 조회 헬퍼
-async function fetchCafeMail(token) {
-  const url = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/shop`;
-  const resp = await axios.get(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION
-    },
-    params: { shop_no: 1 }
-  });
-  return resp.data.shop?.shop_email || null;
+async function saveTokensToDB(newAT, newRT, mail) {
+  const update = {
+    accessToken: newAT,
+    refreshToken: newRT,
+    updatedAt: new Date()
+  };
+  if (mail) update.cafeMail = mail;
+  await db.collection('token').updateOne({}, { $set: update }, { upsert: true });
 }
 
-// ② 토큰 저장 헬퍼 (이제 cafemail도 함께 저장)
-async function saveTokensToDB(newAT, newRT) {
-  const cafemail = await fetchCafeMail(newAT);
-  await db.collection('token').updateOne(
-    { mall_id: CAFE24_MALLID },
-    {
-      $set: {
-        accessToken:  newAT,
-        refreshToken: newRT,
-        cafemail,
-        updatedAt:    new Date()
-      }
-    },
-    { upsert: true }
-  );
-}
-
-// ③ DB에서 꺼낼 때도 cafemail 보기
 async function getTokenFromDB() {
-  const doc = await db.collection('token').findOne({ mall_id: CAFE24_MALLID });
+  const doc = await db.collection('token').findOne({});
   if (doc) {
-    ({ accessToken, refreshToken } = doc);
+    accessToken  = doc.accessToken;
+    refreshToken = doc.refreshToken;
     console.log('▶️ Loaded tokens from DB:', {
-      accessToken:  accessToken.slice(0,10)+'…',
-      refreshToken: refreshToken.slice(0,10)+'…',
-      cafemail:     doc.cafemail
+      accessToken:  accessToken.slice(0,10)  + '…',
+      refreshToken: refreshToken.slice(0,10) + '…',
+      cafeMail:     doc.cafeMail || '(none)'
     });
   } else {
-    console.log('▶️ No token in DB, initializing from env');
+    console.log('▶️ No token in DB, initializing from env:', {
+      accessToken:  accessToken.slice(0,10)  + '…',
+      refreshToken: refreshToken.slice(0,10) + '…'
+    });
     await saveTokensToDB(accessToken, refreshToken);
   }
 }
 
 async function refreshAccessToken() {
-  // (기존 refresh 로직 유지)
   const url   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/oauth/token`;
   const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
   const params = new URLSearchParams({
-    grant_type:    'refresh_token',
+    grant_type: 'refresh_token',
     refresh_token: refreshToken
   });
   const r = await axios.post(url, params.toString(), {
     headers: {
       'Content-Type':  'application/x-www-form-urlencoded',
-      Authorization:   `Basic ${creds}`
-    }
+      'Authorization': `Basic ${creds}`,
+    },
   });
-
   accessToken  = r.data.access_token;
   refreshToken = r.data.refresh_token;
-  // ④ 갱신 시에도 cafemail 새로 땡겨서 저장
   await saveTokensToDB(accessToken, refreshToken);
 }
 
 async function apiRequest(method, url, data = {}, params = {}) {
   try {
-    const resp = await axios({ method, url, data, params, headers: {
-      Authorization:         `Bearer ${accessToken}`,
-      'Content-Type':        'application/json',
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-    }});
+    const resp = await axios({
+      method, url, data, params,
+      headers: {
+        Authorization:         `Bearer ${accessToken}`,
+        'Content-Type':        'application/json',
+        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+      }
+    });
     return resp.data;
   } catch (err) {
     if (err.response?.status === 401) {
@@ -160,17 +144,45 @@ async function apiRequest(method, url, data = {}, params = {}) {
   }
 }
 
-// ─── 초기화 순서: DB → 토큰 → 인덱스 → 서버 시작 ────────────────────────
+// ─── 매장 이메일(fetch & save) ───────────────────────────────────────
+async function fetchCafeMail() {
+  try {
+    const url = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/shop`;
+    // shop_no 파라미터 없이 호출
+    const data = await apiRequest('GET', url);
+    const shop = data.shop || {};
+    // biz_email 또는 mng_email 필드에 매장 이메일이 들어옵니다.
+    const email = shop.biz_email || shop.mng_email || null;
+    console.log('▶️ Fetched cafe24 mail:', email);
+    return email;
+  } catch (err) {
+    console.error('❌ Failed to fetch cafe24 mail', err.response?.status, err.response?.data);
+    return null;
+  }
+}
+
+// ─── 초기화 순서: DB → 토큰 로드 → 매장메일 저장 → 인덱스 → 서버 시작 ─────────
 initDb()
   .then(getTokenFromDB)
+  .then(() => fetchCafeMail()
+    .then(mail => mail && db.collection('token').updateOne(
+      {}, { $set: { cafeMail: mail } }
+    ))
+  )
   .then(initIndexes)
   .then(() => {
-    console.log('▶️ final tokens at server start', { accessToken, refreshToken });
+    console.log('▶️ final tokens at server start', {
+      accessToken, refreshToken
+    });
+    app.listen(PORT, () => {
+      console.log(`▶️ Server running on port ${PORT}`);
+    });
   })
   .catch(err => {
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   });
+
 
 // ─── Multer 설정 (임시 디스크 저장) ─────────────────────────────────
 const uploadDir = path.join(__dirname, 'uploads');
