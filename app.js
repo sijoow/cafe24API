@@ -62,18 +62,24 @@ const s3Client = new S3Client({
   credentials: { accessKeyId: R2_ACCESS_KEY, secretAccessKey: R2_SECRET_KEY },
   forcePathStyle: true,
 });
-
-// ─── MongoDB 연결/헬퍼 ───────────────────────────────────────────────
 async function initDb() {
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected to', DB_NAME);
 }
-function visitsCol() {
-  return db.collection(`visits_${DEFAULT_MALL}`);
-}
 
+async function initIndexes() {
+  console.log('🔧 Setting up indexes');
+  // tokens 컬렉션에 mallId 인덱스
+  await db.collection('tokens').createIndex(
+    { mallId: 1 },
+    { unique: true, name: 'idx_tokens_mallId' }
+  );
+  // visits_{mallId} 컬렉션 인덱스 (필요하면 동적으로 만드셔도 됩니다)
+  // await db.collection(`visits_${someMallId}`).createIndex({ pageId:1, visitorId:1, dateKey:1 }, { unique:true });
+  console.log('✔️ Indexes created');
+}
 // ─── OAuth 토큰 헬퍼 ────────────────────────────────────────────────
 let globalTokens = { accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN };
 async function saveTokens(mallId, at, rt) {
@@ -137,13 +143,13 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
 ;(async () => {
   try {
     await initDb();
-    console.log(`▶️ Server running on port ${PORT}`);
-    app.listen(PORT);
+    app.listen(PORT, () => console.log(`▶️ Server running on port ${PORT}`));
   } catch (err) {
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   }
 })();
+
 
 // ─── 공통 라우트 ────────────────────────────────────────────────────
 // ─── 기본 Ping ───────────────────────────────────────────────────────
