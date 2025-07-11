@@ -150,10 +150,9 @@ async function apiRequest(method, url, data = {}, params = {}, mall_id) {
 
 // ─── 6) 매장 이메일(fetch) ────────────────────────────────────────────
 async function fetchCafeMail(mall_id) {
-  const url  = `https://${mall_id}.cafe24api.com/api/v2/admin/shops`;
-  // shop_no=1 파라미터 추가
+  const url = `https://${mall_id}.cafe24api.com/api/v2/admin/shops`;
+  // shop_no=1 은 필수
   const data = await apiRequest('GET', url, {}, { shop_no: 1 }, mall_id);
-  // data.shops는 배열이므로 [0]번째를 꺼내서 사용
   const shop = (data.shops && data.shops[0]) || {};
   return shop.biz_email || shop.mng_email || null;
 }
