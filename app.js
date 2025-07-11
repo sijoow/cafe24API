@@ -774,3 +774,30 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
     process.exit(1);
   }
 })();
+// ─── 토큰 헬퍼 ─────────────────────────────────────────────────────
+async function saveTokensToDB(mallId, newAT, newRT) {
+  await db
+    .collection('tokens')
+    .updateOne(
+      { mallId },
+      { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
+      { upsert: true }
+    );
+}
+
+async function loadTokens(mallId) {
+  const doc = await db.collection('tokens').findOne({ mallId });
+  if (!doc) throw new Error(`토큰을 찾을 수 없습니다. mallId=${mallId}`);
+  return { accessToken: doc.accessToken, refreshToken: doc.refreshToken };
+}
+
+// (기존) 앱 시작 전에 전역 기본 mallId 로 토큰을 미리 로드하길 원하시면…
+async function getTokenFromDB() {
+  const doc = await db.collection('tokens').findOne({ mallId: CAFE24_MALLID });
+  if (doc) {
+    accessToken  = doc.accessToken;
+    refreshToken = doc.refreshToken;
+  } else {
+    await saveTokensToDB(CAFE24_MALLID, accessToken, refreshToken);
+  }
+}
