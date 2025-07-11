@@ -105,7 +105,7 @@ async function loadTokens(mallId) {
 async function refreshAccessToken(mallId, oldRefreshToken) {
   try {
     const url    = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds  = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+    const creds  = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
     const params = new URLSearchParams({ grant_type:'refresh_token', refresh_token:oldRefreshToken });
     const r      = await axios.post(url, params.toString(), {
       headers: {
