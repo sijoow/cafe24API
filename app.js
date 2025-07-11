@@ -151,22 +151,14 @@ async function fetchCafeMail(mall_id) {
 
 // ─── 7) 초기화 순서: DB → 인덱스(기본몰) → 토큰(기본몰) → 메일 → 서버 ───
 initDb()
-  // 기본 CAFE24_MALLID로 visits 인덱스
   .then(() => initIndexes(CAFE24_MALLID))
-  // 기본몰 토큰 로드 후 메일 가져와서 저장
   .then(() => loadTokensFromDB(CAFE24_MALLID))
   .then(() => fetchCafeMail(CAFE24_MALLID))
   .then(mail => mail && saveTokensToDB(CAFE24_MALLID, accessToken, refreshToken, mail))
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`▶️ Server running on port ${PORT}`);
-    });
+    app.listen(PORT, () => console.log(`▶️ Server running on port ${PORT}`));
   })
-  .catch(err => {
-    console.error('❌ 초기화 실패', err);
-    process.exit(1);
-  });
-
+  .catch(err => { console.error('❌ 초기화 실패', err); process.exit(1); });
 // ─── Multer 설정 (임시 디스크 저장) ─────────────────────────────────
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
