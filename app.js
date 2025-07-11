@@ -67,7 +67,7 @@ const s3Client = new S3Client({
 
 // ─── MongoDB 연결/인덱스/토큰 헬퍼 ──────────────────────────────────
 async function initDb() {
-  const client = new MongoClient(MONGODB_URI, { useUnifiedTopology: true });
+  const client = new MongoClient(MONGODB_URI);
   await client.connect();
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected to', DB_NAME);
