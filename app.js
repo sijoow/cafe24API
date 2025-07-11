@@ -150,17 +150,14 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
 app.get('/api/ping', (_, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
-
-// ─── 동적 MallId 카테고리 전체 조회 ─────────────────────────────────
 app.get('/api/:mallId/categories/all', async (req, res) => {
   const { mallId } = req.params;
   try {
-    const all = [];
-    let offset = 0, limit = 100;
+    let all = [], offset = 0, limit = 100;
     while (true) {
       const { categories } = await apiRequest(
-        mallId, 'GET',
-        '/api/v2/admin/categories',
+        mallId, 'GET', 
+        '/api/v2/admin/categories', 
         {}, { limit, offset }
       );
       if (!categories.length) break;
@@ -781,7 +778,6 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
 (async () => {
   try {
     await initDb();
-    await getTokenFromDB();
     await initIndexes();
     app.listen(PORT, () => {
       console.log(`▶️ Server running on port ${PORT}`);
