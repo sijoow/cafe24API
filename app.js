@@ -138,6 +138,57 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
   }
 }
 
+// ─── 핸들러 분리 ──────────────────────────────────────────────────
+async function handleGetAllCategories(req, res) {
+  const mallId = req.params.mallId || DEFAULT_MALL;
+  try {
+    let all = [], offset = 0, limit = 100;
+    while (true) {
+      const { categories } = await apiRequest(
+        mallId, 'GET',
+        '/api/v2/admin/categories',
+        {}, { limit, offset }
+      );
+      if (!categories.length) break;
+      all.push(...categories);
+      offset += categories.length;
+    }
+    res.json(all);
+  } catch (err) {
+    console.error('[CATEGORIES ERROR]', err.response?.data || err);
+    res.status(500).json({ error: '전체 카테고리 조회 실패' });
+  }
+}
+
+async function handleGetAllCoupons(req, res) {
+  const mallId = req.params.mallId || DEFAULT_MALL;
+  try {
+    let all = [], offset = 0, limit = 100;
+    while (true) {
+      const { coupons } = await apiRequest(
+        mallId, 'GET',
+        '/api/v2/admin/coupons',
+        {}, { shop_no: 1, limit, offset }
+      );
+      if (!coupons.length) break;
+      all.push(...coupons);
+      offset += coupons.length;
+    }
+    res.json(all.map(c => ({
+      coupon_no:          c.coupon_no,
+      coupon_name:        c.coupon_name,
+      benefit_text:       c.benefit_text,
+      benefit_percentage: c.benefit_percentage,
+      issued_count:       c.issued_count,
+      issue_type:         c.issue_type,
+      available_begin:    c.available_begin_datetime,
+      available_end:      c.available_end_datetime,
+    })));
+  } catch (err) {
+    console.error('[COUPONS ERROR]', err.response?.data || err);
+    res.status(500).json({ error: '쿠폰 조회 실패' });
+  }
+}
 
 // ─── 서버 시작 전 초기화 ─────────────────────────────────────────────
 ;(async () => {
