@@ -219,24 +219,44 @@ app.delete('/api/events/:id', async (req, res) => {
 });
 
 
-async function apiRequest(method, url, data = {}, params = {}) {
-  console.log(`▶️ Caf24 API 호출 → ${method.toUpperCase()} ${url}`, params);
+async function apiRequest(mallId, method, url, data = {}, params = {}) {
+  let { accessToken, refreshToken } = await loadTokens(mallId);
+
   try {
-    const resp = await axios({ method, url, data, params, headers: {
-      Authorization:         `Bearer ${accessToken}`,
-      'Content-Type':        'application/json',
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-    }});
+    const resp = await axios({
+      method, url, data, params,
+      headers: {
+        Authorization:         `Bearer ${accessToken}`,
+        'Content-Type':        'application/json',
+        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+      }
+    });
     return resp.data;
+
   } catch (err) {
-    console.error('❌ Caf24 API 응답 오류', err.response?.status, err.response?.data);
-    if (err.response?.status === 401) {
-      await refreshAccessToken();
-      return apiRequest(method, url, data, params);
+    // 1) 에러 메시지
+    console.error('❌ Caf24 API Error:', err.message);
+
+    // 2) 요청 config (URL, method, params 등)
+    console.error('   → request config:', {
+      url:    err.config?.url,
+      method: err.config?.method,
+      params: err.config?.params,
+      data:   err.config?.data
+    });
+
+    // 3) HTTP 응답(있다면) 상태 코드와 바디
+    if (err.response) {
+      console.error('   → response status:', err.response.status);
+      console.error('   → response data  :', err.response.data);
+    } else {
+      console.warn('   → no response received (network/CORS Error?)');
     }
+
     throw err;
   }
 }
+
 
 // ─── 기본 Ping ───────────────────────────────────────────────────────
 app.get('/api/ping', (_, res) => {
