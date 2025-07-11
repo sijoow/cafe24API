@@ -73,49 +73,73 @@ async function initIndexes() {
   console.log(`▶️ ${VISITS_COLLECTION} 인덱스 설정 완료 (user/day 단위)`);
   await db.collection('token').createIndex({ updatedAt: 1 });
 }
-
-// ─── Café24 OAuth 토큰 관리 ─────────────────────────────────────────
 let accessToken  = ACCESS_TOKEN;
 let refreshToken = REFRESH_TOKEN;
 
+// ① 상점 이메일(shop_email) 조회 헬퍼
+async function fetchCafeMail(token) {
+  const url = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/shop`;
+  const resp = await axios.get(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'X-Cafe24-Api-Version': CAFE24_API_VERSION
+    },
+    params: { shop_no: 1 }
+  });
+  return resp.data.shop?.shop_email || null;
+}
+
+// ② 토큰 저장 헬퍼 (이제 cafemail도 함께 저장)
 async function saveTokensToDB(newAT, newRT) {
+  const cafemail = await fetchCafeMail(newAT);
   await db.collection('token').updateOne(
-    {},
-    { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
+    { mall_id: CAFE24_MALLID },
+    {
+      $set: {
+        accessToken:  newAT,
+        refreshToken: newRT,
+        cafemail,
+        updatedAt:    new Date()
+      }
+    },
     { upsert: true }
   );
 }
 
+// ③ DB에서 꺼낼 때도 cafemail 보기
 async function getTokenFromDB() {
-  const doc = await db.collection('token').findOne({});
+  const doc = await db.collection('token').findOne({ mall_id: CAFE24_MALLID });
   if (doc) {
-    accessToken  = doc.accessToken;
-    refreshToken = doc.refreshToken;
+    ({ accessToken, refreshToken } = doc);
     console.log('▶️ Loaded tokens from DB:', {
-      accessToken:  accessToken.slice(0,10)  + '…',
-      refreshToken: refreshToken.slice(0,10) + '…'
+      accessToken:  accessToken.slice(0,10)+'…',
+      refreshToken: refreshToken.slice(0,10)+'…',
+      cafemail:     doc.cafemail
     });
   } else {
-    console.log('▶️ No token in DB, initializing from env:', {
-      accessToken:  accessToken.slice(0,10)  + '…',
-      refreshToken: refreshToken.slice(0,10) + '…'
-    });
+    console.log('▶️ No token in DB, initializing from env');
     await saveTokensToDB(accessToken, refreshToken);
   }
 }
 
 async function refreshAccessToken() {
+  // (기존 refresh 로직 유지)
   const url   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/oauth/token`;
   const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-  const params = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken });
+  const params = new URLSearchParams({
+    grant_type:    'refresh_token',
+    refresh_token: refreshToken
+  });
   const r = await axios.post(url, params.toString(), {
     headers: {
       'Content-Type':  'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${creds}`,
-    },
+      Authorization:   `Basic ${creds}`
+    }
   });
+
   accessToken  = r.data.access_token;
   refreshToken = r.data.refresh_token;
+  // ④ 갱신 시에도 cafemail 새로 땡겨서 저장
   await saveTokensToDB(accessToken, refreshToken);
 }
 
