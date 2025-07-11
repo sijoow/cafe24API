@@ -1,3 +1,4 @@
+// app.js
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
 
@@ -19,12 +20,10 @@ dayjs.extend(tz);
 const {
   MONGODB_URI,
   DB_NAME,
-  ACCESS_TOKEN,
-  REFRESH_TOKEN,
   CAFE24_CLIENT_ID,
   CAFE24_CLIENT_SECRET,
   CAFE24_API_VERSION,
-  CAFE24_MALLID,
+  REDIRECT_URI,
   PORT = 5000,
   R2_ACCESS_KEY,
   R2_SECRET_KEY,
@@ -34,12 +33,71 @@ const {
   R2_PUBLIC_BASE,
 } = process.env;
 
-// ─── 전역 변수 ─────────────────────────────────────────────────────
+// ─── MongoDB ─────────────────────────────────────────────────────
 let db;
-let accessToken  = ACCESS_TOKEN;
-let refreshToken = REFRESH_TOKEN;
+async function initDb() {
+  const client = new MongoClient(MONGODB_URI);
+  await client.connect();
+  db = client.db(DB_NAME);
+  console.log('▶️ MongoDB connected to', DB_NAME);
+}
 
-// ─── Express 앱 생성 ───────────────────────────────────────────────
+// mallId 별 토큰 로드/저장 헬퍼
+async function loadTokens(mallId) {
+  const doc = await db.collection('tokens').findOne({ mallId });
+  if (!doc) throw new Error(`토큰이 없습니다 for ${mallId}`);
+  return { accessToken: doc.accessToken, refreshToken: doc.refreshToken };
+}
+async function saveTokens(mallId, accessToken, refreshToken) {
+  await db.collection('tokens').updateOne(
+    { mallId },
+    { $set: { accessToken, refreshToken, updatedAt: new Date() } },
+    { upsert: true }
+  );
+}
+// 리프레시 토큰으로 재발급
+async function refreshAccessToken(mallId, oldRefreshToken) {
+  const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+  const params = new URLSearchParams({
+    grant_type:    'refresh_token',
+    refresh_token: oldRefreshToken
+  });
+  const { data } = await axios.post(url, params.toString(), {
+    headers: {
+      'Content-Type':  'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${creds}`
+    }
+  });
+  // DB 저장
+  await saveTokens(mallId, data.access_token, data.refresh_token);
+  return { accessToken: data.access_token, refreshToken: data.refresh_token };
+}
+
+// Caf24 API 요청 헬퍼
+async function apiRequest(mallId, method, path, data = {}, params = {}) {
+  let { accessToken, refreshToken } = await loadTokens(mallId);
+  const url = `https://${mallId}.cafe24api.com${path}`;
+  try {
+    const resp = await axios({
+      method, url, data, params,
+      headers: {
+        Authorization:           `Bearer ${accessToken}`,
+        'X-Cafe24-Api-Version':  CAFE24_API_VERSION
+      }
+    });
+    return resp.data;
+  } catch (err) {
+    if (err.response?.status === 401) {
+      // 토큰 만료 → 재발급 후 재시도
+      ({ accessToken, refreshToken } = await refreshAccessToken(mallId, refreshToken));
+      return apiRequest(mallId, method, path, data, params);
+    }
+    throw err;
+  }
+}
+
+// ─── Express 앱 설정 ─────────────────────────────────────────────
 const app = express();
 app.use(cors());
 app.use(compression());
@@ -47,7 +105,7 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── Multer 설정 ───────────────────────────────────────────────────
+// Multer (파일 업로드)
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const storage = multer.diskStorage({
@@ -56,7 +114,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ─── R2 클라이언트 ─────────────────────────────────────────────────
+// R2 클라이언트 (이미지 저장)
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const s3Client = new S3Client({
   region:   R2_REGION,
@@ -65,213 +123,85 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
-// ─── MongoDB 연결/인덱스/토큰 헬퍼 ──────────────────────────────────
-async function initDb() {
-  const client = new MongoClient(MONGODB_URI);
-  await client.connect();
-  db = client.db(DB_NAME);
-  console.log('▶️ MongoDB connected to', DB_NAME);
-}
-
-function visitsCol() {
-  return db.collection(`visits_${CAFE24_MALLID}`);
-}
-
-async function initIndexes() {
-  console.log('🔧 Setting up indexes for', `visits_${CAFE24_MALLID}`);
-  const col = visitsCol();
-  try { await col.dropIndex('unique_per_user_day'); } catch {}
-  await col.createIndex(
-    { pageId:1, visitorId:1, dateKey:1 },
-    { unique: true, name: 'unique_per_user_day' }
-  );
-  console.log(`✔️ Index created on ${col.collectionName}`);
-  await db.collection('tokens').createIndex({ updatedAt: 1 });
-}
-
-async function saveTokensToDB(newAT, newRT) {
-  await db.collection('tokens').updateOne(
-    {}, { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
-    { upsert: true }
-  );
-}
-async function getTokenFromDB() {
-  const doc = await db.collection('tokens').findOne({});
-  if (doc) {
-    accessToken  = doc.accessToken;
-    refreshToken = doc.refreshToken;
-  } else {
-    await saveTokensToDB(accessToken, refreshToken);
-  }
-}
-async function refreshAccessToken() {
-  const url    = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/oauth/token`;
-  const creds  = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-  const params = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken });
-  const r      = await axios.post(url, params.toString(), {
-    headers: {
-      'Content-Type':  'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${creds}`,
-    },
-  });
-  accessToken  = r.data.access_token;
-  refreshToken = r.data.refresh_token;
-  await saveTokensToDB(accessToken, refreshToken);
-}
-async function apiRequest(mallId, method, path, data = {}, params = {}) {
-  // 1) mallId 에 맞는 토큰 로드
-  let { accessToken, refreshToken } = await loadTokens(mallId);
-  // 2) 요청
-  const url = `https://${mallId}.cafe24api.com${path}`;
+// ─── OAuth 콜백 (카페24에서 code, shop 받아서 토큰 교환) ────────────
+app.get('/redirect', async (req, res) => {
   try {
-    return await axios({ method, url, data, params, headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION
-    }});
+    const { code, shop } = req.query;
+    if (!code || !shop) return res.status(400).send('code 또는 shop 파라미터 누락');
+    const tokenUrl = `https://${shop}.cafe24api.com/api/v2/oauth/token`;
+    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const params = new URLSearchParams({
+      grant_type:   'authorization_code',
+      code,
+      client_id:    CAFE24_CLIENT_ID,
+      redirect_uri: REDIRECT_URI
+    });
+    const { data } = await axios.post(tokenUrl, params.toString(), {
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`
+      }
+    });
+    // DB 저장
+    await saveTokens(shop, data.access_token, data.refresh_token);
+    res.send('카페24 인증 및 토큰 저장 완료!');
   } catch (err) {
-    if (err.response?.status === 401) {
-      // 리프레시
-      ({ accessToken, refreshToken } = await refreshAccessToken(mallId, refreshToken));
-      return apiRequest(mallId, method, path, data, params);
-    }
-    throw err;
+    console.error('[OAuth 콜백 에러]', err.response?.data || err);
+    res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
-}
+});
 
-// ─── 앱 초기화 & 라우트 등록 ─────────────────────────────────────────
-;(async () => {
-  try {
-    await initDb();
-    await getTokenFromDB();
-    await initIndexes();
-    console.log(`▶️ final accessToken=${accessToken.slice(0,10)}…`);
-
-    // ─── 여기부터 라우트 정의 ────────────────────────────────────────
-
-    // Ping
-    app.get('/api/ping', (_, res) => {
-      res.json({ ok: true, time: new Date().toISOString() });
-    });
-
-    // 이미지 업로드
-    app.post('/api/uploads/image', upload.single('file'), async (req, res) => {
-      const localPath  = req.file.path;
-      const key        = req.file.filename;
-      const fileStream = fs.createReadStream(localPath);
-      try {
-        await s3Client.send(new PutObjectCommand({
-          Bucket:      R2_BUCKET_NAME,
-          Key:         key,
-          Body:        fileStream,
-          ContentType: req.file.mimetype,
-          ACL:         'public-read',
-        }));
-        res.json({ url: `${R2_PUBLIC_BASE}/${key}` });
-      } catch (err) {
-        console.error('파일 업로드 에러', err);
-        res.status(500).json({ error: '파일 업로드 실패' });
-      } finally {
-        fs.unlink(localPath, ()=>{});
-      }
-    });
-
-    // 이벤트 이미지 삭제
-    app.delete('/api/events/:eventId/images/:imageId', async (req, res) => {
-      try {
-        const ev  = await db.collection('events').findOne({ _id: new ObjectId(req.params.eventId) });
-        if (!ev) return res.status(404).json({ error: '이벤트가 없습니다' });
-        const img = ev.images.find(i => String(i._id) === req.params.imageId);
-        if (img?.src) {
-          const key = new URL(img.src).pathname.replace(/^\//,'');
-          await s3Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
-        }
-        await db.collection('events').updateOne(
-          { _id: new ObjectId(req.params.eventId) },
-          { $pull: { images: { _id: new ObjectId(req.params.imageId) } } }
-        );
-        res.json({ success: true });
-      } catch (err) {
-        console.error('이벤트 이미지 삭제 에러', err);
-        res.status(500).json({ error: '이미지 삭제 실패' });
-      }
-    });
-
-    // 이벤트 삭제 & visits 정리
-    app.delete('/api/events/:id', async (req, res) => {
-      try {
-        const ev = await db.collection('events').findOne({ _id: new ObjectId(req.params.id) });
-        if (!ev) return res.status(404).json({ error: '이벤트가 없습니다' });
-
-        // R2 이미지 삭제
-        const keys = (ev.images||[]).map(img => {
-          const path = img.src.startsWith('http')
-            ? new URL(img.src).pathname
-            : `/${img.src}`;
-          return path.replace(/^\//,'');
-        });
-        await Promise.all(keys.map(key =>
-          s3Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }))
-        ));
-
-        // 이벤트 & visits 삭제
-        await db.collection('events').deleteOne({ _id: new ObjectId(req.params.id) });
-        await visitsCol().deleteMany({ pageId: req.params.id });
-
-        res.json({ success: true });
-      } catch (err) {
-        console.error('이벤트 삭제 에러', err);
-        res.status(500).json({ error: '삭제 실패' });
-      }
-    });
-
-
-// ─── 기본 Ping ───────────────────────────────────────────────────────
+// ─── 기본 Ping ─────────────────────────────────────────────────────
 app.get('/api/ping', (_, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-app.get('/api/categories/all', async (req, res) => {
+// ─── 동적 MallId 카테고리 전체 조회 ─────────────────────────────────
+app.get('/api/:mallId/categories/all', async (req, res) => {
+  const { mallId } = req.params;
   try {
     const all = [];
     let offset = 0, limit = 100;
     while (true) {
-      const url = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/categories`;
-      const { categories } = await apiRequest('GET', url, {}, { limit, offset });
+      const { categories } = await apiRequest(
+        mallId, 'GET',
+        '/api/v2/admin/categories',
+        {}, { limit, offset }
+      );
       if (!categories.length) break;
       all.push(...categories);
       offset += categories.length;
     }
     res.json(all);
   } catch (err) {
-    res.status(500).json({ message: '전체 카테고리 조회 실패', error: err.message });
+    console.error('[CATEGORIES ERROR]', err.response?.data || err);
+    res.status(500).json({ error: '전체 카테고리 조회 실패' });
   }
 });
 
-app.get('/api/coupons', async (req, res) => {
+// ─── 동적 MallId 쿠폰 전체 조회 ─────────────────────────────────────
+app.get('/api/:mallId/coupons', async (req, res) => {
+  const { mallId } = req.params;
   try {
     const all = [];
     let offset = 0, limit = 100;
     while (true) {
-      const url = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/coupons`;
-      const { coupons } = await apiRequest('GET', url, {}, { shop_no: 1, limit, offset });
+      const { coupons } = await apiRequest(
+        mallId, 'GET',
+        '/api/v2/admin/coupons',
+        {}, { shop_no: 1, limit, offset }
+      );
       if (!coupons.length) break;
       all.push(...coupons);
       offset += coupons.length;
     }
-    res.json(all.map(c => ({
-      coupon_no:          c.coupon_no,
-      coupon_name:        c.coupon_name,
-      benefit_text:       c.benefit_text,
-      benefit_percentage: c.benefit_percentage,
-      issued_count:       c.issued_count,
-      issue_type:         c.issue_type,
-      available_begin:    c.available_begin_datetime,
-      available_end:      c.available_end_datetime,
-    })));
+    res.json(all);
   } catch (err) {
-    res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
+    console.error('[COUPONS ERROR]', err.response?.data || err);
+    res.status(500).json({ error: '쿠폰 조회 실패' });
   }
 });
+
 
 // ─── 이벤트 CRUD (MongoDB) ─────────────────────────────────────────
 app.get('/api/events', async (req, res) => {
@@ -845,14 +775,14 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
     });
   }
 });
-
-    // ─── 서버 시작 ───────────────────────────────────────────────────────
-    app.listen(PORT, () => {
-      console.log(`▶️ Server running on port ${PORT}`);
-    });
-
+// ─── 서버 시작 ───────────────────────────────────────────────────────
+;(async () => {
+  try {
+    await initDb();
+    console.log(`▶️ Server running on port ${PORT}`);
+    app.listen(PORT);
   } catch (err) {
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   }
-})(); 
+})();
