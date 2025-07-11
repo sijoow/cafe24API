@@ -57,46 +57,53 @@ function visitsCol() {
   return db.collection(VISITS_COLLECTION);
 }
 
+// ─── events 컬렉션 헬퍼 ────────────────────────────────────────────
+function eventsCol() {
+  return db.collection('events');
+}
+
 // ─── visits 컬렉션 인덱스 설정 ────────────────────────────────────
 async function initIndexes() {
   const col = visitsCol();
-  try { await col.dropIndex('unique_view_per_day'); } catch {}
+  try { await col.dropIndex('unique_per_user_day'); } catch {}
   await col.createIndex(
-    { pageId:1, visitorId:1, dateKey:1 },
+    { pageId: 1, visitorId: 1, dateKey: 1 },
     { unique: true, name: 'unique_per_user_day' }
   );
   console.log(`▶️ ${VISITS_COLLECTION} 인덱스 설정 완료 (user/day 단위)`);
   await db.collection('token').createIndex({ updatedAt: 1 });
 }
 
-
-
 // ─── Café24 OAuth 토큰 관리 ─────────────────────────────────────────
 let accessToken  = ACCESS_TOKEN;
 let refreshToken = REFRESH_TOKEN;
+
 async function saveTokensToDB(newAT, newRT) {
   await db.collection('token').updateOne(
-    {}, { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
+    {},
+    { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
     { upsert: true }
   );
 }
+
 async function getTokenFromDB() {
-   const doc = await db.collection('token').findOne({});
-   if (doc) {
-     accessToken  = doc.accessToken;
-     refreshToken = doc.refreshToken;
-     console.log('▶️ Loaded tokens from DB:', {
-       accessToken:  accessToken.slice(0,10)  + '…',
-       refreshToken: refreshToken.slice(0,10) + '…'
-     });
-   } else {
-     console.log('▶️ No token in DB, initializing from env:', {
-       accessToken:  accessToken.slice(0,10)  + '…',
-       refreshToken: refreshToken.slice(0,10) + '…'
-     });
-     await saveTokensToDB(accessToken, refreshToken);
-   }
-   }
+  const doc = await db.collection('token').findOne({});
+  if (doc) {
+    accessToken  = doc.accessToken;
+    refreshToken = doc.refreshToken;
+    console.log('▶️ Loaded tokens from DB:', {
+      accessToken:  accessToken.slice(0,10)  + '…',
+      refreshToken: refreshToken.slice(0,10) + '…'
+    });
+  } else {
+    console.log('▶️ No token in DB, initializing from env:', {
+      accessToken:  accessToken.slice(0,10)  + '…',
+      refreshToken: refreshToken.slice(0,10) + '…'
+    });
+    await saveTokensToDB(accessToken, refreshToken);
+  }
+}
+
 async function refreshAccessToken() {
   const url   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/oauth/token`;
   const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
@@ -111,6 +118,7 @@ async function refreshAccessToken() {
   refreshToken = r.data.refresh_token;
   await saveTokensToDB(accessToken, refreshToken);
 }
+
 async function apiRequest(method, url, data = {}, params = {}) {
   try {
     const resp = await axios({ method, url, data, params, headers: {
@@ -128,21 +136,18 @@ async function apiRequest(method, url, data = {}, params = {}) {
   }
 }
 
-// ─── 초기화 순서: DB → 토큰 → 인덱스 ─────────────────────────────────
+// ─── 초기화 순서: DB → 토큰 → 인덱스 → 서버 시작 ────────────────────────
 initDb()
   .then(getTokenFromDB)
   .then(initIndexes)
   .then(() => {
-    // (5)—— 최종적으로 서버 시작 전에 토큰 최종 상태
     console.log('▶️ final tokens at server start', { accessToken, refreshToken });
-    app.listen(PORT, () => {
-      console.log(`▶️ Server running on port ${PORT}`);
-    });
   })
   .catch(err => {
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   });
+
 // ─── Multer 설정 (임시 디스크 저장) ─────────────────────────────────
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
@@ -189,14 +194,14 @@ app.post('/api/uploads/image', upload.single('file'), async (req, res) => {
 app.delete('/api/events/:eventId/images/:imageId', async (req, res) => {
   const { eventId, imageId } = req.params;
   try {
-    const ev = await db.collection('events').findOne({ _id: new ObjectId(eventId) });
+    const ev = await eventsCol().findOne({ _id: new ObjectId(eventId) });
     if (!ev) return res.status(404).json({ error: '이벤트가 없습니다' });
     const img = ev.images.find(i => String(i._id) === imageId);
     if (img?.src) {
       const key = new URL(img.src).pathname.replace(/^\//,'');
       await s3Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
     }
-    await db.collection('events').updateOne(
+    await eventsCol().updateOne(
       { _id: new ObjectId(eventId) },
       { $pull: { images: { _id: new ObjectId(imageId) } } }
     );
@@ -207,7 +212,6 @@ app.delete('/api/events/:eventId/images/:imageId', async (req, res) => {
 });
 
 // ─── 이벤트 삭제 & 관련 데이터 정리 ─────────────────────────────────
-const eventsCol = () => db.collection('events');
 app.delete('/api/events/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -215,7 +219,7 @@ app.delete('/api/events/:id', async (req, res) => {
     if (!ev) return res.status(404).json({ error: '이벤트가 없습니다' });
 
     // R2 이미지 삭제
-    const keys = (ev.images||[]).map(img => {
+    const keys = (ev.images || []).map(img => {
       const p = img.src.startsWith('http') ? new URL(img.src).pathname : `/${img.src}`;
       return p.replace(/^\//,'');
     });
@@ -223,10 +227,8 @@ app.delete('/api/events/:id', async (req, res) => {
       s3Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }))
     ));
 
-    // 이벤트 문서 삭제
+    // 이벤트 & visits 문서 삭제
     await eventsCol().deleteOne({ _id: new ObjectId(id) });
-
-    // 관련 visits 요약 문서 삭제
     await visitsCol().deleteMany({ pageId: id });
 
     res.json({ success: true });
@@ -234,26 +236,6 @@ app.delete('/api/events/:id', async (req, res) => {
     res.status(500).json({ error: '삭제 실패' });
   }
 });
-
-
-async function apiRequest(method, url, data = {}, params = {}) {
-  console.log(`▶️ Caf24 API 호출 → ${method.toUpperCase()} ${url}`, params);
-  try {
-    const resp = await axios({ method, url, data, params, headers: {
-      Authorization:         `Bearer ${accessToken}`,
-      'Content-Type':        'application/json',
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-    }});
-    return resp.data;
-  } catch (err) {
-    console.error('❌ Caf24 API 응답 오류', err.response?.status, err.response?.data);
-    if (err.response?.status === 401) {
-      await refreshAccessToken();
-      return apiRequest(method, url, data, params);
-    }
-    throw err;
-  }
-}
 
 // ─── 기본 Ping ───────────────────────────────────────────────────────
 app.get('/api/ping', (_, res) => {
