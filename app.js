@@ -86,17 +86,17 @@ async function initIndexes() {
     { unique: true, name: 'unique_per_user_day' }
   );
   console.log(`✔️ Index created on ${col.collectionName}`);
-  await db.collection('token').createIndex({ updatedAt: 1 });
+  await db.collection('tokens').createIndex({ updatedAt: 1 });
 }
 
 async function saveTokensToDB(newAT, newRT) {
-  await db.collection('token').updateOne(
+  await db.collection('tokens').updateOne(
     {}, { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
     { upsert: true }
   );
 }
 async function getTokenFromDB() {
-  const doc = await db.collection('token').findOne({});
+  const doc = await db.collection('tokens').findOne({});
   if (doc) {
     accessToken  = doc.accessToken;
     refreshToken = doc.refreshToken;
@@ -117,25 +117,6 @@ async function refreshAccessToken() {
   accessToken  = r.data.access_token;
   refreshToken = r.data.refresh_token;
   await saveTokensToDB(accessToken, refreshToken);
-}
-
-// ─── Caf24 API 호출 헬퍼 ───────────────────────────────────────────
-async function apiRequest(method, url, data = {}, params = {}) {
-  try {
-    const resp = await axios({ method, url, data, params, headers: {
-      Authorization:         `Bearer ${accessToken}`,
-      'Content-Type':        'application/json',
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-    }});
-    return resp.data;
-  } catch (err) {
-    if (err.response?.status === 401) {
-      await refreshAccessToken();
-      return apiRequest(method, url, data, params);
-    }
-    console.error('❌ Caf24 API Error:', err.response?.status, err.response?.data);
-    throw err;
-  }
 }
 
 // ─── 앱 초기화 & 라우트 등록 ─────────────────────────────────────────
