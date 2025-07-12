@@ -47,6 +47,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ─── MongoDB 연결 & visits 컬렉션 헬퍼 ───────────────────────────────
 let db;
 async function initDb() {
+  console.log('▶️ MONGODB_URI:', MONGODB_URI);
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
   db = client.db(DB_NAME);
@@ -1099,8 +1100,4 @@ app.put('/api/events/:id', async (req, res) => {
   }
 });
 
-// ─── 서버 시작 ───────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`▶️ Server running on port ${PORT}`);
-});
 
