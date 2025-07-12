@@ -139,27 +139,19 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
     throw err;
   }
 }
-
-// ─── DB에서 기존 토큰 미리 로드 ──────────────────────────────────────
-async function preloadTokensFromDb() {
-  const docs = await db.collection('tokens').find().toArray();
-  docs.forEach(({ mallId, accessToken, refreshToken }) => {
-    globalTokens[mallId] = { accessToken, refreshToken };
-  });
-  console.log('▶️ Preloaded tokens for', Object.keys(globalTokens));
-}
 // ─── OAuth 인증 콜백 라우트 ────────────────────────────────────────
 app.get('/redirect', async (req, res) => {
   const { code, shop } = req.query;
-
-  // 호출 자체를 로그로 남겨둡니다.
   console.log('📲 [REDIRECT ROUTE] 호출됨', { code, shop });
 
   if (!code || !shop) {
-    console.log('⚠️ [REDIRECT ROUTE] code 또는 shop 누락');
+    console.warn('⚠️ [REDIRECT ROUTE] code/shop 누락');
     return res
       .status(400)
-      .send('<h1>잘못된 접근입니다.</h1><p>code 또는 shop 파라미터가 필요합니다.</p>');
+      .send(`
+        <h1>잘못된 접근입니다</h1>
+        <p>code 또는 shop 파라미터가 필요합니다.</p>
+      `);
   }
 
   try {
@@ -168,16 +160,16 @@ app.get('/redirect', async (req, res) => {
       `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
     ).toString('base64');
 
+    console.log(`🔑 [${shop}] 토큰 교환 시작: ${tokenUrl}`);
+
     const params = new URLSearchParams({
       grant_type:    'authorization_code',
       code,
       client_id:     CAFE24_CLIENT_ID,
       client_secret: CAFE24_CLIENT_SECRET,
-      redirect_uri:  REDIRECT_URI,  // env 에 설정한 값
+      redirect_uri:  REDIRECT_URI,
       shop
     }).toString();
-
-    console.log(`🔑 [${shop}] 토큰 교환 시작 → ${tokenUrl}`);
 
     const tokenResp = await axios.post(tokenUrl, params, {
       headers: {
@@ -187,8 +179,6 @@ app.get('/redirect', async (req, res) => {
     });
 
     const { access_token, refresh_token } = tokenResp.data;
-
-    // DB에 Upsert
     await db.collection('tokens').updateOne(
       { mallId: shop },
       {
@@ -201,26 +191,20 @@ app.get('/redirect', async (req, res) => {
       { upsert: true }
     );
 
-    console.log(`✔️ [${shop}] OAuth 인증 성공, 토큰 저장 완료`);
-    console.log(`   • access_token (첫20자): ${access_token.slice(0,20)}…`);
-    console.log(`   • refresh_token (첫20자): ${refresh_token.slice(0,20)}…`);
+    console.log(`✔️ [${shop}] OAuth 인증 성공 — 토큰 저장 완료`);
+    console.log(`   • access (20자): ${access_token.slice(0,20)}…`);
+    console.log(`   • refresh (20자): ${refresh_token.slice(0,20)}…`);
 
-    // 클라이언트로는 HTML 페이지를 띄워 줍니다.
+    // 사용자에게 간단한 완료 화면을 보여주고 /admin 으로 리다이렉트
     return res.send(`
       <!DOCTYPE html>
       <html lang="ko">
-      <head>
-        <meta charset="utf-8" />
-        <title>인증 완료</title>
-      </head>
+      <head><meta charset="utf-8"/><title>인증 완료</title></head>
       <body style="text-align:center; padding:2rem;">
         <h1>🛠️ OAuth 인증 완료!</h1>
-        <p>앱 설치가 정상적으로 완료되었습니다.</p>
-        <p>1.5초 후 관리자 페이지로 이동합니다…</p>
+        <p>앱 설치가 완료되었습니다. 1.5초 후 관리자 페이지로 이동합니다…</p>
         <script>
-          setTimeout(() => {
-            window.location.href = '/admin';
-          }, 1500);
+          setTimeout(() => window.location.href = '/admin', 1500);
         </script>
       </body>
       </html>
@@ -232,6 +216,7 @@ app.get('/redirect', async (req, res) => {
       .send('<h1>OAuth 인증에 실패했습니다.</h1><p>로그를 확인해주세요.</p>');
   }
 });
+
 
 // ─── 핸들러 분리 ──────────────────────────────────────────────────
 async function handleGetAllCategories(req, res) {
