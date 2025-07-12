@@ -44,7 +44,10 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 const root = path.join(__dirname, 'public')              // React 빌드 폴더
-const redirectPath = new URL(process.env.REDIRECT_URI).pathname;
+const redirectPath = new URL(process.env.REDIRECT_URI).pathname; // '/redirect'
+app.get(redirectPath, (req, res) => {
+  res.sendFile(path.join(root, 'index.html'));
+});
 
 // 1) React 정적 파일 한 번만 서빙
 app.use(express.static(root));
