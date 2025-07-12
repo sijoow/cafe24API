@@ -148,85 +148,98 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
     throw err;
   }
 }
-
-// ─── 1) 루트 접근 시 mall_id 파라미터가 있으면 승인 페이지로 리디렉트 ───
+// ─── 1) root("/") 로 설치 시작 시 → 카페24 OAuth로 리다이렉트 ───────────────────────────────────
 app.get('/', (req, res, next) => {
   const { mall_id } = req.query;
   if (mall_id) {
+    // 동적으로 mall_id를 붙인 콜백 URI
+    const callbackUri = `${REDIRECT_URI}?mall_id=${mall_id}`;
+
     const authorizeUrl =
       `https://${mall_id}.cafe24api.com/api/v2/oauth/authorize` +
       `?response_type=code` +
       `&client_id=${CAFE24_CLIENT_ID}` +
+      `&redirect_uri=${encodeURIComponent(callbackUri)}` +
       `&state=app_install` +
-      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
-      `&scope=mall.read_category,mall.read_product,mall.read_analytics` +
-      `&shop_no=1`;
+      `&scope=mall.read_category,mall.read_product,mall.read_analytics`;
+
     return res.redirect(authorizeUrl);
   }
-  next();
+  next(); // mall_id 없으면 static 파일 서빙
 });
+
 
 // ─── 2) React 정적 파일 서빙 ─────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── 3) OAuth 인증 콜백 ────────────────────────────────────────────
+// ─── 2) /redirect 콜백 핸들러 ───────────────────────────────────────────────────────────────────
 app.get('/redirect', async (req, res) => {
-  const { code, shop: shopParam, mall_id } = req.query;
-  const shop = shopParam || mall_id;
-  console.log('📲 [REDIRECT] code/shop=', code, shop);
+  const code    = req.query.code;
+  const mall_id = req.query.mall_id;      // 반드시 mall_id가 붙어야 합니다.
 
-  if (!code || !shop) {
-    return res.status(400).send(`
-      <h1>잘못된 접근입니다</h1>
-      <p>code 또는 shop(mall_id) 파라미터가 필요합니다.</p>
-    `);
+  console.log('📲 [REDIRECT] 호출됨', { code, mall_id });
+  if (!code || !mall_id) {
+    return res
+      .status(400)
+      .send(`<h1>잘못된 접근입니다</h1><p>code 또는 mall_id 파라미터가 필요합니다.</p>`);
   }
 
   try {
-    const tokenUrl = `https://${shop}.cafe24api.com/api/v2/oauth/token`;
-    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const params   = new URLSearchParams({
+    const tokenUrl = `https://${mall_id}.cafe24api.com/api/v2/oauth/token`;
+    const creds    = Buffer.from(
+      `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
+    ).toString('base64');
+
+    // 토큰 교환 요청
+    const params = new URLSearchParams({
       grant_type:    'authorization_code',
       code,
       client_id:     CAFE24_CLIENT_ID,
       client_secret: CAFE24_CLIENT_SECRET,
-      redirect_uri:  REDIRECT_URI,
-      shop
+      redirect_uri:  `${REDIRECT_URI}?mall_id=${mall_id}`,  // root와 동일하게 mall_id 포함
+      shop:          mall_id
     }).toString();
-
-    console.log(`🔑 [${shop}] Token exchange: ${tokenUrl}`);
 
     const tokenResp = await axios.post(tokenUrl, params, {
       headers: {
         'Content-Type':  'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${creds}`
+        'Authorization': `Basic ${creds}`,
       }
     });
 
     const { access_token, refresh_token } = tokenResp.data;
     await db.collection('tokens').updateOne(
-      { mallId: shop },
-      { $set: { accessToken: access_token, refreshToken: refresh_token, updatedAt: new Date() } },
+      { mallId: mall_id },
+      { $set: {
+          accessToken:  access_token,
+          refreshToken: refresh_token,
+          updatedAt:    new Date()
+        }
+      },
       { upsert: true }
     );
-    await saveTokens(shop, access_token, refresh_token);
 
-    console.log(`✔️ [${shop}] OAuth 인증 성공`);
+    console.log(`✔️ [${mall_id}] OAuth 성공, DB 저장 완료`);
 
+    // 1.5초 후 React 관리자 페이지로 돌려보내기
     return res.send(`
       <!DOCTYPE html>
       <html lang="ko">
       <head><meta charset="utf-8"/><title>인증 완료</title></head>
       <body style="text-align:center; padding:2rem;">
-        <h1>🛠️ OAuth 인증 완료!</h1>
-        <p>앱 설치가 완료되었습니다. 1.5초 후 관리자 페이지로 이동합니다…</p>
-        <script>setTimeout(() => window.location.href = '/admin', 1500);</script>
+        <h1>🛠️ 인증 완료!</h1>
+        <p>앱 설치가 완료되었습니다. 잠시만 기다려 주세요…</p>
+        <script>
+          setTimeout(() => window.location.href = '/admin', 1500);
+        </script>
       </body>
       </html>
     `);
   } catch (err) {
     console.error('❌ [REDIRECT ERROR]', err.response?.data || err);
-    return res.status(500).send('<h1>OAuth 인증에 실패했습니다.</h1><p>로그를 확인해주세요.</p>');
+    return res
+      .status(500)
+      .send('<h1>OAuth 인증 실패</h1><p>서버 로그를 확인하세요.</p>');
   }
 });
 
