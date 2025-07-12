@@ -44,16 +44,11 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// React SPA 정적 파일들 서빙
-const root = path.join(__dirname, 'public');
-app.use(express.static(root));
+const redirectPath = new URL(REDIRECT_URI).pathname;
 
-// OAuth 콜백용 프론트엔드 라우트 핸들러
-app.get('/redirect', (req, res) => {
+app.get(redirectPath, (req, res) => {
   res.sendFile(path.join(root, 'index.html'));
 });
-
-
 
 // ─── MongoDB 연결 & visits 컬렉션 헬퍼 ───────────────────────────────
 let db;
