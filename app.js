@@ -42,7 +42,7 @@ app.use(cors());
 app.use(compression());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
 const root = path.join(__dirname, 'public')              // React 빌드 폴더
 const redirectPath = new URL(process.env.REDIRECT_URI).pathname;
 
