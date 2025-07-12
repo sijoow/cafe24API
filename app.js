@@ -148,41 +148,88 @@ async function preloadTokensFromDb() {
   });
   console.log('▶️ Preloaded tokens for', Object.keys(globalTokens));
 }
-
 // ─── OAuth 인증 콜백 라우트 ────────────────────────────────────────
 app.get('/redirect', async (req, res) => {
   const { code, shop } = req.query;
+
+  // 호출 자체를 로그로 남겨둡니다.
+  console.log('📲 [REDIRECT ROUTE] 호출됨', { code, shop });
+
   if (!code || !shop) {
-    return res.status(400).json({ error: 'code 또는 shop 파라미터가 필요합니다.' });
+    console.log('⚠️ [REDIRECT ROUTE] code 또는 shop 누락');
+    return res
+      .status(400)
+      .send('<h1>잘못된 접근입니다.</h1><p>code 또는 shop 파라미터가 필요합니다.</p>');
   }
+
   try {
     const tokenUrl = `https://${shop}.cafe24api.com/api/v2/oauth/token`;
-    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const params   = new URLSearchParams({
+    const creds    = Buffer.from(
+      `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
+    ).toString('base64');
+
+    const params = new URLSearchParams({
       grant_type:    'authorization_code',
       code,
       client_id:     CAFE24_CLIENT_ID,
       client_secret: CAFE24_CLIENT_SECRET,
-      redirect_uri:  REDIRECT_URI,
+      redirect_uri:  REDIRECT_URI,  // env 에 설정한 값
       shop
     }).toString();
+
+    console.log(`🔑 [${shop}] 토큰 교환 시작 → ${tokenUrl}`);
+
     const tokenResp = await axios.post(tokenUrl, params, {
       headers: {
         'Content-Type':  'application/x-www-form-urlencoded',
         'Authorization': `Basic ${creds}`,
       }
     });
+
     const { access_token, refresh_token } = tokenResp.data;
+
+    // DB에 Upsert
     await db.collection('tokens').updateOne(
       { mallId: shop },
-      { $set: { accessToken: access_token, refreshToken: refresh_token, updatedAt: new Date() } },
+      {
+        $set: {
+          accessToken:  access_token,
+          refreshToken: refresh_token,
+          updatedAt:    new Date()
+        }
+      },
       { upsert: true }
     );
+
     console.log(`✔️ [${shop}] OAuth 인증 성공, 토큰 저장 완료`);
-    res.json({ ok: true });
+    console.log(`   • access_token (첫20자): ${access_token.slice(0,20)}…`);
+    console.log(`   • refresh_token (첫20자): ${refresh_token.slice(0,20)}…`);
+
+    // 클라이언트로는 HTML 페이지를 띄워 줍니다.
+    return res.send(`
+      <!DOCTYPE html>
+      <html lang="ko">
+      <head>
+        <meta charset="utf-8" />
+        <title>인증 완료</title>
+      </head>
+      <body style="text-align:center; padding:2rem;">
+        <h1>🛠️ OAuth 인증 완료!</h1>
+        <p>앱 설치가 정상적으로 완료되었습니다.</p>
+        <p>1.5초 후 관리자 페이지로 이동합니다…</p>
+        <script>
+          setTimeout(() => {
+            window.location.href = '/admin';
+          }, 1500);
+        </script>
+      </body>
+      </html>
+    `);
   } catch (err) {
-    console.error('[REDIRECT ERROR]', err.response?.data || err);
-    res.status(500).json({ error: 'OAuth 인증에 실패했습니다.' });
+    console.error('❌ [REDIRECT ERROR]', err.response?.data || err);
+    return res
+      .status(500)
+      .send('<h1>OAuth 인증에 실패했습니다.</h1><p>로그를 확인해주세요.</p>');
   }
 });
 
@@ -693,3 +740,6 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
     process.exit(1);
   }
 })();
+
+
+
