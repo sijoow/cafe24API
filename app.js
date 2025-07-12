@@ -43,10 +43,13 @@ app.use(compression());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+const root = path.join(__dirname, 'public');
+app.use(express.static(root));
 
-const redirectPath = new URL(REDIRECT_URI).pathname;
-
-app.get(redirectPath, (req, res) => {
+// API 라우트들 선언이 끝난 뒤에
+app.get('*', (req, res) => {
+  // 단, /api 로 시작하는 요청은 다음 미들웨어로 넘겨야 합니다.
+  if (req.path.startsWith('/api/')) return res.status(404).end();
   res.sendFile(path.join(root, 'index.html'));
 });
 
