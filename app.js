@@ -53,9 +53,11 @@ async function initDb() {
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected');
 }
+// 기존
 const VISITS_COLLECTION = `visits_${CAFE24_MALLID}`;
-function visitsCol() {
-  return db.collection(VISITS_COLLECTION);
+// → shop별로 데이터 분리하려면
+function visitsCol(shop) {
+  return db.collection(`visits_${shop}`);
 }
 
 // ─── visits 컬렉션 인덱스 설정 ────────────────────────────────────
@@ -344,30 +346,32 @@ app.get('/api/categories/all', async (req, res) => {
 
 
 app.get('/api/coupons', async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).json({ error: 'shop 파라미터가 필요합니다.' });
+
   try {
     const all = [];
     let offset = 0, limit = 100;
     while (true) {
-      const url = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/coupons`;
-      const { coupons } = await apiRequest('GET', url, {}, { shop_no: 1, limit, offset });
+      // path만 넘기고 shop을 첫 번째 인자로
+      const { coupons } = await apiRequest(
+        shop,
+        'GET',
+        '/api/v2/admin/coupons',
+        {},           // body
+        { shop_no:1, limit, offset }  // query
+      );
       if (!coupons.length) break;
       all.push(...coupons);
       offset += coupons.length;
     }
-    res.json(all.map(c => ({
-      coupon_no:          c.coupon_no,
-      coupon_name:        c.coupon_name,
-      benefit_text:       c.benefit_text,
-      benefit_percentage: c.benefit_percentage,
-      issued_count:       c.issued_count,
-      issue_type:         c.issue_type,
-      available_begin:    c.available_begin_datetime,
-      available_end:      c.available_end_datetime,
-    })));
+    return res.json(all);
   } catch (err) {
-    res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
+    console.error(err);
+    return res.status(500).json({ error: err.message });
   }
 });
+
 
 // ─── 이벤트 CRUD (MongoDB) ─────────────────────────────────────────
 app.get('/api/events', async (req, res) => {
