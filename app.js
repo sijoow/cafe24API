@@ -153,7 +153,7 @@ app.get('/', (req, res, next) => {
   const { mall_id } = req.query;
   if (mall_id) {
     // 동적으로 mall_id를 붙인 콜백 URI
-    const callbackUri = `${REDIRECT_URI}?mall_id=${mall_id}`;
+   const callbackUri = `${REDIRECT_URI}?shop=${mall_id}`;
 
     const authorizeUrl =
       `https://${mall_id}.cafe24api.com/api/v2/oauth/authorize` +
@@ -174,8 +174,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── 2) /redirect 콜백 핸들러 ───────────────────────────────────────────────────────────────────
 app.get('/redirect', async (req, res) => {
-  const code    = req.query.code;
-  const mall_id = req.query.mall_id;      // 반드시 mall_id가 붙어야 합니다.
+const code    = req.query.code;
+  const mall_id = req.query.shop || req.query.mall_id;    // 반드시 mall_id가 붙어야 합니다.
 
   console.log('📲 [REDIRECT] 호출됨', { code, mall_id });
   if (!code || !mall_id) {
@@ -196,7 +196,7 @@ app.get('/redirect', async (req, res) => {
       code,
       client_id:     CAFE24_CLIENT_ID,
       client_secret: CAFE24_CLIENT_SECRET,
-      redirect_uri:  `${REDIRECT_URI}?mall_id=${mall_id}`,  // root와 동일하게 mall_id 포함
+      redirect_uri:  `${REDIRECT_URI}?shop=${mall_id}`, // root와 동일하게 mall_id 포함
       shop:          mall_id
     }).toString();
 
