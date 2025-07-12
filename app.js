@@ -4,17 +4,10 @@ process.env.TZ = 'Asia/Seoul';
 const express     = require('express');
 const path        = require('path');
 const bodyParser  = require('body-parser');
-const fs          = require('fs');
 const cors        = require('cors');
 const compression = require('compression');
 const axios       = require('axios');
-const multer      = require('multer');
-const dayjs       = require('dayjs');
-const utc         = require('dayjs/plugin/utc');
-const tz          = require('dayjs/plugin/timezone');
-const { MongoClient, ObjectId } = require('mongodb');
-dayjs.extend(utc);
-dayjs.extend(tz);
+const { MongoClient } = require('mongodb');
 
 const {
   MONGODB_URI,
@@ -22,287 +15,222 @@ const {
   CAFE24_CLIENT_ID,
   CAFE24_CLIENT_SECRET,
   CAFE24_API_VERSION,
-  REDIRECT_URI,
+  REDIRECT_URI,        // ex: https://onimon.shop/redirect
   PORT = 5000,
-  R2_ACCESS_KEY,
-  R2_SECRET_KEY,
-  R2_BUCKET_NAME,
-  R2_ENDPOINT,
-  R2_REGION = 'us-east-1',
-  R2_PUBLIC_BASE,
 } = process.env;
 
-// ─── 전역 변수 ─────────────────────────────────────────────────────
 let db;
-const globalTokens = {};
+const tokens = {};  // in-memory cache
 
-// ─── Express 앱 생성 ───────────────────────────────────────────────
-const app = express();
-app.use(cors());
-app.use(compression());
-app.use(bodyParser.json({  limit: '10mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ─── Multer 설정 ───────────────────────────────────────────────────
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename:    (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
-});
-const upload = multer({ storage });
-
-// ─── R2 클라이언트 ─────────────────────────────────────────────────
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const s3Client = new S3Client({
-  region:   R2_REGION,
-  endpoint: R2_ENDPOINT,
-  credentials: { accessKeyId: R2_ACCESS_KEY, secretAccessKey: R2_SECRET_KEY },
-  forcePathStyle: true,
-});
-
-// ─── MongoDB 연결/인덱스 ────────────────────────────────────────────
 async function initDb() {
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected to', DB_NAME);
-}
-
-async function initIndexes() {
-  console.log('🔧 Setting up indexes');
-  const tokensCol = db.collection('tokens');
-  try {
-    await tokensCol.dropIndex('mallId_1');
-    console.log('🗑  Dropped old index mallId_1');
-  } catch {}
-  await tokensCol.createIndex({ mallId: 1 }, { unique: true, name: 'idx_tokens_mallId' });
-  console.log('✔️ Created idx_tokens_mallId on tokens');
-}
-
-async function preloadTokensFromDb() {
+  // load existing tokens into memory
   const docs = await db.collection('tokens').find().toArray();
-  docs.forEach(({ mallId, accessToken, refreshToken }) => {
-    globalTokens[mallId] = { accessToken, refreshToken };
-  });
-  console.log('▶️ Preloaded tokens for', Object.keys(globalTokens));
+  docs.forEach(d => { tokens[d.mallId] = { accessToken:d.accessToken, refreshToken:d.refreshToken }; });
+  console.log('▶️ Preloaded tokens for', Object.keys(tokens));
 }
 
-// ─── OAuth 토큰 헬퍼 ────────────────────────────────────────────────
-async function saveTokens(mallId, accessToken, refreshToken) {
-  globalTokens[mallId] = { accessToken, refreshToken };
+async function saveTokens(mallId, at, rt) {
+  tokens[mallId] = { accessToken:at, refreshToken:rt };
+  await db.collection('tokens').updateOne(
+    { mallId },
+    { $set: { accessToken:at, refreshToken:rt, updatedAt: new Date() } },
+    { upsert:true }
+  );
 }
 
+// 토큰 로드 or 에러
 async function loadTokens(mallId) {
-  if (!globalTokens[mallId]) {
+  if (!tokens[mallId]) {
     const doc = await db.collection('tokens').findOne({ mallId });
     if (!doc) throw new Error(`토큰 없음. 먼저 앱 설치해주세요 (mallId=${mallId})`);
-    globalTokens[mallId] = { accessToken: doc.accessToken, refreshToken: doc.refreshToken };
+    tokens[mallId] = { accessToken:doc.accessToken, refreshToken:doc.refreshToken };
   }
-  return globalTokens[mallId];
+  return tokens[mallId];
 }
 
 async function refreshAccessToken(mallId, oldRefreshToken) {
-  try {
-    const url   = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const params = new URLSearchParams({
-      grant_type:    'refresh_token',
-      refresh_token: oldRefreshToken
-    }).toString();
+  const url   = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+  const params = new URLSearchParams({
+    grant_type:    'refresh_token',
+    refresh_token: oldRefreshToken
+  }).toString();
 
+  try {
     const r = await axios.post(url, params, {
       headers: {
-        'Content-Type':  'application/x-www-form-urlencoded',
+        'Content-Type':'application/x-www-form-urlencoded',
         'Authorization': `Basic ${creds}`
       }
     });
-
     await saveTokens(mallId, r.data.access_token, r.data.refresh_token);
-    return { accessToken: r.data.access_token, refreshToken: r.data.refresh_token };
+    return r.data;
   } catch (err) {
     if (err.response?.data?.error === 'invalid_grant') {
-      console.warn(`❗[${mallId}] refresh_token expired, clearing stored token`);
+      console.warn(`❗[${mallId}] refresh_token expired, deleting stored token`);
       await db.collection('tokens').deleteOne({ mallId });
+      delete tokens[mallId];
       throw new Error('refresh_token이 유효하지 않습니다. 앱을 재설치해주세요.');
     }
     throw err;
   }
 }
 
-async function apiRequest(mallId, method, path, data = {}, params = {}) {
+async function apiRequest(mallId, method, path, data={}, params={}) {
   let { accessToken, refreshToken } = await loadTokens(mallId);
   const url = `https://${mallId}.cafe24api.com${path}`;
   try {
-    const resp = await axios({ method, url, data, params, headers: {
+    const resp = await axios({ method, url, data, params, headers:{
       Authorization:          `Bearer ${accessToken}`,
       'X-Cafe24-Api-Version': CAFE24_API_VERSION
     }});
     return resp.data;
   } catch (err) {
     if (err.response?.status === 401) {
-      ({ accessToken, refreshToken } = await refreshAccessToken(mallId, refreshToken));
+      const refreshed = await refreshAccessToken(mallId, refreshToken);
+      accessToken = refreshed.access_token;
+      refreshToken = refreshed.refresh_token;
       return apiRequest(mallId, method, path, data, params);
     }
     throw err;
   }
 }
-// ─── 1) root("/") 로 설치 시작 시 → 카페24 OAuth로 리다이렉트 ───────────────────────────────────
-app.get('/', (req, res, next) => {
-  const { mall_id } = req.query;
-  if (mall_id) {
-    // 동적으로 mall_id를 붙인 콜백 URI
-   const callbackUri = `${REDIRECT_URI}?shop=${mall_id}`;
 
+const app = express();
+app.use(cors());
+app.use(compression());
+app.use(bodyParser.json({ limit:'10mb' }));
+app.use(bodyParser.urlencoded({ extended:true }));
+
+// 1) 설치 시작: ?mall_id=onimon  → 카페24 OAuth authorize 로 리다이렉트
+app.get('/', (req, res, next) => {
+  const mall_id = req.query.mall_id;
+  if (mall_id) {
+    const callback = `${REDIRECT_URI}?mall_id=${mall_id}`;
     const authorizeUrl =
       `https://${mall_id}.cafe24api.com/api/v2/oauth/authorize` +
       `?response_type=code` +
       `&client_id=${CAFE24_CLIENT_ID}` +
-      `&redirect_uri=${encodeURIComponent(callbackUri)}` +
-      `&state=app_install` +
-      `&scope=mall.read_category,mall.read_product,mall.read_analytics`;
-
+      `&redirect_uri=${encodeURIComponent(callback)}` +
+      `&scope=mall.read_category,mall.read_product,mall.read_analytics` +
+      `&state=app_install`;
     return res.redirect(authorizeUrl);
   }
-  next(); // mall_id 없으면 static 파일 서빙
+  next();
 });
 
+// 2) React 정적 파일 서빙
+const staticDir = path.join(__dirname, 'public');
+app.use(express.static(staticDir));
 
-// ─── 2) React 정적 파일 서빙 ─────────────────────────────────────────
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ─── 2) /redirect 콜백 핸들러 ───────────────────────────────────────────────────────────────────
+// 3) OAuth 콜백
 app.get('/redirect', async (req, res) => {
-const code    = req.query.code;
-  const mall_id = req.query.shop || req.query.mall_id;    // 반드시 mall_id가 붙어야 합니다.
-
-  console.log('📲 [REDIRECT] 호출됨', { code, mall_id });
+  const code    = req.query.code;
+  const mall_id = req.query.mall_id;
   if (!code || !mall_id) {
-    return res
-      .status(400)
-      .send(`<h1>잘못된 접근입니다</h1><p>code 또는 mall_id 파라미터가 필요합니다.</p>`);
+    return res.status(400).send('<h1>잘못된 접근입니다</h1><p>code 또는 mall_id 누락</p>');
   }
 
   try {
     const tokenUrl = `https://${mall_id}.cafe24api.com/api/v2/oauth/token`;
-    const creds    = Buffer.from(
-      `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
-    ).toString('base64');
-
-    // 토큰 교환 요청
-    const params = new URLSearchParams({
+    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const params   = new URLSearchParams({
       grant_type:    'authorization_code',
       code,
       client_id:     CAFE24_CLIENT_ID,
       client_secret: CAFE24_CLIENT_SECRET,
-      redirect_uri:  `${REDIRECT_URI}?shop=${mall_id}`, // root와 동일하게 mall_id 포함
+      redirect_uri:  `${REDIRECT_URI}?mall_id=${mall_id}`,
       shop:          mall_id
     }).toString();
 
     const tokenResp = await axios.post(tokenUrl, params, {
       headers: {
-        'Content-Type':  'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${creds}`,
+        'Content-Type':'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`
       }
     });
 
-    const { access_token, refresh_token } = tokenResp.data;
-    await db.collection('tokens').updateOne(
-      { mallId: mall_id },
-      { $set: {
-          accessToken:  access_token,
-          refreshToken: refresh_token,
-          updatedAt:    new Date()
-        }
-      },
-      { upsert: true }
+    await saveTokens(
+      mall_id,
+      tokenResp.data.access_token,
+      tokenResp.data.refresh_token
     );
+    console.log(`✔️ [${mall_id}] OAuth 성공, 토큰 저장 완료`);
 
-    console.log(`✔️ [${mall_id}] OAuth 성공, DB 저장 완료`);
-
-    // 1.5초 후 React 관리자 페이지로 돌려보내기
-    return res.send(`
-      <!DOCTYPE html>
-      <html lang="ko">
-      <head><meta charset="utf-8"/><title>인증 완료</title></head>
-      <body style="text-align:center; padding:2rem;">
+    // React 관리자 페이지로
+    res.send(`
+      <!DOCTYPE html><html><head><meta charset="utf-8"/></head><body style="text-align:center;padding:2rem">
         <h1>🛠️ 인증 완료!</h1>
-        <p>앱 설치가 완료되었습니다. 잠시만 기다려 주세요…</p>
-        <script>
-          setTimeout(() => window.location.href = '/admin', 1500);
-        </script>
-      </body>
-      </html>
+        <p>1.5초 후 관리자 페이지로 이동합니다...</p>
+        <script>setTimeout(()=>location.href='/admin',1500)</script>
+      </body></html>
     `);
   } catch (err) {
-    console.error('❌ [REDIRECT ERROR]', err.response?.data || err);
-    return res
-      .status(500)
-      .send('<h1>OAuth 인증 실패</h1><p>서버 로그를 확인하세요.</p>');
+    console.error('❌ REDIRECT ERROR', err.response?.data||err);
+    res.status(500).send('<h1>OAuth 인증 실패</h1><p>서버 로그 확인</p>');
   }
 });
 
-// ─── API Handlers ───────────────────────────────────────────────────
-async function handleGetAllCategories(req, res) {
-  const mallId = req.params.mallId || req.query.shop || '';
+// 4) API 엔드포인트
+app.get('/api/:mallId/categories/all', async (req, res) => {
+  const mallId = req.params.mallId;
   try {
-    let all = [], offset = 0, limit = 100;
-    while (true) {
-      const { categories } = await apiRequest(mallId, 'GET', '/api/v2/admin/categories', {}, { limit, offset });
+    let all = [], offset=0, limit=100;
+    while(true){
+      const { categories } = await apiRequest(mallId,'GET','/api/v2/admin/categories',{},{limit,offset});
       if (!categories.length) break;
       all.push(...categories);
       offset += categories.length;
     }
     res.json(all);
   } catch (err) {
-    console.error('[CATEGORIES ERROR]', err.message || err);
-    res.status(500).json({ error: '전체 카테고리 조회 실패' });
+    console.error('[CATEGORIES ERROR]', err.message||err);
+    res.status(500).json({ error:'카테고리 조회 실패' });
   }
-}
+});
 
-async function handleGetAllCoupons(req, res) {
-  const mallId = req.params.mallId || req.query.shop || '';
+app.get('/api/:mallId/coupons', async (req, res) => {
+  const mallId = req.params.mallId;
   try {
-    let all = [], offset = 0, limit = 100;
-    while (true) {
-      const { coupons } = await apiRequest(mallId, 'GET', '/api/v2/admin/coupons', {}, { shop_no: 1, limit, offset });
+    let all = [], offset=0, limit=100;
+    while(true){
+      const { coupons } = await apiRequest(mallId,'GET','/api/v2/admin/coupons',{},{shop_no:1,limit,offset});
       if (!coupons.length) break;
       all.push(...coupons);
       offset += coupons.length;
     }
-    res.json(all.map(c => ({
-      coupon_no:          c.coupon_no,
-      coupon_name:        c.coupon_name,
-      benefit_text:       c.benefit_text,
-      benefit_percentage: c.benefit_percentage,
-      issued_count:       c.issued_count,
-      issue_type:         c.issue_type,
-      available_begin:    c.available_begin_datetime,
-      available_end:      c.available_end_datetime,
-    })));
+    res.json(all);
   } catch (err) {
-    console.error('[COUPONS ERROR]', err.message || err);
-    res.status(500).json({ error: '쿠폰 조회 실패' });
+    console.error('[COUPONS ERROR]', err.message||err);
+    res.status(500).json({ error:'쿠폰 조회 실패' });
   }
-}
+});
 
-// 공통 API 라우트
-app.get('/api/:mallId/categories/all', handleGetAllCategories);
-app.get('/api/categories/all',        handleGetAllCategories);
-app.get('/api/:mallId/coupons',       handleGetAllCoupons);
-app.get('/api/coupons',               handleGetAllCoupons);
+// … 추가로 이벤트 CRUD, analytics, track 등 API 핸들러를 뒤에 이어 붙이세요 …
 
-// …이하 이벤트 CRUD, analytics, track, etc. 동일하게 붙여주세요…
+// 5) SPA 라우팅 지원: /admin 및 그 외 React 라우트 → index.html
+app.get(['/admin','/admin/*'], (req, res) => {
+  res.sendFile(path.join(staticDir,'index.html'));
+});
 
-// ─── 서버 시작 ─────────────────────────────────────────────────────
-(async () => {
+// 6) 그 외 나머지도 React로
+app.get('*', (req, res) => {
+  // API 라우트가 아닐 때
+  if (!req.path.startsWith('/api') && req.path !== '/redirect') {
+    res.sendFile(path.join(staticDir,'index.html'));
+  }
+});
+
+(async()=>{
   try {
     await initDb();
     await initIndexes();
-    await preloadTokensFromDb();
-    app.listen(PORT, () => console.log(`▶️ Server running on port ${PORT}`));
-  } catch (err) {
+    app.listen(PORT,()=>console.log(`▶️ Server running on ${PORT}`));
+  } catch(err){
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   }
