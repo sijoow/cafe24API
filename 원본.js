@@ -17,6 +17,7 @@ const utc           = require('dayjs/plugin/utc');
 const tz            = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(tz);
+
 const {
   MONGODB_URI,
   DB_NAME,
@@ -26,7 +27,6 @@ const {
   CAFE24_CLIENT_SECRET,
   CAFE24_API_VERSION,
   CAFE24_MALLID,
-  REDIRECT_URI,       // ← 이 줄을 추가하세요
   PORT = 5000,
   R2_ACCESS_KEY,
   R2_SECRET_KEY,
@@ -127,61 +127,22 @@ async function apiRequest(method, url, data = {}, params = {}) {
     throw err;
   }
 }
-app.get('/redirect', async (req, res) => {
-  const { code, shop } = req.query;
-  if (!code || !shop) {
-    return res.status(400).send('code 또는 shop 파라미터가 없습니다.');
-  }
 
-  try {
-    const tokenUrl = `https://${shop}.cafe24api.com/api/v2/oauth/token`;
-    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`)
-                        .toString('base64');
-    const params   = new URLSearchParams({
-      grant_type:   'authorization_code',
-      code,
-      redirect_uri: REDIRECT_URI,
-    });
-
-    const { data } = await axios.post(
-      tokenUrl, params.toString(),
-      {
-        headers: {
-          'Content-Type':         'application/x-www-form-urlencoded',
-          'Authorization':        `Basic ${creds}`,
-          'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-        }
-      }
-    );
-
-    // 받은 토큰을 저장
-    accessToken  = data.access_token;
-    refreshToken = data.refresh_token;
-    await saveTokensToDB(accessToken, refreshToken);
-
-    res.send('<h1>앱 설치 및 토큰 발급이 완료되었습니다!</h1>');
-  } catch (err) {
-    console.error('❌ 토큰 교환 실패', err.response?.data || err.message);
-    res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
-  }
-});
-// ─── 초기화 (DB → 토큰 → 인덱스) ───────────────────────────────────────
+// ─── 초기화 순서: DB → 토큰 → 인덱스 ─────────────────────────────────
 initDb()
   .then(getTokenFromDB)
   .then(initIndexes)
   .then(() => {
-    app.listen(PORT, () => console.log(`▶️ Server running on port ${PORT}`));
+    // (5)—— 최종적으로 서버 시작 전에 토큰 최종 상태
+    console.log('▶️ final tokens at server start', { accessToken, refreshToken });
+    app.listen(PORT, () => {
+      console.log(`▶️ Server running on port ${PORT}`);
+    });
   })
   .catch(err => {
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   });
-
-
-
-
-
-
 // ─── Multer 설정 (임시 디스크 저장) ─────────────────────────────────
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
@@ -1103,4 +1064,3 @@ app.put('/api/events/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`▶️ Server running on port ${PORT}`);
 });
-
