@@ -37,9 +37,7 @@ const {
 
 // ─── 전역 변수 ─────────────────────────────────────────────────────
 let db;
-let globalTokens = { 
-  [DEFAULT_MALL]: { accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN } 
-};
+let globalTokens = {};
 
 // ─── Express 앱 생성 ───────────────────────────────────────────────
 const app = express();
@@ -74,6 +72,21 @@ async function initDb() {
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected to', DB_NAME);
 }
+
+
+async function loadTokens(mallId) {
+  // 없으면 DB 확인 → 없으면 설치 요청 에러
+  if (!globalTokens[mallId]) {
+    const doc = await db.collection('tokens').findOne({ mallId });
+    if (!doc) throw new Error(`토큰 없음. 먼저 앱 설치해주세요 (mallId=${mallId})`);
+    globalTokens[mallId] = {
+      accessToken:  doc.accessToken,
+      refreshToken: doc.refreshToken
+    };
+  }
+  return globalTokens[mallId];
+}
+
 
 async function initIndexes() {
   console.log('🔧 Setting up indexes');
