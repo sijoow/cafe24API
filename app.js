@@ -44,24 +44,16 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 const root = path.join(__dirname, 'public')              // React 빌드 폴더
-const redirectPath = new URL(REDIRECT_URI).pathname       // "/redirect"
+const redirectPath = new URL(REDIRECT_URI).pathname;
 
 // 1) React 정적 파일 서빙
-app.use(express.static(root))
+app.use(express.static(root));
 
-// 2) OAuth 콜백 경로는 React index.html로 보내기
+// 2) OAuth 콜백 경로: React index.html 반환
 app.get(redirectPath, (req, res) => {
-  res.sendFile(path.join(root, 'index.html'))
-})
+  res.sendFile(path.join(root, 'index.html'));
+});
 
-// 3) /api 로 시작하는 요청은 API 핸들러들이 처리하게 두고…
-//    (여기에 /api/redirect, /api/categories 등 정의)
-
-// 4) 그 외의 모든 GET 요청도 React로 보내주면 SPA가 알아서 라우팅합니다.
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/api/')) return res.sendStatus(404)
-  res.sendFile(path.join(root, 'index.html'))
-})
 
 
 // ─── MongoDB 연결 & visits 컬렉션 헬퍼 ───────────────────────────────
@@ -1153,3 +1145,7 @@ app.put('/api/events/:id', async (req, res) => {
 });
 
 
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) return res.sendStatus(404);
+  res.sendFile(path.join(root, 'index.html'));
+});
