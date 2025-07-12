@@ -82,22 +82,29 @@ async function saveTokensToDB(newAT, newRT) {
   );
 }
 async function getTokenFromDB() {
-   const doc = await db.collection('token').findOne({});
-   if (doc) {
-     accessToken  = doc.accessToken;
-     refreshToken = doc.refreshToken;
-     console.log('▶️ Loaded tokens from DB:', {
-       accessToken:  accessToken.slice(0,10)  + '…',
-       refreshToken: refreshToken.slice(0,10) + '…'
-     });
-   } else {
-     console.log('▶️ No token in DB, initializing from env:', {
-       accessToken:  accessToken.slice(0,10)  + '…',
-       refreshToken: refreshToken.slice(0,10) + '…'
-     });
-     await saveTokensToDB(accessToken, refreshToken);
-   }
-   }
+  const doc = await db.collection('token').findOne({});
+  if (doc?.accessToken && doc?.refreshToken) {
+    accessToken  = doc.accessToken;
+    refreshToken = doc.refreshToken;
+    console.log('▶️ Loaded tokens from DB:', {
+      accessToken:  accessToken.slice(0,10)  + '…',
+      refreshToken: refreshToken.slice(0,10) + '…'
+    });
+  } else if (ACCESS_TOKEN && REFRESH_TOKEN) {
+    accessToken  = ACCESS_TOKEN;
+    refreshToken = REFRESH_TOKEN;
+    await saveTokensToDB(accessToken, refreshToken);
+    console.log('▶️ Initialized tokens from ENV:', {
+      accessToken:  accessToken.slice(0,10)  + '…',
+      refreshToken: refreshToken.slice(0,10) + '…'
+    });
+  } else {
+    console.log('▶️ No tokens found. 먼저 카페24 앱 설치 후 리다이렉트 엔드포인트를 호출해 주세요.');
+    // 여기서도 slice()를 호출하지 않으니 에러 없이 계속 진행됩니다.
+  }
+}
+
+
 async function refreshAccessToken() {
   const url   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/oauth/token`;
   const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
