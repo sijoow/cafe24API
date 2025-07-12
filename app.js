@@ -92,9 +92,15 @@ async function saveTokens(mallId, at, rt) {
   globalTokens[mallId] = { accessToken: at, refreshToken: rt };
 }
 
-async function loadTokens(mallId) {
-  return globalTokens[mallId] || globalTokens[DEFAULT_MALL];
-}
+ async function loadTokens(mallId) {
+   // DB 에도 없고 메모리에도 없으면, "설치→/redirect" 를 먼저 진행하라는 에러를 던집니다.
+   if (!globalTokens[mallId]) {
+     const doc = await db.collection('tokens').findOne({ mallId });
+     if (!doc) throw new Error(`토큰 없음. 먼저 앱을 설치해주세요 (mallId=${mallId})`);
+     globalTokens[mallId] = { accessToken: doc.accessToken, refreshToken: doc.refreshToken };
+   }
+   return globalTokens[mallId];
+ }
 
 async function refreshAccessToken(mallId, oldRefreshToken) {
   try {
