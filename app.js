@@ -25,6 +25,7 @@ const {
   CAFE24_CLIENT_SECRET,
   CAFE24_API_VERSION,
   CAFE24_MALLID: DEFAULT_MALL,
+  REDIRECT_URI,
   PORT = 5000,
   R2_ACCESS_KEY,
   R2_SECRET_KEY,
@@ -36,12 +37,15 @@ const {
 
 // ─── 전역 변수 ─────────────────────────────────────────────────────
 let db;
+let globalTokens = { 
+  [DEFAULT_MALL]: { accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN } 
+};
 
 // ─── Express 앱 생성 ───────────────────────────────────────────────
 const app = express();
 app.use(cors());
 app.use(compression());
-app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.json({  limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -70,56 +74,48 @@ async function initDb() {
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected to', DB_NAME);
 }
+
 async function initIndexes() {
   console.log('🔧 Setting up indexes');
-
   const tokensCol = db.collection('tokens');
-
-  // 기존에 'mallId_1' 인덱스가 있으면 제거
+  // drop old auto‐created mallId_1 index if present
   try {
     await tokensCol.dropIndex('mallId_1');
     console.log('🗑  Dropped old index mallId_1');
-  } catch (e) {
-    // 이미 없으면 무시
-  }
-
-  // 원하는 이름으로 새 인덱스 생성
-  await tokensCol.createIndex(
-    { mallId: 1 },
-    { unique: true, name: 'idx_tokens_mallId' }
-  );
+  } catch {}
+  await tokensCol.createIndex({ mallId: 1 }, { unique: true, name: 'idx_tokens_mallId' });
   console.log('✔️ Created idx_tokens_mallId on tokens');
-
-  // (필요하다면 visits 컬렉션 인덱스도 여기에 추가)
 }
 
-
 // ─── OAuth 토큰 헬퍼 ────────────────────────────────────────────────
-let globalTokens = { [DEFAULT_MALL]: { accessToken: ACCESS_TOKEN, refreshToken: REFRESH_TOKEN } };
 async function saveTokens(mallId, at, rt) {
   globalTokens[mallId] = { accessToken: at, refreshToken: rt };
 }
+
 async function loadTokens(mallId) {
   return globalTokens[mallId] || globalTokens[DEFAULT_MALL];
 }
+
 async function refreshAccessToken(mallId, oldRefreshToken) {
   try {
-    const url    = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds  = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const params = new URLSearchParams({ grant_type:'refresh_token', refresh_token:oldRefreshToken });
-    const r      = await axios.post(url, params.toString(), {
+    const url   = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const params = new URLSearchParams({
+      grant_type:    'refresh_token',
+      refresh_token: oldRefreshToken
+    }).toString();
+    const r = await axios.post(url, params, {
       headers: {
-        'Content-Type':'application/x-www-form-urlencoded',
-        'Authorization':`Basic ${creds}`,
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`,
       }
     });
     await saveTokens(mallId, r.data.access_token, r.data.refresh_token);
-    return r.data;
+    return { accessToken: r.data.access_token, refreshToken: r.data.refresh_token };
   } catch (err) {
     if (err.response?.data?.error === 'invalid_grant') {
-      console.warn(`❗[${mallId}] refresh_token 이 만료되어 기존 토큰을 삭제합니다.`);
+      console.warn(`❗[${mallId}] refresh_token expired, clearing stored token`);
       await db.collection('tokens').deleteOne({ mallId });
-      // 더 이상 자동 리프레시 시도하지 않고, 재인증을 유도
       throw new Error('refresh_token이 유효하지 않습니다. 앱을 재설치해주세요.');
     }
     throw err;
@@ -130,8 +126,8 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
   let { accessToken, refreshToken } = await loadTokens(mallId);
   const url = `https://${mallId}.cafe24api.com${path}`;
   try {
-    const resp = await axios({ method, url, data, params, headers:{
-      Authorization: `Bearer ${accessToken}`,
+    const resp = await axios({ method, url, data, params, headers: {
+      Authorization:          `Bearer ${accessToken}`,
       'X-Cafe24-Api-Version': CAFE24_API_VERSION
     }});
     return resp.data;
@@ -143,63 +139,53 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
     throw err;
   }
 }
-// 1) OAuth 콜백용 라우트 추가
+
+// ─── DB에서 기존 토큰 미리 로드 ──────────────────────────────────────
+async function preloadTokensFromDb() {
+  const docs = await db.collection('tokens').find().toArray();
+  docs.forEach(({ mallId, accessToken, refreshToken }) => {
+    globalTokens[mallId] = { accessToken, refreshToken };
+  });
+  console.log('▶️ Preloaded tokens for', Object.keys(globalTokens));
+}
+
+// ─── OAuth 인증 콜백 라우트 ────────────────────────────────────────
 app.get('/redirect', async (req, res) => {
   const { code, shop } = req.query;
   if (!code || !shop) {
-    return res
-      .status(400)
-      .json({ error: 'code 또는 shop 파라미터가 필요합니다.' });
+    return res.status(400).json({ error: 'code 또는 shop 파라미터가 필요합니다.' });
   }
-
   try {
-    // 2) 카페24 토큰 교환 엔드포인트
     const tokenUrl = `https://${shop}.cafe24api.com/api/v2/oauth/token`;
-    const creds    = Buffer.from(
-      `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
-    ).toString('base64');
+    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
     const params   = new URLSearchParams({
-      grant_type:   'authorization_code',
+      grant_type:    'authorization_code',
       code,
-      client_id:    CAFE24_CLIENT_ID,
+      client_id:     CAFE24_CLIENT_ID,
       client_secret: CAFE24_CLIENT_SECRET,
-      redirect_uri:  process.env.REDIRECT_URI, // env 에 설정한 콜백 URL
+      redirect_uri:  REDIRECT_URI,
       shop
     }).toString();
-
-    // 3) 토큰 교환 요청
     const tokenResp = await axios.post(tokenUrl, params, {
       headers: {
         'Content-Type':  'application/x-www-form-urlencoded',
         'Authorization': `Basic ${creds}`,
       }
     });
-
     const { access_token, refresh_token } = tokenResp.data;
-
-    // 4) DB에 mallId(shop) 키로 upsert
     await db.collection('tokens').updateOne(
       { mallId: shop },
-      {
-        $set: {
-          accessToken:  access_token,
-          refreshToken: refresh_token,
-          updatedAt:    new Date(),
-        }
-      },
+      { $set: { accessToken: access_token, refreshToken: refresh_token, updatedAt: new Date() } },
       { upsert: true }
     );
-
     console.log(`✔️ [${shop}] OAuth 인증 성공, 토큰 저장 완료`);
-    return res.json({ ok: true });
-
+    res.json({ ok: true });
   } catch (err) {
     console.error('[REDIRECT ERROR]', err.response?.data || err);
-    return res
-      .status(500)
-      .json({ error: 'OAuth 인증에 실패했습니다.' });
+    res.status(500).json({ error: 'OAuth 인증에 실패했습니다.' });
   }
 });
+
 // ─── 핸들러 분리 ──────────────────────────────────────────────────
 async function handleGetAllCategories(req, res) {
   const mallId = req.params.mallId || DEFAULT_MALL;
@@ -207,9 +193,7 @@ async function handleGetAllCategories(req, res) {
     let all = [], offset = 0, limit = 100;
     while (true) {
       const { categories } = await apiRequest(
-        mallId, 'GET',
-        '/api/v2/admin/categories',
-        {}, { limit, offset }
+        mallId, 'GET', '/api/v2/admin/categories', {}, { limit, offset }
       );
       if (!categories.length) break;
       all.push(...categories);
@@ -228,9 +212,7 @@ async function handleGetAllCoupons(req, res) {
     let all = [], offset = 0, limit = 100;
     while (true) {
       const { coupons } = await apiRequest(
-        mallId, 'GET',
-        '/api/v2/admin/coupons',
-        {}, { shop_no: 1, limit, offset }
+        mallId, 'GET', '/api/v2/admin/coupons', {}, { shop_no: 1, limit, offset }
       );
       if (!coupons.length) break;
       all.push(...coupons);
@@ -251,6 +233,7 @@ async function handleGetAllCoupons(req, res) {
     res.status(500).json({ error: '쿠폰 조회 실패' });
   }
 }
+
 async function preloadTokensFromDb() {
   const docs = await db.collection('tokens').find().toArray();
   docs.forEach(({ mallId, accessToken, refreshToken }) => {
@@ -698,3 +681,15 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
     });
   }
 });
+
+;(async () => {
+  try {
+    await initDb();
+    await initIndexes();
+    await preloadTokensFromDb();
+    app.listen(PORT, () => console.log(`▶️ Server running on port ${PORT}`));
+  } catch (err) {
+    console.error('❌ 초기화 실패', err);
+    process.exit(1);
+  }
+})();
