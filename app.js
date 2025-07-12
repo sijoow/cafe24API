@@ -163,25 +163,17 @@ async function apiRequest(mallId, method, path, data = {}, params = {}) {
 // 2) root("/") 로 App 관리 진입 시
 app.get('/', (req, res, next) => {
   const { mall_id } = req.query;
-  if (mall_id) {
-    // 1) 토큰이 code 파라미터 없이 넘어왔다면,
-    //    Frontend단으로 mall_id 만 전달해서 localStorage 등에 저장하게 한 뒤
-    //    /admin 으로 리다이렉트
-    return res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><meta charset="utf-8"></head>
-      <body>
-        <script>
-          // React 앱이 켜지면, 이 스크립트가 mall_id 를 localStorage 에 저장하고
-          // /admin 으로 내비게이트하게 해둡니다.
-          localStorage.setItem('shop', '${mall_id}');
-          window.location.href = '/admin';
-        </script>
-      </body>
-      </html>
-    `);
-  }
+
+  const authorizeUrl =
+    `https://${mall_id}.cafe24api.com/api/v2/oauth/authorize` +
+    `?response_type=code` +
+    `&client_id=${CAFE24_CLIENT_ID}` +
+    `&state=app_install` +
+    `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+    `&scope=mall.read_category,mall.read_product,mall.read_analytics` +
+    `&shop_no=1`;
+     return res.redirect(authorizeUrl);
+  
   // mall_id 없으면 일반 정적파일 서빙
   next();
 });
@@ -191,7 +183,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── OAuth 인증 콜백 라우트 ────────────────────────────────────────
 app.get('/redirect', async (req, res) => {
-  const { code, shop } = req.query;
+const { code, shop: shopParam, mall_id } = req.query;
+const shop = shopParam || mall_id;
   console.log('📲 [REDIRECT ROUTE] 호출됨', { code, shop });
 
   if (!code || !shop) {
