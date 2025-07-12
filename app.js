@@ -42,36 +42,25 @@ app.use(cors());
 app.use(compression());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+const root         = path.join(__dirname, 'public');
+const redirectPath = new URL(process.env.REDIRECT_URI).pathname;  // → "/redirect"
 
-const root = path.join(__dirname, 'public')              // React 빌드 폴더
-const redirectPath = new URL(process.env.REDIRECT_URI).pathname; // '/redirect'
-app.get(redirectPath, (req, res) => {
-  res.sendFile(path.join(root, 'index.html'));
-});
-
-// 1) React 정적 파일 한 번만 서빙
+// 1) React 정적 파일 서빙
 app.use(express.static(root));
 
-// 2) OAuth callback 경로: React index.html 반환
+// 2) OAuth 콜백은 SPA의 index.html 로 포워딩
 app.get(redirectPath, (req, res) => {
   res.sendFile(path.join(root, 'index.html'));
 });
 
-// 3) /api 로 시작하는 요청은 API 핸들러들이 처리
-app.get('/api/redirect', async (req, res) => {
-  // … 기존 토큰 교환 로직 …
-});
-app.get('/api/categories/all', /* … */ );
-// … 그 외 모든 API …
+// 3) /api 로 시작하는 요청은 백엔드 핸들러
+app.get('/api/redirect', /* … */);
 
-// 4) 그 외 모든 GET 요청 → React index.html (SPA 라우팅)
+// 4) 이 외의 모든 GET 요청도 SPA로 포워딩
 app.get('*', (req, res) => {
-  if (req.path.startsWith('/api/')) {
-    return res.sendStatus(404);
-  }
+  if (req.path.startsWith('/api/')) return res.sendStatus(404);
   res.sendFile(path.join(root, 'index.html'));
 });
-
 
 
 // ─── MongoDB 연결 & visits 컬렉션 헬퍼 ───────────────────────────────
