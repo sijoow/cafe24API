@@ -142,7 +142,9 @@ async function refreshAccessToken(shop) {
 }
 
 app.get('/api/redirect', async (req, res) => {
-  const { code, shop } = req.query;
+  console.log('▶️ /api/redirect 쿼리:', req.query);
+  const code = req.query.code;
+  const shop = req.query.shop || req.query.mall_id;
   if (!code || !shop) {
     return res.status(400).send('code 또는 shop 파라미터가 없습니다.');
   }
