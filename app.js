@@ -44,6 +44,13 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// /api 로 시작하는 요청은 위에서 처리하고,
+// 그 외의 GET 요청은 모두 React로 포워딩
+app.get('*', (req, res) => {
+  res.sendFile(path.join(root, 'index.html'));
+});
+
+
 // ─── MongoDB 연결 & visits 컬렉션 헬퍼 ───────────────────────────────
 let db;
 async function initDb() {
