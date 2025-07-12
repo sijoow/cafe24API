@@ -75,12 +75,24 @@ async function initIndexes() {
 // ─── Café24 OAuth 토큰 관리 ─────────────────────────────────────────
 let accessToken  = ACCESS_TOKEN;
 let refreshToken = REFRESH_TOKEN;
-async function saveTokensToDB(newAT, newRT) {
+async function saveTokensToDB(shop, newAT, newRT) {
   await db.collection('token').updateOne(
-    {}, { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
+    { shop },
+    { $set: { accessToken: newAT, refreshToken: newRT, updatedAt: new Date() } },
     { upsert: true }
   );
 }
+
+// shop 별로 토큰을 가져오도록 수정
+async function getTokensFromDB(shop) {
+  const doc = await db.collection('token').findOne({ shop });
+  if (!doc) {
+    throw new Error(`해당 쇼핑몰(${shop})의 토큰이 없습니다.`);
+  }
+  return { accessToken: doc.accessToken, refreshToken: doc.refreshToken };
+}
+
+
 async function getTokenFromDB() {
   const doc = await db.collection('token').findOne({});
   if (doc?.accessToken && doc?.refreshToken) {
@@ -104,37 +116,29 @@ async function getTokenFromDB() {
   }
 }
 
+async function refreshAccessToken(shop) {
+  const { refreshToken } = await getTokensFromDB(shop);
+  const url   = `https://${shop}.cafe24api.com/api/v2/oauth/token`;
+  const creds = Buffer
+                  .from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`)
+                  .toString('base64');
+  const params = new URLSearchParams({
+    grant_type:    'refresh_token',
+    refresh_token: refreshToken
+  });
 
-async function refreshAccessToken() {
-  const url   = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/oauth/token`;
-  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-  const params = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken });
   const r = await axios.post(url, params.toString(), {
     headers: {
       'Content-Type':  'application/x-www-form-urlencoded',
       'Authorization': `Basic ${creds}`,
     },
   });
-  accessToken  = r.data.access_token;
-  refreshToken = r.data.refresh_token;
-  await saveTokensToDB(accessToken, refreshToken);
+
+  // 갱신된 토큰 shop 별로 저장
+  await saveTokensToDB(shop, r.data.access_token, r.data.refresh_token);
+  return r.data.access_token;
 }
-async function apiRequest(method, url, data = {}, params = {}) {
-  try {
-    const resp = await axios({ method, url, data, params, headers: {
-      Authorization:         `Bearer ${accessToken}`,
-      'Content-Type':        'application/json',
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-    }});
-    return resp.data;
-  } catch (err) {
-    if (err.response?.status === 401) {
-      await refreshAccessToken();
-      return apiRequest(method, url, data, params);
-    }
-    throw err;
-  }
-}
+
 app.get('/api/redirect', async (req, res) => {
   const { code, shop } = req.query;
   if (!code || !shop) {
@@ -142,37 +146,35 @@ app.get('/api/redirect', async (req, res) => {
   }
 
   try {
+    // 1) authorization_code → access/refresh token
     const tokenUrl = `https://${shop}.cafe24api.com/api/v2/oauth/token`;
-    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`)
-                        .toString('base64');
-    const params   = new URLSearchParams({
+    const creds    = Buffer
+                      .from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`)
+                      .toString('base64');
+    const params = new URLSearchParams({
       grant_type:   'authorization_code',
       code,
       redirect_uri: REDIRECT_URI,
     });
 
-    const { data } = await axios.post(
-      tokenUrl, params.toString(),
-      {
-        headers: {
-          'Content-Type':         'application/x-www-form-urlencoded',
-          'Authorization':        `Basic ${creds}`,
-          'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-        }
+    const { data } = await axios.post(tokenUrl, params.toString(), {
+      headers: {
+        'Content-Type':         'application/x-www-form-urlencoded',
+        'Authorization':        `Basic ${creds}`,
+        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
       }
-    );
+    });
 
-    // 받은 토큰을 저장
-    accessToken  = data.access_token;
-    refreshToken = data.refresh_token;
-    await saveTokensToDB(accessToken, refreshToken);
+    // 2) shop 별로 토큰 저장
+    await saveTokensToDB(shop, data.access_token, data.refresh_token);
 
-    res.send('<h1>앱 설치 및 토큰 발급이 완료되었습니다!</h1>');
+    return res.json({ success: true });
   } catch (err) {
     console.error('❌ 토큰 교환 실패', err.response?.data || err.message);
-    res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
+    return res.status(500).json({ error: '토큰 교환 실패' });
   }
 });
+
 // ─── 초기화 (DB → 토큰 → 인덱스) ───────────────────────────────────────
 initDb()
   .then(getTokenFromDB)
@@ -282,47 +284,64 @@ app.delete('/api/events/:id', async (req, res) => {
   }
 });
 
+async function apiRequest(shop, method, path, data = {}, params = {}) {
+  // 1) shop 별로 토큰을 꺼냄
+  let { accessToken } = await getTokensFromDB(shop);
+  const url = `https://${shop}.cafe24api.com${path}`;
 
-async function apiRequest(method, url, data = {}, params = {}) {
-  console.log(`▶️ Caf24 API 호출 → ${method.toUpperCase()} ${url}`, params);
   try {
-    const resp = await axios({ method, url, data, params, headers: {
-      Authorization:         `Bearer ${accessToken}`,
-      'Content-Type':        'application/json',
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-    }});
+    const resp = await axios({
+      method,
+      url,
+      data,
+      params,
+      headers: {
+        Authorization:         `Bearer ${accessToken}`,
+        'Content-Type':        'application/json',
+        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+      }
+    });
     return resp.data;
   } catch (err) {
-    console.error('❌ Caf24 API 응답 오류', err.response?.status, err.response?.data);
+    // 401이면 토큰 갱신 후 재시도
     if (err.response?.status === 401) {
-      await refreshAccessToken();
-      return apiRequest(method, url, data, params);
+      accessToken = await refreshAccessToken(shop);
+      return apiRequest(shop, method, path, data, params);
     }
+    console.error('❌ Caf24 API 오류', err.response?.status, err.response?.data);
     throw err;
   }
 }
+
 
 // ─── 기본 Ping ───────────────────────────────────────────────────────
 app.get('/api/ping', (_, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
-
+// 예: 전체 카테고리 조회
 app.get('/api/categories/all', async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).json({ error: 'shop 파라미터가 필요합니다.' });
+
   try {
-    const all = [];
-    let offset = 0, limit = 100;
+    let offset = 0, limit = 100, all = [];
     while (true) {
-      const url = `https://${CAFE24_MALLID}.cafe24api.com/api/v2/admin/categories`;
-      const { categories } = await apiRequest('GET', url, {}, { limit, offset });
+      const { categories } = await apiRequest(
+        shop,
+        'GET',
+        '/api/v2/admin/categories',
+        {}, { limit, offset }
+      );
       if (!categories.length) break;
       all.push(...categories);
       offset += categories.length;
     }
     res.json(all);
   } catch (err) {
-    res.status(500).json({ message: '전체 카테고리 조회 실패', error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
+
 
 app.get('/api/coupons', async (req, res) => {
   try {
