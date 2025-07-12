@@ -135,7 +135,7 @@ async function apiRequest(method, url, data = {}, params = {}) {
     throw err;
   }
 }
-app.get('/redirect', async (req, res) => {
+app.get('/api/redirect', async (req, res) => {
   const { code, shop } = req.query;
   if (!code || !shop) {
     return res.status(400).send('code 또는 shop 파라미터가 없습니다.');
