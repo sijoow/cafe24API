@@ -1,62 +1,135 @@
-// app.js 최상단에 추가할 부분
+// app.js
+require('dotenv').config();
+const express = require('express');
+const cors    = require('cors');
+const qs      = require('querystring');
+const axios   = require('axios');
+const crypto  = require('crypto');
+const { MongoClient } = require('mongodb');
 
-const express = require('express')
-const path    = require('path')
-const app = express()
+const {
+  MONGODB_URI,
+  CAFE24_CLIENT_ID,
+  CAFE24_CLIENT_SECRET,
+  CAFE24_API_VERSION,
+  PORT = 5000,
+} = process.env;
 
-// ① React 빌드 산출물(public 폴더) 서빙
-const root = path.join(__dirname, 'public')
-app.use(express.static(root))
+const app = express();
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json());
 
-// ② OAuth 콜백용 UI 라우트 (/redirect → index.html)
-const redirectPath = new URL(process.env.REDIRECT_URI).pathname
-app.get(redirectPath, (req, res) => {
-  res.sendFile(path.join(root, 'index.html'))
-})
+// --- MongoDB & Token Store 초기화 ---
+let tokenCol;
+(async () => {
+  const client = new MongoClient(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  });
+  await client.connect();
+  tokenCol = client.db('LSH').collection('shopTokens');
+  await tokenCol.createIndex({ shop: 1 }, { unique: true });
+})();
 
-// ③ 실제 토큰 교환 API 라우트 (/api/redirect)
-app.get('/api/redirect', async (req, res) => {
-  const { code, shop, mall_id } = req.query
-  const targetShop = shop || mall_id
-  if (!code || !targetShop) {
-    return res.status(400).send('code 또는 shop 파라미터가 필요합니다.')
+// 토큰 저장/갱신 (upsert)
+async function saveTokens(shop, accessToken, refreshToken, expiresIn) {
+  const expiresAt = new Date(Date.now() + expiresIn * 1000);
+  await tokenCol.updateOne(
+    { shop },
+    {
+      $set: { accessToken, refreshToken, expiresAt, updatedAt: new Date() },
+      $setOnInsert: { createdAt: new Date() },
+    },
+    { upsert: true }
+  );
+}
+
+// shop별 토큰 조회
+async function loadTokens(shop) {
+  return tokenCol.findOne({ shop });
+}
+
+// 만료 전 자동 갱신 및 반환
+async function ensureValidToken(shop) {
+  const doc = await loadTokens(shop);
+  if (!doc) throw new Error(`No tokens for shop ${shop}`);
+  if (Date.now() > doc.expiresAt.getTime() - 5 * 60 * 1000) {
+    const r = await axios.post(
+      `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/token`,
+      qs.stringify({
+        grant_type:    'refresh_token',
+        client_id:     CAFE24_CLIENT_ID,
+        client_secret: CAFE24_CLIENT_SECRET,
+        refresh_token: doc.refreshToken,
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    const { access_token, refresh_token, expires_in } = r.data;
+    await saveTokens(shop, access_token, refresh_token, expires_in);
+    return access_token;
   }
+  return doc.accessToken;
+}
+
+// --- OAuth 설치 흐름 ---
+// 1) 설치 유도
+app.get('/install', (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).send('Missing shop parameter');
+  const state = crypto.randomBytes(8).toString('hex');
+  // TODO: state를 DB/세션에 저장해 CSRF 검증
+  const redirectUri = encodeURIComponent('https://onimon.shop/redirect');
+  const url =
+    `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/authorize` +
+    `?response_type=code` +
+    `&client_id=${CAFE24_CLIENT_ID}` +
+    `&redirect_uri=${redirectUri}` +
+    `&state=${state}`;
+  res.redirect(url);
+});
+
+// 2) 콜백 처리
+app.get('/redirect', async (req, res, next) => {
   try {
-    const tokenUrl = `https://${targetShop}.cafe24api.com/api/v2/oauth/token`
-    const creds    = Buffer.from(
-      `${process.env.CAFE24_CLIENT_ID}:${process.env.CAFE24_CLIENT_SECRET}`
-    ).toString('base64')
-    const params = new URLSearchParams({
-      grant_type:   'authorization_code',
-      code,
-      redirect_uri: process.env.REDIRECT_URI,
-    })
-    const { data } = await axios.post(tokenUrl, params.toString(), {
-      headers: {
-        'Content-Type':         'application/x-www-form-urlencoded',
-        'Authorization':        `Basic ${creds}`,
-        'X-Cafe24-Api-Version': process.env.CAFE24_API_VERSION,
-      }
-    })
-    // TODO: data.access_token / data.refresh_token DB 저장
-    res.json({ success: true })
+    const { code, shop, state } = req.query;
+    // TODO: state 검증
+    const r = await axios.post(
+      `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/token`,
+      qs.stringify({
+        grant_type:    'authorization_code',
+        client_id:     CAFE24_CLIENT_ID,
+        client_secret: CAFE24_CLIENT_SECRET,
+        code,
+        redirect_uri:  'https://onimon.shop/redirect',
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    const { access_token, refresh_token, expires_in } = r.data;
+    await saveTokens(shop, access_token, refresh_token, expires_in);
+    res.redirect(`https://onimon.shop/?installed=true&shop=${shop}`);
   } catch (err) {
-    console.error('❌ 토큰 교환 실패', err.response?.data || err.message)
-    res.status(500).json({ error: '토큰 교환 실패' })
+    next(err);
   }
-})
+});
 
-// … 여기에 나머지 /api/ 라우트들 모두 정의 …
-
-// ④ SPA용 fallback: /api/* 가 아닌 모든 GET 요청을 React에 넘겨 줌
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/api/')) {
-    return res.sendStatus(404)
+// --- API 프록시 예시 ---
+app.get('/api/:shop/products', async (req, res, next) => {
+  try {
+    const { shop } = req.params;
+    const token = await ensureValidToken(shop);
+    const apiRes = await axios.get(
+      `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/admin/products`,
+      {
+        params: { shop_no: 1 },
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    res.json(apiRes.data);
+  } catch (err) {
+    next(err);
   }
-  res.sendFile(path.join(root, 'index.html'))
-})
+});
 
-// 서버 시작
-app.listen(process.env.PORT || 5000, () => {
-  console.log('▶️ Server running')
-})
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
