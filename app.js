@@ -1,12 +1,12 @@
 // app.js
 require('dotenv').config();
-const express        = require('express');
-const cors           = require('cors');
-const qs             = require('querystring');
-const axios          = require('axios');
-const crypto         = require('crypto');
-const { MongoClient }= require('mongodb');
-const path           = require('path');
+const express         = require('express');
+const cors            = require('cors');
+const qs              = require('querystring');
+const axios           = require('axios');
+const crypto          = require('crypto');
+const { MongoClient } = require('mongodb');
+const path            = require('path');
 
 const {
   MONGODB_URI,
@@ -14,16 +14,27 @@ const {
   CAFE24_CLIENT_ID,
   CAFE24_CLIENT_SECRET,
   CAFE24_API_VERSION,
-  REDIRECT_URI,        // e.g. "https://onimon.shop/redirect"
-  PORT                 = 5000,
+  REDIRECT_URI,         // e.g. "https://onimon.shop/redirect"
+  PORT                  = 5000,
 } = process.env;
 
+// 필수 env 체크
+if (!MONGODB_URI) {
+  console.error('❌ MONGODB_URI is not defined');
+  process.exit(1);
+}
+if (!CAFE24_CLIENT_ID || !CAFE24_CLIENT_SECRET) {
+  console.error('❌ CAFE24_CLIENT_ID or CAFE24_CLIENT_SECRET is not defined');
+  process.exit(1);
+}
+if (!REDIRECT_URI) {
+  console.error('❌ REDIRECT_URI is not defined');
+  process.exit(1);
+}
+
 async function main() {
-  // 1) MongoDB 연결 & 컬렉션 준비
-  const client = new MongoClient(MONGODB_URI, {
-    useNewUrlParser:    true,
-    useUnifiedTopology: true,
-  });
+  // 1) MongoDB 연결
+  const client = new MongoClient(MONGODB_URI);
   await client.connect();
   console.log('✅ MongoDB connected');
 
@@ -37,7 +48,7 @@ async function main() {
   await stateCol.createIndex({ state: 1 }, { unique: true });
   console.log('✅ Indexes ensured');
 
-  // 2) 토큰 관리 헬퍼
+  // 2) 토큰 관리 함수
   async function saveTokens(shop, accessToken, refreshToken, expiresIn) {
     const expiresAt = new Date(Date.now() + expiresIn * 1000);
     await tokenCol.updateOne(
@@ -59,9 +70,9 @@ async function main() {
     if (!doc) throw new Error(`No tokens for shop ${shop}`);
 
     // 만료 5분 전이면 갱신
-    if (Date.now() > doc.expiresAt.getTime() - 5*60*1000) {
+    if (Date.now() > doc.expiresAt.getTime() - 5 * 60 * 1000) {
       const r = await axios.post(
-        `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/token`,
+        `https://${shop}.cafe24api.com/api/${CAFE24_CLIENT_SECRET}/oauth/token`,
         qs.stringify({
           grant_type:    'refresh_token',
           client_id:     CAFE24_CLIENT_ID,
@@ -78,12 +89,12 @@ async function main() {
     return doc.accessToken;
   }
 
-  // 3) Express 셋업
+  // 3) Express 설정
   const app = express();
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
 
-  // [A] 권한 요청 시작 (/authorize?shop=...)
+  // [A] OAuth 승인 시작
   app.get('/authorize', async (req, res, next) => {
     try {
       const { shop } = req.query;
@@ -92,7 +103,7 @@ async function main() {
       const state = crypto.randomBytes(16).toString('hex');
       await stateCol.insertOne({ state, shop, createdAt: new Date() });
 
-      const url =
+      const authorizeUrl =
         `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/authorize` +
         `?response_type=code` +
         `&client_id=${CAFE24_CLIENT_ID}` +
@@ -100,13 +111,13 @@ async function main() {
         `&scope=${encodeURIComponent('mall.read_category,mall.read_product,mall.read_analytics')}` +
         `&state=${state}`;
 
-      res.redirect(url);
+      res.redirect(authorizeUrl);
     } catch (err) {
       next(err);
     }
   });
 
-  // [B] OAuth 콜백 처리 (/redirect?code=...&shop=...&state=...)
+  // [B] OAuth 콜백 처리
   app.get('/redirect', async (req, res, next) => {
     try {
       const { code, shop, state } = req.query;
@@ -130,8 +141,8 @@ async function main() {
       const { access_token, refresh_token, expires_in } = tokenRes.data;
       await saveTokens(shop, access_token, refresh_token, expires_in);
 
-      // 프론트 리다이렉트
-      res.redirect(`https://onimon.shop/redirect?installed=true&shop=${shop}`);
+      // React로 설치 완료 알림
+      res.redirect(`${REDIRECT_URI}?installed=true&shop=${shop}`);
     } catch (err) {
       next(err);
     }
@@ -154,7 +165,7 @@ async function main() {
     }
   });
 
-  // [D] 디버그용: DB 내용 조회
+  // [D] 디버그 조회
   app.get('/debug/states', async (req, res, next) => {
     try {
       const docs = await stateCol.find().toArray();
@@ -172,7 +183,7 @@ async function main() {
     }
   });
 
-  // [E] React 정적 파일 서빙 (SPA)
+  // [E] React 정적 파일 + SPA 캐치올
   app.use(express.static(path.join(__dirname, 'build')));
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'build', 'index.html'));
