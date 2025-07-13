@@ -25,23 +25,21 @@ async function initDb() {
   console.log('▶️ MongoDB connected');
 }
 
-// ─── (A) 권한 요청 라우트 ────────────────────────────────────────────
-// 테스트용: 브라우저에서 https://your-domain/install/{mallId} 호출
+// ─── (A) 설치 시작: 권한 요청 ────────────────────────────────────────
 app.get('/install/:mallId', (req, res) => {
-  const { mallId }   = req.params;
-  const redirectUri  = `${APP_URL}/auth/callback`;
-  const params       = new URLSearchParams({
+  const { mallId }  = req.params;
+  const redirectUri = `${APP_URL}/auth/callback`;
+  const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
     scope:         'mall.read_category,mall.read_product,mall.read_analytics',
-    state:         Date.now().toString(),
+    state:         'app_install',           // CSRF 검증용 문자열
   });
-  console.log('🔍 redirect_uri →', redirectUri);
   res.redirect(`https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`);
 });
 
-// ─── (B) OAuth 콜백 핸들러: 토큰 교환 & DB 저장 ────────────────────────
+// ─── (B) 콜백 핸들러: code → access/refresh 토큰 교환 + DB 저장 ────────
 app.get('/auth/callback', async (req, res) => {
   const { code, mall_id: mallId } = req.query;
   const redirectUri = `${APP_URL}/auth/callback`;
@@ -51,7 +49,7 @@ app.get('/auth/callback', async (req, res) => {
   }
 
   try {
-    // 1) 카페24에 토큰 요청
+    // 1) 토큰 교환 요청
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
     const creds    = Buffer.from(
       `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
@@ -69,9 +67,7 @@ app.get('/auth/callback', async (req, res) => {
       }
     });
 
-    // data.access_token, data.refresh_token, data.expires_in
-
-    // 2) MongoDB에 mallId 기준으로 저장
+    // 2) MongoDB에 mallId 별로 저장
     await db.collection('token').updateOne(
       { mallId },
       { $set: {
@@ -85,13 +81,8 @@ app.get('/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    console.log(`✅ [${mallId}] 토큰 저장 완료`, {
-      accessToken: data.access_token.slice(0,8) + '…',
-      refreshToken: data.refresh_token.slice(0,8) + '…'
-    });
-
-    // 3) 완료 메시지
-    res.send('앱 설치 및 토큰 교환 완료! DB에 저장되었습니다.');
+    console.log(`✅ [${mallId}] 토큰 저장 완료`);
+    res.send('앱 설치·토큰 교환 완료! DB에 저장되었습니다.');
   }
   catch (err) {
     console.error('❌ 토큰 교환 실패', err.response?.data || err);
@@ -99,7 +90,6 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// ─── 서버 시작 ───────────────────────────────────────────────────────
 initDb().then(() => {
   app.listen(PORT, () => {
     console.log(`▶️ Server running on port ${PORT}`);
