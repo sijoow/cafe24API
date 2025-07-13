@@ -19,6 +19,7 @@ dayjs.extend(utc);
 dayjs.extend(tz);
 
 const {
+  APP_URL,
   MONGODB_URI,
   DB_NAME,
   ACCESS_TOKEN,
