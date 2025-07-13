@@ -18,13 +18,17 @@ const {
   PORT                  = 5000,
 } = process.env;
 
-// 필수 env 체크
+// 필수 환경변수 체크
 if (!MONGODB_URI) {
   console.error('❌ MONGODB_URI is not defined');
   process.exit(1);
 }
 if (!CAFE24_CLIENT_ID || !CAFE24_CLIENT_SECRET) {
   console.error('❌ CAFE24_CLIENT_ID or CAFE24_CLIENT_SECRET is not defined');
+  process.exit(1);
+}
+if (!CAFE24_API_VERSION) {
+  console.error('❌ CAFE24_API_VERSION is not defined');
   process.exit(1);
 }
 if (!REDIRECT_URI) {
@@ -48,7 +52,7 @@ async function main() {
   await stateCol.createIndex({ state: 1 }, { unique: true });
   console.log('✅ Indexes ensured');
 
-  // 2) 토큰 관리 함수
+  // 2) 토큰 관리 헬퍼
   async function saveTokens(shop, accessToken, refreshToken, expiresIn) {
     const expiresAt = new Date(Date.now() + expiresIn * 1000);
     await tokenCol.updateOne(
@@ -69,10 +73,10 @@ async function main() {
     const doc = await loadTokens(shop);
     if (!doc) throw new Error(`No tokens for shop ${shop}`);
 
-    // 만료 5분 전이면 갱신
+    // 토큰 만료 5분 전이면 갱신
     if (Date.now() > doc.expiresAt.getTime() - 5 * 60 * 1000) {
       const r = await axios.post(
-        `https://${shop}.cafe24api.com/api/${CAFE24_CLIENT_SECRET}/oauth/token`,
+        `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/token`,
         qs.stringify({
           grant_type:    'refresh_token',
           client_id:     CAFE24_CLIENT_ID,
@@ -89,7 +93,7 @@ async function main() {
     return doc.accessToken;
   }
 
-  // 3) Express 설정
+  // 3) Express 앱 설정
   const app = express();
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
@@ -137,11 +141,10 @@ async function main() {
         }),
         { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
       );
-
       const { access_token, refresh_token, expires_in } = tokenRes.data;
       await saveTokens(shop, access_token, refresh_token, expires_in);
 
-      // React로 설치 완료 알림
+      // 프론트로 설치 완료 알림
       res.redirect(`${REDIRECT_URI}?installed=true&shop=${shop}`);
     } catch (err) {
       next(err);
@@ -151,12 +154,12 @@ async function main() {
   // [C] API 프록시 예시
   app.get('/api/:shop/products', async (req, res, next) => {
     try {
-      const token = await ensureValidToken(req.params.shop);
+      const token  = await ensureValidToken(req.params.shop);
       const apiRes = await axios.get(
         `https://${req.params.shop}.cafe24api.com/api/${CAFE24_API_VERSION}/admin/products`,
         {
           params: { shop_no: 1 },
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${token}` },
         }
       );
       res.json(apiRes.data);
@@ -165,7 +168,7 @@ async function main() {
     }
   });
 
-  // [D] 디버그 조회
+  // [D] 디버그용: DB 컬렉션 상태 조회
   app.get('/debug/states', async (req, res, next) => {
     try {
       const docs = await stateCol.find().toArray();
@@ -183,7 +186,7 @@ async function main() {
     }
   });
 
-  // [E] React 정적 파일 + SPA 캐치올
+  // [E] React 정적 파일 서빙 + SPA 캐치올
   app.use(express.static(path.join(__dirname, 'build')));
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'build', 'index.html'));
