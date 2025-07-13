@@ -109,6 +109,25 @@ app.get('/auth/callback', async (req, res) => {
     res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
 });
+// app.js 맨 아래에 추가하세요
+app.get('/api/admin/dbdump', async (req, res) => {
+  try {
+    // 1) 모든 컬렉션 이름 가져오기
+    const cols = await db.listCollections().toArray();
+    const dump = {};
+
+    // 2) 각 컬렉션의 전체 문서 조회
+    for (const { name } of cols) {
+      dump[name] = await db.collection(name).find().toArray();
+    }
+
+    // 3) JSON으로 응답
+    res.json(dump);
+  } catch (err) {
+    console.error('❌ DB 덤프 실패', err);
+    res.status(500).send('DB 덤프 실패');
+  }
+});
 
 // ─── 4. 서버 시작 ───────────────────────────────────────────────────
 initDb()
