@@ -34,22 +34,29 @@ app.get('/install/:mallId', (req, res) => {
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
     scope:         'mall.read_category,mall.read_product,mall.read_analytics',
-    state:         'app_install',           // CSRF 검증용 문자열
+    state:         'app_install',
   });
+  console.log('🔍 redirect_uri →', redirectUri);
+  console.log('👉 권한요청 URL →', `https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`);
   res.redirect(`https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`);
 });
 
-// ─── (B) 콜백 핸들러: code → access/refresh 토큰 교환 + DB 저장 ────────
+// ─── (B) 콜백 핸들러: code → 액세스/리프레시 토큰 교환 + DB 저장 ────────
 app.get('/auth/callback', async (req, res) => {
+  console.log('--- /auth/callback called ---');
+  console.log('⚡ req.query:', req.query);
+
   const { code, mall_id: mallId } = req.query;
   const redirectUri = `${APP_URL}/auth/callback`;
+  console.log('⚡ expected redirectUri:', redirectUri);
 
   if (!code || !mallId) {
+    console.warn('⚠️ Missing code or mallId');
     return res.status(400).send('code 또는 mall_id가 없습니다.');
   }
 
   try {
-    // 1) 토큰 교환 요청
+    // 1) 토큰 교환 요청 준비
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
     const creds    = Buffer.from(
       `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
@@ -60,36 +67,50 @@ app.get('/auth/callback', async (req, res) => {
       redirect_uri: redirectUri
     }).toString();
 
-    const { data } = await axios.post(tokenUrl, body, {
+    console.log('▶️ Token request to:', tokenUrl);
+    console.log('   Headers:', {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${creds}`
+    });
+    console.log('   Body:', body);
+
+    // 2) 실제 토큰 교환 요청
+    const response = await axios.post(tokenUrl, body, {
       headers: {
         'Content-Type':  'application/x-www-form-urlencoded',
         'Authorization': `Basic ${creds}`
       }
     });
+    console.log('✅ Token endpoint responded:', response.data);
 
-    // 2) MongoDB에 mallId 별로 저장
+    const { access_token, refresh_token, expires_in } = response.data;
+
+    // 3) MongoDB에 mallId 별로 저장
+    console.log('▶️ Saving tokens to DB for mallId:', mallId);
     await db.collection('token').updateOne(
       { mallId },
       { $set: {
           mallId,
-          accessToken:  data.access_token,
-          refreshToken: data.refresh_token,
+          accessToken:  access_token,
+          refreshToken: refresh_token,
           obtainedAt:   new Date(),
-          expiresIn:    data.expires_in
+          expiresIn:    expires_in
         }
       },
       { upsert: true }
     );
+    console.log(`✅ [${mallId}] Tokens saved successfully`);
 
-    console.log(`✅ [${mallId}] 토큰 저장 완료`);
+    // 4) 완료 응답
     res.send('앱 설치·토큰 교환 완료! DB에 저장되었습니다.');
   }
   catch (err) {
-    console.error('❌ 토큰 교환 실패', err.response?.data || err);
+    console.error('❌ Error during token exchange or DB save:', err.response?.data || err);
     res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
 });
 
+// ─── 서버 시작 ───────────────────────────────────────────────────────
 initDb().then(() => {
   app.listen(PORT, () => {
     console.log(`▶️ Server running on port ${PORT}`);
