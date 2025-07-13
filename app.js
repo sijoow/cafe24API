@@ -123,7 +123,9 @@ async function main() {
       const { access_token, refresh_token, expires_in } = r.data;
       await saveTokens(shop, access_token, refresh_token, expires_in);
 
-      res.redirect(`https://onimon.shop/redirect?installed=true&shop=${shop}`);
+      res.redirect(
+  `https://onimon.shop/redirect?installed=true&shop=${shop}&state=${state}`
+);
     } catch (err) {
       next(err);
     }
