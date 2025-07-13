@@ -1,24 +1,25 @@
 // app.js
 require('dotenv').config();
-const express      = require('express');
-const cors         = require('cors');
-const qs           = require('querystring');
-const axios        = require('axios');
-const crypto       = require('crypto');
-const { MongoClient } = require('mongodb');
+const express        = require('express');
+const cors           = require('cors');
+const qs             = require('querystring');
+const axios          = require('axios');
+const crypto         = require('crypto');
+const { MongoClient }= require('mongodb');
+const path           = require('path');
 
 const {
   MONGODB_URI,
-  DB_NAME     = 'LSH',
+  DB_NAME               = 'LSH',
   CAFE24_CLIENT_ID,
   CAFE24_CLIENT_SECRET,
   CAFE24_API_VERSION,
-  REDIRECT_URI,
-  PORT        = 5000,
+  REDIRECT_URI,       // ex: https://onimon.shop/redirect
+  PORT                 = 5000,
 } = process.env;
 
 async function main() {
-  // 1) MongoDB 연결 & 컬렉션 세팅
+  // 1) MongoDB 연결
   const client = new MongoClient(MONGODB_URI, {
     useNewUrlParser:    true,
     useUnifiedTopology: true,
@@ -30,7 +31,7 @@ async function main() {
   const tokenCol  = db.collection('shopTokens');
   const stateCol  = db.collection('installStates');
 
-  // 인덱스 세팅
+  // 인덱스 세팅: shop 고유, 토큰 TTL, state 고유
   await tokenCol.createIndex({ shop: 1 }, { unique: true });
   await tokenCol.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
   await stateCol.createIndex({ state: 1 }, { unique: true });
@@ -48,22 +49,24 @@ async function main() {
       },
       { upsert: true }
     );
-    console.log(`💾 Token saved for ${shop}, expiresAt=${expiresAt}`);
+    console.log(`💾 Token saved for ${shop} (expiresAt=${expiresAt.toISOString()})`);
   }
+
   async function loadTokens(shop) {
     console.log(`🔍 loadTokens: shop=${shop}`);
     const doc = await tokenCol.findOne({ shop });
     console.log(`🔍 loadTokens result:`, doc);
     return doc;
   }
+
   async function ensureValidToken(shop) {
     const doc = await loadTokens(shop);
     if (!doc) throw new Error(`No tokens for shop ${shop}`);
 
-    // 만료 5분 전이면 갱신
+    // 만료 5분 전이면 refresh
     if (Date.now() > doc.expiresAt.getTime() - 5*60*1000) {
       console.log(`♻️ Refreshing token for ${shop}`);
-      const r = await axios.post(
+      const res = await axios.post(
         `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/token`,
         qs.stringify({
           grant_type:    'refresh_token',
@@ -73,7 +76,7 @@ async function main() {
         }),
         { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
       );
-      const { access_token, refresh_token, expires_in } = r.data;
+      const { access_token, refresh_token, expires_in } = res.data;
       await saveTokens(shop, access_token, refresh_token, expires_in);
       return access_token;
     }
@@ -86,7 +89,7 @@ async function main() {
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
 
-  // [1] 승인 시작
+  // [A] OAuth 승인 시작
   app.get('/authorize', async (req, res, next) => {
     try {
       const { shop } = req.query;
@@ -95,9 +98,8 @@ async function main() {
 
       const state = crypto.randomBytes(16).toString('hex');
       console.log(`🔐 Generated state=${state} for shop=${shop}`);
-      // 서버에 state 저장
-      const insertResult = await stateCol.insertOne({ state, shop, createdAt: new Date() });
-      console.log('🗄  stateCol.insertOne result:', insertResult.insertedId);
+      await stateCol.insertOne({ state, shop, createdAt: new Date() });
+      console.log('🗄  state saved');
 
       const url =
         `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/authorize` +
@@ -115,21 +117,20 @@ async function main() {
     }
   });
 
-  // [2] 콜백 처리
+  // [B] OAuth 콜백 처리
   app.get('/redirect', async (req, res, next) => {
     try {
       console.log('🔔 /redirect called with query=', req.query);
       const { code, shop, state } = req.query;
 
-      // 서버에서 state 검증
       const rec = await stateCol.findOneAndDelete({ state, shop });
-      console.log('🗄  stateCol.findOneAndDelete result:', rec.value);
+      console.log('🗄 stateCol.findOneAndDelete result:', rec.value);
       if (!rec.value) {
         console.warn('❌ Invalid state or shop mismatch');
         return res.status(400).send('Invalid state');
       }
 
-      // 토큰 요청
+      // 토큰 교환
       const tokenRes = await axios.post(
         `https://${shop}.cafe24api.com/api/${CAFE24_API_VERSION}/oauth/token`,
         qs.stringify({
@@ -141,12 +142,12 @@ async function main() {
         }),
         { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
       );
-      console.log('🔑 Token response data:', tokenRes.data);
+      console.log('🔑 Token response:', tokenRes.data);
 
       const { access_token, refresh_token, expires_in } = tokenRes.data;
       await saveTokens(shop, access_token, refresh_token, expires_in);
 
-      // React로 콜백
+      // React 쪽으로 설치 완료 알림
       const forwardUrl = `https://onimon.shop/redirect?installed=true&shop=${shop}`;
       console.log('➡️ Forwarding user to:', forwardUrl);
       res.redirect(forwardUrl);
@@ -156,7 +157,7 @@ async function main() {
     }
   });
 
-  // [3] API 프록시 예시
+  // [C] API 프록시 예시
   app.get('/api/:shop/products', async (req, res, next) => {
     try {
       console.log('🔔 /api/:shop/products called, shop=', req.params.shop);
@@ -168,12 +169,38 @@ async function main() {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
-      console.log('📦 /api/:shop/products result:', apiRes.data);
+      console.log('📦 /api/:shop/products result count=', apiRes.data.products?.length);
       res.json(apiRes.data);
     } catch (err) {
       console.error(err);
       next(err);
     }
+  });
+
+  // [D] 디버그용: DB 전체 내용 조회
+  app.get('/debug/states', async (req, res, next) => {
+    try {
+      const docs = await stateCol.find().toArray();
+      console.log('🗄 installStates:', docs);
+      res.json(docs);
+    } catch (err) {
+      next(err);
+    }
+  });
+  app.get('/debug/tokens', async (req, res, next) => {
+    try {
+      const docs = await tokenCol.find().toArray();
+      console.log('🗄 shopTokens:', docs);
+      res.json(docs);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // [E] (선택) React 정적 파일 서빙 + SPA 캐치올
+  app.use(express.static(path.join(__dirname, 'build')));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'build', 'index.html'));
   });
 
   app.listen(PORT, () => {
