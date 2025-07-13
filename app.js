@@ -1,3 +1,4 @@
+// app.js
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
 
@@ -10,65 +11,72 @@ const {
   DB_NAME,
   CAFE24_CLIENT_ID,
   CAFE24_CLIENT_SECRET,
-  APP_URL,
+  APP_URL,              // ex) https://port-0-cafe24api-am952nltee6yr6.sel5.cloudtype.app
   PORT = 5000
 } = process.env;
 
 const app = express();
 
-// ─── 1. MongoDB 연결 ────────────────────────────────────────────────
+// ─── 1) MongoDB 연결 ───────────────────────────────────────────────
 let db;
 async function initDb() {
-  const client = new MongoClient(MONGODB_URI, { useUnifiedTopology: true });
+  const client = new MongoClient(MONGODB_URI);
   await client.connect();
   db = client.db(DB_NAME);
   console.log('▶️ MongoDB connected to', DB_NAME);
 }
 
-// ─── 2. 설치 시작: 권한 요청 라우트 ─────────────────────────────────
+// ─── 2) 설치 시작: 권한 요청 라우트 ─────────────────────────────────
 app.get('/install/:mallId', (req, res) => {
-  const { mallId }  = req.params;
+  const mallId = req.params.mallId;
   const redirectUri = `${APP_URL}/auth/callback`;
+  const state       = mallId;   // state에 mallId 담기
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
     scope:         'mall.read_category,mall.read_product,mall.read_analytics',
-    state:         'app_install',
+    state,
   });
 
   console.log('🔍 [INSTALL] redirect_uri →', redirectUri);
-  console.log('👉 [INSTALL] authorize URL →', `https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`);
-  res.redirect(`https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`);
+  console.log('👉 [INSTALL] authorize URL →',
+    `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`
+  );
+  res.redirect(
+    `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`
+  );
 });
 
-// ─── 3. 콜백 핸들러: 코드 → 토큰 발급 → DB 저장 ───────────────────────
+// ─── 3) 콜백 핸들러: code → 토큰 발급 → DB 저장 ───────────────────────
 app.get('/auth/callback', async (req, res) => {
   console.log('--- /auth/callback called ---');
   console.log('⚡ req.query →', req.query);
 
-  const { code, mall_id: mallId } = req.query;
-  const redirectUri = `${APP_URL}/auth/callback`;
-  console.log('⚡ expected redirectUri →', redirectUri);
+  const code   = req.query.code;
+  const mallId = req.query.state;   // state에서 mallId 가져오기
 
   if (!code || !mallId) {
-    console.warn('⚠️ Missing code or mallId in query');
-    return res.status(400).send('code 또는 mall_id가 없습니다.');
+    console.warn('⚠️ Missing code or mallId (state)', req.query);
+    return res.status(400).send('code 또는 mallId가 없습니다.');
   }
 
   try {
     // 3.1) 토큰 교환 요청
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const body     = new URLSearchParams({
+    const creds    = Buffer.from(
+      `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
+    ).toString('base64');
+    const body = new URLSearchParams({
       grant_type:   'authorization_code',
       code,
-      redirect_uri: redirectUri
+      redirect_uri: `${APP_URL}/auth/callback`
     }).toString();
 
     console.log('▶️ [TOKEN] POST to', tokenUrl);
     console.log('   headers:', {
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Type':  'application/x-www-form-urlencoded',
       'Authorization': `Basic ${creds}`
     });
     console.log('   body   :', body);
@@ -101,7 +109,7 @@ app.get('/auth/callback', async (req, res) => {
     );
     console.log('✅ [DB] token.updateOne result →', result);
 
-    // 3.3) 완료 응답
+    // 3.3) 완료 응답 (원한다면 다른 페이지로 리다이렉트 가능)
     res.send('앱 설치 및 토큰 교환 완료! DB에 저장되었습니다.');
   }
   catch (err) {
@@ -109,31 +117,12 @@ app.get('/auth/callback', async (req, res) => {
     res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
 });
-// app.js 맨 아래에 추가하세요
-app.get('/api/admin/dbdump', async (req, res) => {
-  try {
-    // 1) 모든 컬렉션 이름 가져오기
-    const cols = await db.listCollections().toArray();
-    const dump = {};
 
-    // 2) 각 컬렉션의 전체 문서 조회
-    for (const { name } of cols) {
-      dump[name] = await db.collection(name).find().toArray();
-    }
-
-    // 3) JSON으로 응답
-    res.json(dump);
-  } catch (err) {
-    console.error('❌ DB 덤프 실패', err);
-    res.status(500).send('DB 덤프 실패');
-  }
-});
-
-// ─── 4. 서버 시작 ───────────────────────────────────────────────────
+// ─── 4) 서버 시작 ───────────────────────────────────────────────────
 initDb()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`▶️ Server running at http://localhost:${PORT}`);
+      console.log(`▶️ Server running at ${APP_URL} (port ${PORT})`);
     });
   })
   .catch(err => {
