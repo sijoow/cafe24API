@@ -179,6 +179,27 @@ async function cafeApi(mallId, method, url, data={}, params={}) {
   }
 }
 
+
+app.use('/api/:mallId', async (req, res, next) => {
+  try {
+    const { mallId } = req.params;
+    // 원하는 형태로 컬렉션을 만들어두세요.
+    // 예: db.collection('access_logs')
+    await db.collection('access_logs').insertOne({
+      mallId,
+      path: req.originalUrl,
+      method: req.method,
+      timestamp: new Date(),
+      // 추가로 user-agent, IP 등도 기록 가능
+    });
+  } catch (err) {
+    console.error('액세스 로그 기록 실패', err);
+    // 기록에 실패해도 요청 처리에는 영향을 주지 않도록
+  }
+  next();
+});
+
+
 // ─── 5) visits 컬렉션 헬퍼 & 인덱스 세팅 ─────────────────────────────
 function visitsCol(mallId) {
   return db.collection(`visits_${mallId}`);
