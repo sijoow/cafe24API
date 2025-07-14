@@ -1,3 +1,4 @@
+
 // app.js
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
@@ -23,7 +24,8 @@ const {
   CAFE24_CLIENT_ID,
   CAFE24_CLIENT_SECRET,
   CAFE24_API_VERSION,
-  APP_URL,    // ex) https://port-0-xxx.sel5.cloudtype.app
+  APP_URL,        // e.g. https://port-0-xxx.sel5.cloudtype.app
+  FRONTEND_URL,   // e.g. https://onimon.shop
   PORT = 5000,
   R2_ACCESS_KEY,
   R2_SECRET_KEY,
@@ -40,7 +42,7 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── 1) MongoDB 연결 ───────────────────────────────────────────────────
+// ─── 1) MongoDB 연결 ─────────────────────────────────────────────────
 let db;
 async function initDb() {
   const client = new MongoClient(MONGODB_URI);
@@ -49,11 +51,10 @@ async function initDb() {
   console.log('▶️ MongoDB connected to', DB_NAME);
 }
 
-// ─── 2) OAuth: 설치 시작 → 권한 요청 ────────────────────────────────────
+// ─── 2) OAuth 설치 시작 → 권한 요청 ─────────────────────────────────────
 app.get('/install/:mallId', (req, res) => {
-  const mallId = req.params.mallId;
+  const { mallId } = req.params;
   const redirectUri = `${APP_URL}/auth/callback`;
-  // state 에 mallId 담아서 콜백 시 전달받음
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
@@ -61,46 +62,35 @@ app.get('/install/:mallId', (req, res) => {
     scope:         'mall.read_category,mall.read_product,mall.read_analytics',
     state:         mallId,
   });
-  console.log('👉 [INSTALL] authorize →', 
-    `https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`
-  );
   res.redirect(`https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`);
 });
 
-// ─── 3) OAuth 콜백 → code→token 교환→DB 저장 ─────────────────────────────
+// ─── 3) OAuth 콜백 → code→token 교환→DB 저장 → 프론트 리다이렉트 ────────────
 app.get('/auth/callback', async (req, res) => {
-  console.log('--- /auth/callback called ---', req.query);
   const { code, state: mallId } = req.query;
   if (!code || !mallId) {
     return res.status(400).send('❌ code 또는 mallId(state)가 없습니다.');
   }
 
   try {
+    // 토큰 교환
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds = Buffer.from(
-      `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
-    ).toString('base64');
-    const body = new URLSearchParams({
+    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const body     = new URLSearchParams({
       grant_type:   'authorization_code',
       code,
       redirect_uri: `${APP_URL}/auth/callback`
     }).toString();
 
-    console.log('▶️ [TOKEN] POST to', tokenUrl);
     const { data } = await axios.post(tokenUrl, body, {
       headers: {
         'Content-Type':  'application/x-www-form-urlencoded',
         'Authorization': `Basic ${creds}`
       }
     });
-    console.log('✅ [TOKEN] got', {
-      access:  data.access_token.slice(0,8)+'…',
-      refresh: data.refresh_token.slice(0,8)+'…',
-      expires: data.expires_in
-    });
 
     // DB에 저장
-    const result = await db.collection('token').updateOne(
+    await db.collection('token').updateOne(
       { mallId },
       { $set: {
           mallId,
@@ -112,12 +102,15 @@ app.get('/auth/callback', async (req, res) => {
       },
       { upsert: true }
     );
-    console.log('✅ [DB] token.upsert →', result.upsertedId || result.modifiedCount);
-    res.send('앱 설치 완료! 토큰이 DB에 저장되었습니다.');
+
+    // 프론트로 리다이렉트 (쿼리스트링에 mallId 포함)
+    const redirectTo = new URL(`${FRONTEND_URL}/auth/callback`);
+    redirectTo.searchParams.set('mallId', mallId);
+    return res.redirect(redirectTo.toString());
   }
   catch (err) {
     console.error('❌ [ERROR] token exchange failed:', err.response?.data || err);
-    res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
+    return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
 });
 
@@ -130,10 +123,8 @@ async function loadTokens(mallId) {
   refreshTokenCache = doc.refreshToken;
 }
 async function refreshAccessToken(mallId) {
-  const url   = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-  const creds = Buffer.from(
-    `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
-  ).toString('base64');
+  const url    = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+  const creds  = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
   const params = new URLSearchParams({
     grant_type:    'refresh_token',
     refresh_token: refreshTokenCache
@@ -145,6 +136,7 @@ async function refreshAccessToken(mallId) {
       'Authorization': `Basic ${creds}`
     }
   });
+
   accessTokenCache  = data.access_token;
   refreshTokenCache = data.refresh_token;
   await db.collection('token').updateOne(
@@ -158,16 +150,16 @@ async function refreshAccessToken(mallId) {
   );
 }
 
-// 공통 API 호출
-async function cafeApi(mallId, method, url, data={}, params={}) {
+// ─── 5) 공통 Cafe24 API 호출 헬퍼 ─────────────────────────────────────
+async function cafeApi(mallId, method, url, data = {}, params = {}) {
   if (!accessTokenCache) await loadTokens(mallId);
   try {
     return (await axios({
       method, url, data, params,
       headers: {
-        Authorization:        `Bearer ${accessTokenCache}`,
+        Authorization:         `Bearer ${accessTokenCache}`,
         'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-        'Content-Type':       'application/json'
+        'Content-Type':        'application/json'
       }
     })).data;
   } catch (err) {
@@ -179,56 +171,40 @@ async function cafeApi(mallId, method, url, data={}, params={}) {
   }
 }
 
-
+// ─── 6) API 접근 시마다 액세스 로그 남기기 ─────────────────────────────
 app.use('/api/:mallId', async (req, res, next) => {
   try {
     const { mallId } = req.params;
-    // 원하는 형태로 컬렉션을 만들어두세요.
-    // 예: db.collection('access_logs')
     await db.collection('access_logs').insertOne({
       mallId,
-      path: req.originalUrl,
-      method: req.method,
+      path:      req.originalUrl,
+      method:    req.method,
       timestamp: new Date(),
-      // 추가로 user-agent, IP 등도 기록 가능
+      userAgent: req.get('User-Agent'),
+      ip:        req.ip
     });
   } catch (err) {
-    console.error('액세스 로그 기록 실패', err);
-    // 기록에 실패해도 요청 처리에는 영향을 주지 않도록
+    console.error('⚠️ 액세스 로그 기록 실패', err);
   }
   next();
 });
 
-
-// ─── 5) visits 컬렉션 헬퍼 & 인덱스 세팅 ─────────────────────────────
-function visitsCol(mallId) {
-  return db.collection(`visits_${mallId}`);
-}
-async function initIndexesFor(mallId) {
-  const col = visitsCol(mallId);
-  try { await col.dropIndex('unique_per_user_day'); } catch {}
-  await col.createIndex(
-    { pageId:1, visitorId:1, dateKey:1 },
-    { unique: true, name: 'unique_per_user_day' }
-  );
-}
-
-// ─── 6) Multer, R2 세팅 (변경 없음) ─────────────────────────────────
+// ─── 7) Multer & R2 업로드 세팅 ────────────────────────────────────
 const uploadDir = path.join(__dirname,'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const storage = multer.diskStorage({
-  destination:(r,f,cb)=>cb(null,uploadDir),
-  filename:   (r,f,cb)=>cb(null,Date.now()+path.extname(f.originalname))
+  destination: (req,file,cb) => cb(null,uploadDir),
+  filename:    (req,file,cb) => cb(null,Date.now()+path.extname(file.originalname))
 });
 const upload = multer({ storage });
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const s3Client = new S3Client({
-  region:   R2_REGION,
-  endpoint: R2_ENDPOINT,
+  region:     R2_REGION,
+  endpoint:   R2_ENDPOINT,
   credentials:{ accessKeyId:R2_ACCESS_KEY, secretAccessKey:R2_SECRET_KEY },
   forcePathStyle:true
 });
-app.post('/api/:mallId/uploads/image', upload.single('file'), async (req,res)=>{
+app.post('/api/:mallId/uploads/image', upload.single('file'), async (req,res) => {
   const { mallId } = req.params;
   const local = req.file.path, key = req.file.filename;
   const stream = fs.createReadStream(local);
@@ -238,8 +214,11 @@ app.post('/api/:mallId/uploads/image', upload.single('file'), async (req,res)=>{
       ContentType: req.file.mimetype, ACL:'public-read'
     }));
     res.json({ url:`${R2_PUBLIC_BASE}/${key}` });
-  } catch { res.status(500).json({ error:'파일 업로드 실패' }) }
-  finally{ fs.unlink(local,()=>{}) }
+  } catch {
+    res.status(500).json({ error:'파일 업로드 실패' });
+  } finally {
+    fs.unlink(local, ()=>{});
+  }
 });
 
 // ─── 7) Tracking & Analytics & CRUD 등 모든 기존 라우트들… ─────────
