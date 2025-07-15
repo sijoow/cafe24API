@@ -15,6 +15,8 @@ const multer        = require('multer');
 const dayjs         = require('dayjs');
 const utc           = require('dayjs/plugin/utc');
 const tz            = require('dayjs/plugin/timezone');
+const cookieParser = require('cookie-parser');
+const session        = require('express-session');
 dayjs.extend(utc);
 dayjs.extend(tz);
 
@@ -42,6 +44,20 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+
+app.use(cookieParser());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'cafe24-secret-change-me',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000   // 1 day
+  }
+}));
+
 // ─── 1) MongoDB 연결 ─────────────────────────────────────────────────
 let db;
 async function initDb() {
@@ -59,13 +75,12 @@ app.get('/install/:mallId', (req, res) => {
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
-    scope:         'mall.read_category,mall.write_category,mall.read_product,mall.write_product,mall.read_collection,mall.read_application,mall.write_application,mall.read_analytics,mall.read_salesreport,mall.read_store',
+    scope:         'mall.read_promotion,mall.write_promotion,mall.read_category,mall.write_category,mall.read_product,mall.write_product,mall.read_collection,mall.read_application,mall.write_application,mall.read_analytics,mall.read_salesreport,mall.read_store',
     state:         mallId,
   });
   res.redirect(`https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`);
 });
-
-// ─── 3) OAuth 콜백 → code→token 교환→DB 저장 → 프론트 리다이렉트 ────────────
+// ─── 3) OAuth 콜백 → code→token 교환→DB 저장 → 세션 주입 → 프론트 리다이렉트 ────────────
 app.get('/auth/callback', async (req, res) => {
   const { code, state: mallId } = req.query;
   if (!code || !mallId) {
@@ -73,7 +88,7 @@ app.get('/auth/callback', async (req, res) => {
   }
 
   try {
-    // 토큰 교환
+    /* 1) 토큰 교환 */
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
     const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
     const body     = new URLSearchParams({
@@ -89,10 +104,11 @@ app.get('/auth/callback', async (req, res) => {
       }
     });
 
-    // DB에 저장
+    /* 2) 토큰을 DB에 저장 */
     await db.collection('token').updateOne(
       { mallId },
-      { $set: {
+      {
+        $set: {
           mallId,
           accessToken:  data.access_token,
           refreshToken: data.refresh_token,
@@ -103,16 +119,17 @@ app.get('/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    // 프론트로 리다이렉트 (쿼리스트링에 mallId 포함)
-    const redirectTo = new URL(`${FRONTEND_URL}/auth/callback`);
-    redirectTo.searchParams.set('mallId', mallId);
-    return res.redirect(redirectTo.toString());
-  }
-  catch (err) {
+    /* 3) 세션에 mallId 주입 (express-session 미들웨어 필수) */
+    req.session.mallId = mallId;
+
+    /* 4) mallId를 URL에 노출하지 않고 프론트로 리다이렉트 */
+    return res.redirect(`${FRONTEND_URL}/dashboard`);
+  } catch (err) {
     console.error('❌ [ERROR] token exchange failed:', err.response?.data || err);
     return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
 });
+
 
 // ─── 4) 토큰 관리 헬퍼 ─────────────────────────────────────────────────
 let accessTokenCache, refreshTokenCache;
