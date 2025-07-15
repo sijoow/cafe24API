@@ -149,8 +149,8 @@ async function refreshAccessToken(mallId) {
     }
   );
 }
-
 // ─── 5) 공통 Cafe24 API 호출 헬퍼 ─────────────────────────────────────
+// (이 부분은 그대로 두셔도 됩니다. 호출 시 req.mallId를 넘겨주세요.)
 async function cafeApi(mallId, method, url, data = {}, params = {}) {
   if (!accessTokenCache) await loadTokens(mallId);
   try {
@@ -171,12 +171,25 @@ async function cafeApi(mallId, method, url, data = {}, params = {}) {
   }
 }
 
-// ─── 6) API 접근 시마다 액세스 로그 남기기 ─────────────────────────────
-app.use('/api/:mallId', async (req, res, next) => {
+
+
+// ─── 6) X-Mall-Id 헤더에서 mallId 추출 ―――――――――――――――――――――――
+app.use('/api', (req, res, next) => {
+  const mallId = req.headers['x-mall-id'];
+  if (!mallId) {
+    return res.status(400).json({ error: 'X-Mall-Id 헤더가 필요합니다.' });
+  }
+  req.mallId = mallId;
+  next();
+});
+
+
+
+// ─── 7) API 접근 시마다 액세스 로그 남기기 ―――――――――――――――――――――――
+app.use('/api', async (req, res, next) => {
   try {
-    const { mallId } = req.params;
     await db.collection('access_logs').insertOne({
-      mallId,
+      mallId:    req.mallId,
       path:      req.originalUrl,
       method:    req.method,
       timestamp: new Date(),
@@ -188,6 +201,8 @@ app.use('/api/:mallId', async (req, res, next) => {
   }
   next();
 });
+
+
 
 // ─── 7) Multer & R2 업로드 세팅 ────────────────────────────────────
 const uploadDir = path.join(__dirname,'uploads');
