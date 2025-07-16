@@ -40,7 +40,11 @@ app.use(compression());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-
+app.use(cors({
+  origin: '*',
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','X-Mall-Id','X-User-Id']
+}));
 // ─── 1) MongoDB 연결 ─────────────────────────────────────────────────
 let db;
 async function initDb() {
@@ -305,6 +309,8 @@ app.get('/api/analytics/:pageId/visitors-by-date', async (req, res) => {
   const stats = await visitsCol(mallId).aggregate(pipeline).toArray();
   res.json(stats);
 });
+
+
 
 // ─── 11) API: clicks-by-date ─────────────────────────────────────
 app.get('/api/analytics/:pageId/clicks-by-date', async (req, res) => {
