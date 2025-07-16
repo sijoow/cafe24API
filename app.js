@@ -711,7 +711,7 @@ app.get('/api/products/:product_no', async (req, res) => {
     res.status(500).json({ error: '단일 상품 조회 실패' });
   }
 });
-// 서버 시작
+// 서버 시작dsfsdfsd
 initDb()
   .then(() => {
     app.listen(PORT, ()=>console.log(`▶️ Server running at ${APP_URL} (port ${PORT})`));
