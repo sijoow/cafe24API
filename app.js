@@ -194,27 +194,37 @@ async function cafeApi(mallId, userId, method, url, data = {}, params = {}) {
     throw err;
   }
 }
-
-// ─── 5) Host 기반 mallId 파싱 & 액세스 로그 기록 ────────────────────────
+// ─── MallId 결정 & 액세스 로그 기록 ─────────────────────────────
 app.use('/api', async (req, res, next) => {
-  const host = req.hostname; // e.g. yogibo.cafe24.com
-  const m = host.match(/^([^.]+)\.cafe24\.com$/);
-  if (!m) {
-    return res.status(400).json({ error: 'Invalid host for mallId detection' });
+  // 1) 우선 클라이언트가 보낸 X-Mall-Id 헤더를 사용
+  let mallId = req.get('X-Mall-Id');
+
+  // 2) 없으면 Origin 또는 Referer 헤더에서 도메인 파싱
+  if (!mallId) {
+    const origin = req.get('Origin') || req.get('Referer') || '';
+    try {
+      mallId = new URL(origin).hostname.split('.')[0];  // e.g. onimon.shop → 'onimon'
+    } catch {
+      return res.status(400).json({ error: 'Cannot detect mallId' });
+    }
   }
-  req.mallId = m[1];
+
+  req.mallId = mallId;
+
+  // 3) 액세스 로그 남기기
   try {
     await db.collection('access_logs').insertOne({
-      mallId:    req.mallId,
+      mallId,
       path:      req.originalUrl,
       method:    req.method,
       timestamp: new Date(),
       userAgent: req.get('User-Agent'),
       ip:        req.ip
     });
-  } catch (err) {
-    console.error('⚠️ 액세스 로그 실패', err);
+  } catch (e) {
+    console.error('⚠️ 액세스 로그 실패', e);
   }
+
   next();
 });
 
@@ -711,6 +721,8 @@ app.get('/api/products/:product_no', async (req, res) => {
     res.status(500).json({ error: '단일 상품 조회 실패' });
   }
 });
+
+
 // 서버 시작dsfsdfsd
 initDb()
   .then(() => {
