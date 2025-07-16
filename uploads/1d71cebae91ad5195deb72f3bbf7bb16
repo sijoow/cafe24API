@@ -1,0 +1,173 @@
+<!--@layout(/layout/basic/layout.html)-->
+
+<style type="text/css">
+.coupon_list{display:none;}
+</style>
+<!--@js(/product/js/scroll_event.js)-->
+<!--@js(/product/js/prd.js)-->
+
+<script src="https://yogibo.kr/web/js/script.js"></script>
+	<!--
+	$category_page = /product/list.html
+	$project_page = /product/project.html
+	$jointbuy_page = /product/jointbuy.html
+	-->
+    <div module="product_detail" id="total_detail">
+	<!--@css(/css/module/product/detail.css)-->
+		<!--
+			$coupon_download_page = /coupon/coupon_productdetail.html
+		-->
+		<!--상품 상세 부분 -->
+		<div class="tab_cate">
+			<!--@import(/product/detail_area.html)-->
+		</div>
+		<!--상품 상세 END 부분 -->
+        </div>
+        <div class="eventArea {$common_event_a|display}">
+            <div class="event">{$common_event_a}</div>
+        </div>
+        <!--이벤트 종료 -->
+    </div>
+    <!--TABL SLIDE AREA -->
+	<div class="section_line"></div>
+	<!-- IFDO Suggest Script Start (2023-06-19) -->
+	<div style="display:inline-block;width:100%;">
+		<div id='4defb16d951f9f4199690aa03afe5f15' class="goods_info">
+		<script>(function() { (_NBSTATISTICS = window._NBSTATISTICS || [] ).push(arguments); })('showStatFrame','4defb16d951f9f4199690aa03afe5f15'); </script>
+		</div>
+	</div>
+	<!-- IFDO Suggest Script End (2023-06-19) -->
+
+
+	<!--@css(/css/module/product/additional.css)-->
+    <div module="product_additional">
+        <div id="goods_tab_wrapper">
+            <div class="detail_tab">
+                <ul class="cboth title_detail">
+                    <li class="tab_open"><a href="#detail">상세정보</a></li>
+                    <li><a href="#review">상품후기</a></li>
+                    <li><a href="#qna">상품문의</a></li>
+                    <li><a href="#blog">블로그</a></li>
+                </ul>
+            </div>
+            <!--상품상세정보 부분-->
+			<div class="cont" id="detail">
+				<div df-banner-code="product" hidden class="black">
+					<a href="{#href}" target="{#target}" df-banner-clone>{#item}</a>
+				</div>
+				<!-- 배너매니저 스크립트 코드 -->
+				<style>[df-banner-code][hidden] { display:none !important }</style>
+				<script>
+				if (!document.getElementById('dfbm-script-12415')){
+				  var dfbm_src = '/web/upload/appfiles/ZaReJam3QiELznoZeGGkMG/43f289eb642e663c74fce55bfc1fcb10.js';
+				  document.write('<script id="dfbm-script-12415" src="' + dfbm_src + '?v=' + Date.now() + '"><\/script>');
+				}
+				</script>
+					<br/>
+				<div df-banner-code="banner-play" hidden class="black">
+					<a href="{#href}" target="{#target}" df-banner-clone>{#item}</a>
+				</div>
+				<!-- 배너매니저 스크립트 코드 -->
+				<style>[df-banner-code][hidden] { display:none !important }</style>
+				<script>
+				if (!document.getElementById('dfbm-script-12415')){
+				  var dfbm_src = '/web/upload/appfiles/ZaReJam3QiELznoZeGGkMG/43f289eb642e663c74fce55bfc1fcb10.js';
+				  document.write('<script id="dfbm-script-12415" src="' + dfbm_src + '?v=' + Date.now() + '"><\/script>');
+				}
+				</script>
+				<br/>
+
+				<!--@import(/product/category/index.html)-->
+                {$product_detail}
+            </div>
+			
+
+			<div class="line_bar" id="line_var"></div>
+
+            <!--상품 사용후기 START -->
+            <!--@import(/product/review.html)-->
+            <!-- 상품 사용후기 E-->
+			<!--배너매니저 띠 배너 추가  -->
+			<!--@import(/product/list/line_banner.html)-->
+
+            <!--상품 Q&A S -->
+            <!--@import(/product/qa.html)-->
+            <!--상품 Q&A END -->
+			<!--블로그 부분 -->
+
+		<style type="text/css">
+		#sofa_iframe_blog{display:none;}
+		#body_iframe_blog{display:none;}
+		#care_iframe_blog{display:none;}
+		#specail_iframe_blog{display:none;}
+		#living_iframe_blog{display:none;}
+		#modju_iframe_blog{display:none;}
+		</style>
+		<script language="javascript" type="text/javascript">
+			jq(document).ready(function() {
+				var currentURL = window.location.href;
+				var 소파 = ['/category/632/','/category/690/','/category/691/','/category/692/','/category/510/',
+				'/category/519/','/category/698/','/category/699/','/category/700/','/category/521/','/category/536/',
+				'/category/706/','/category/707/','/category/708/','/category/539/','/category/427/','/category/534/'
+				];
+				var 바디필로우 = ['/category/513/'];
+				var 모듈러소파 = ['/category/533/', '?cate_no=533','/category/210/'];
+
+				if (소파.some(url => currentURL.includes(url))) {
+					jq('#sofa_iframe_blog').show();
+					jq('#norma_iframe_blog').hide();
+				}
+				if (모듈러소파.some(url => currentURL.includes(url))) {
+					jq('#modju_iframe_blog').show();
+					jq('#norma_iframe_blog').hide();
+				}
+			});
+
+		</script>
+		<!--@js(/product/js/iframeUrl.js)-->
+			<div class="board" id="blog">
+				<div class="detail_tab">
+					<ul class="cboth title_detail">
+						<li><a href="#detail">상세정보</a></li>
+						<li><a href="#review">상품후기</a></li>
+						<li ><a href="#qna">상품문의</a></li>
+						<li class="tab_open"><a href="#blog">블로그</a></li>
+					</ul>
+				</div>
+				<div id="norma_iframe_blog">
+					<iframe frameborder="0" width="1200" height="1788"cols="" rows="" title="" src="https://yogico.cafe24.com/blog/index.php"></iframe>
+				</div>				
+				<div id="sofa_iframe_blog">
+					<iframe frameborder="0" width="1200" height="1788"cols="" rows="" title="" src="https://yogico.cafe24.com/blog/sofa/index.php"></iframe>
+				</div>
+				<div id="body_iframe_blog">
+					<iframe frameborder="0" width="1200" height="1788"cols="" rows="" title="" src="https://yogico.cafe24.com/blog/body/index.php"></iframe>
+				</div>
+				<div id="care_iframe_blog">
+					<iframe frameborder="0" width="1200" height="1788"cols="" rows="" title="" src="https://yogico.cafe24.com/blog/care/index.php"></iframe>
+				</div>
+				<div id="specail_iframe_blog">
+					<iframe frameborder="0" width="1200" height="1788"cols="" rows="" title="" src="https://yogico.cafe24.com/blog/specail/index.php"></iframe>
+				</div>
+				<div id="living_iframe_blog">
+					<iframe frameborder="0" width="1200" height="1788"cols="" rows="" title="" src="https://yogico.cafe24.com/blog/living/index.php"></iframe>
+				</div>
+				<div id="modju_iframe_blog">
+					<iframe frameborder="0" width="1200" height="1788"cols="" rows="" title="" src="https://yogico.cafe24.com/blog/modju/index.php"></iframe>
+				</div>
+			</div>
+        </div>
+        <!--goods_tab_wrapper E -->
+    </div>
+  
+
+
+
+
+<!--@css(/product/css/prd.css)-->
+<!--@js(/js/module/product/add_product_script.js)-->
+
+<!--product_additional E-->
+<!--@define(cmc_log)-->
+
+    
