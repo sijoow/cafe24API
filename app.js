@@ -35,7 +35,7 @@ const {
 } = process.env;
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*' }));
 app.use(compression());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
@@ -58,8 +58,15 @@ app.get('/install/:mallId', (req, res) => {
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
-    scope:         'mall.read_promotion,mall.write_promotion,mall.read_category,mall.write_category,mall.read_product,mall.write_product,mall.read_collection,mall.read_application,mall.write_application,mall.read_analytics,mall.read_salesreport,mall.read_store',
-    state:         mallId,
+    scope:         [
+      'mall.read_promotion','mall.write_promotion',
+      'mall.read_category','mall.write_category',
+      'mall.read_product','mall.write_product',
+      'mall.read_collection',
+      'mall.read_application','mall.write_application',
+      'mall.read_analytics','mall.read_salesreport','mall.read_store'
+    ].join(','),
+    state: mallId,
   });
   res.redirect(`https://${mallId}.cafe24.com/api/v2/oauth/authorize?${params}`);
 });
@@ -70,13 +77,11 @@ app.get('/auth/callback', async (req, res) => {
   if (!code || !mallId) {
     return res.status(400).send('❌ code 또는 mallId(state)가 없습니다.');
   }
-
   try {
-    // 토큰 교환
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
     const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
     const body     = new URLSearchParams({
-      grant_type:   'authorization_code',
+      grant_type: 'authorization_code',
       code,
       redirect_uri: `${APP_URL}/auth/callback`
     }).toString();
@@ -92,9 +97,7 @@ app.get('/auth/callback', async (req, res) => {
     await db.collection('token').updateOne(
       { mallId, userId },
       { $set: {
-          mallId,
-          userId,
-          userName,
+          mallId, userId, userName,
           accessToken:  data.access_token,
           refreshToken: data.refresh_token,
           obtainedAt:   new Date(),
@@ -106,9 +109,9 @@ app.get('/auth/callback', async (req, res) => {
 
     // 프론트로 mallId, userId, userName 함께 리다이렉트
     const redirectTo = new URL(`${FRONTEND_URL}/auth/callback`);
-    redirectTo.searchParams.set('mallId',   mallId);
-    redirectTo.searchParams.set('user_id',  userId);
-    redirectTo.searchParams.set('user_name',userName);
+    redirectTo.searchParams.set('mallId',    mallId);
+    redirectTo.searchParams.set('user_id',   userId);
+    redirectTo.searchParams.set('user_name', userName);
     return res.redirect(redirectTo.toString());
   }
   catch (err) {
@@ -117,93 +120,73 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// ─── 4) 토큰 캐싱 & 갱신 헬퍼 ───────────────────────────────────
-const tokenCache = {};  // { [mallId_userId]: { accessToken, refreshToken, expiresAt } }
-
-async function loadTokens(mallId, userId) {
-  const doc = await db.collection('token').findOne({ mallId, userId });
-  if (!doc) throw new Error(`No tokens for mallId=${mallId} & userId=${userId}`);
-  tokenCache[`${mallId}_${userId}`] = {
-    accessToken: doc.accessToken,
-    refreshToken: doc.refreshToken,
-    expiresAt:   new Date(doc.obtainedAt).getTime() + doc.expiresIn * 1000
-  };
-}
-
-async function refreshAccessToken(mallId, userId) {
-  const key = `${mallId}_${userId}`;
-  if (!tokenCache[key]?.refreshToken) {
-    await loadTokens(mallId, userId);
-  }
-  const params = new URLSearchParams({
-    grant_type:    'refresh_token',
-    refresh_token: tokenCache[key].refreshToken
-  }).toString();
-  const credsHeader = Buffer.from(
-    `${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`
-  ).toString('base64');
-
-  const { data } = await axios.post(
-    `https://${mallId}.cafe24api.com/api/v2/oauth/token`,
-    params,
-    { headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${credsHeader}`
-      }
+// ─── 4) “앱 정보” 반환 라우트: /api/mall ───────────────────────────────
+app.get('/api/mall', async (req, res) => {
+  // 1) 헤더 우선, 없으면 Origin/Referer
+  let mallId = req.get('X-Mall-Id');
+  if (!mallId) {
+    try {
+      const origin = req.get('Origin') || req.get('Referer') || '';
+      mallId = new URL(origin).hostname.split('.')[0];
+    } catch {
+      return res.status(400).json({ error: 'mallId를 찾을 수 없습니다' });
     }
-  );
-
-  tokenCache[key] = {
-    accessToken:  data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt:    new Date().getTime() + data.expires_in * 1000
-  };
-
-  // DB에도 갱신
-  await db.collection('token').updateOne(
-    { mallId, userId },
-    { $set: {
-        accessToken:  data.access_token,
-        refreshToken: data.refresh_token,
-        obtainedAt:   new Date()
-      }
-    }
-  );
-}
-
-async function cafeApi(mallId, userId, method, url, data = {}, params = {}) {
-  const key = `${mallId}_${userId}`;
-  if (!tokenCache[key]?.accessToken || Date.now() >= tokenCache[key].expiresAt) {
-    await loadTokens(mallId, userId);
   }
+  // 2) token 컬렉션에서 mallId 단독 조회
+  const doc = await db.collection('token').findOne({ mallId });
+  if (!doc) {
+    return res.status(404).json({ error: '해당 mall에 앱 설치 정보가 없습니다' });
+  }
+  // 3) mallId, userId, userName 반환
+  res.json({
+    mallId:   doc.mallId,
+    userId:   doc.userId   || null,
+    userName: doc.userName || null
+  });
+});
+
+// ─── 5) 공통 /api 미들웨어: mallId/userId 세팅 + 액세스 로그 ───────────────
+app.use('/api', async (req, res, next) => {
+  // mallId 결정 (헤더 → Origin/Referer)
+  let mallId = req.get('X-Mall-Id');
+  if (!mallId) {
+    try {
+      const origin = req.get('Origin') || req.get('Referer') || '';
+      mallId = new URL(origin).hostname.split('.')[0];
+    } catch {
+      return res.status(400).json({ error: 'Cannot detect mallId' });
+    }
+  }
+  req.mallId = mallId;
+
+  // userId 결정 (헤더)
+  req.userId = req.get('X-User-Id') || null;
+
+  // 액세스 로그 남기기
   try {
-    const resp = await axios({
-      method, url, data, params,
-      headers: {
-        Authorization:         `Bearer ${tokenCache[key].accessToken}`,
-        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
-        'Content-Type':        'application/json'
-      }
+    await db.collection('access_logs').insertOne({
+      mallId,
+      path:      req.originalUrl,
+      method:    req.method,
+      timestamp: new Date(),
+      userAgent: req.get('User-Agent'),
+      ip:        req.ip
     });
-    return resp.data;
-  } catch (err) {
-    if (err.response?.status === 401) {
-      await refreshAccessToken(mallId, userId);
-      return cafeApi(mallId, userId, method, url, data, params);
-    }
-    throw err;
+  } catch (e) {
+    console.error('⚠️ 액세스 로그 실패', e);
   }
-}
+  next();
+});
 
 // ─── 6) Visits 컬렉션 헬퍼 ────────────────────────────────────────
 const visitsCol = mallId => db.collection(`visits_${mallId}`);
 
 // ─── 7) Multer & R2 업로드 세팅 ────────────────────────────────────
-const uploadDir = path.join(__dirname,'uploads');
+const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const storage = multer.diskStorage({
-  destination: (req,file,cb) => cb(null,uploadDir),
-  filename:    (req,file,cb) => cb(null,Date.now()+path.extname(file.originalname))
+  destination: (req,file,cb) => cb(null, uploadDir),
+  filename:    (req,file,cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const upload = multer({ storage });
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -216,13 +199,16 @@ const s3Client = new S3Client({
 
 // ─── 8) API: 이미지 업로드 ─────────────────────────────────────
 app.post('/api/uploads/image', upload.single('file'), async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   const local = req.file.path, key = req.file.filename;
   const stream = fs.createReadStream(local);
   try {
     await s3Client.send(new PutObjectCommand({
-      Bucket: R2_BUCKET_NAME, Key: key, Body: stream,
-      ContentType: req.file.mimetype, ACL:'public-read'
+      Bucket:      R2_BUCKET_NAME,
+      Key:         key,
+      Body:        stream,
+      ContentType: req.file.mimetype,
+      ACL:         'public-read'
     }));
     res.json({ url:`${R2_PUBLIC_BASE}/${key}` });
   } catch {
@@ -234,22 +220,21 @@ app.post('/api/uploads/image', upload.single('file'), async (req, res) => {
 
 // ─── 9) API: 트래킹 ─────────────────────────────────────────────
 app.post('/api/track', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   await initIndexesFor(mallId);
 
-  const { pageId, pageUrl, visitorId, referrer, device, type, element, timestamp } = req.body;
-  if (!pageId||!visitorId||!type||!timestamp) return res.status(400).json({error:'필수 필드 누락'});
+  const { pageId, visitorId, type, timestamp, pageUrl, referrer, device, element } = req.body;
+  if (!pageId || !visitorId || !type || !timestamp) {
+    return res.status(400).json({ error:'필수 필드 누락' });
+  }
   if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
 
-  const ev = await db.collection('events').findOne(
-    {_id:new ObjectId(pageId)},
-    {projection:{_id:1}}
-  );
-  if (!ev) return res.sendStatus(204);
-
-  const kst = dayjs(timestamp).tz('Asia/Seoul').toDate();
+  const kst     = dayjs(timestamp).tz('Asia/Seoul').toDate();
   const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
-  const path = (()=>{ try{return new URL(pageUrl).pathname}catch{return pageUrl}})();
+  const path    = (() => {
+    try { return new URL(pageUrl).pathname }
+    catch { return pageUrl }
+  })();
 
   const filter = { pageId, visitorId, dateKey };
   const update = {
@@ -261,8 +246,8 @@ app.post('/api/track', async (req, res) => {
   if (type==='revisit') update.$inc.revisitCount=1;
   if (type==='click'){
     update.$inc.clickCount=1;
-    if(element==='product') update.$inc.urlClickCount=1;
-    if(element==='coupon')  update.$inc.couponClickCount=1;
+    if (element==='product') update.$inc.urlClickCount=1;
+    if (element==='coupon')  update.$inc.couponClickCount=1;
   }
 
   await visitsCol(mallId).updateOne(filter, update, { upsert:true });
@@ -271,12 +256,13 @@ app.post('/api/track', async (req, res) => {
 
 // ─── 10) API: visitors-by-date ───────────────────────────────────
 app.get('/api/analytics/:pageId/visitors-by-date', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   await initIndexesFor(mallId);
-
   const { pageId } = req.params;
   const { start_date, end_date, url } = req.query;
-  if (!start_date || !end_date) return res.status(400).json({error:'start_date,end_date 필수'});
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error:'start_date,end_date 필수' });
+  }
 
   const match = {
     pageId,
@@ -285,46 +271,50 @@ app.get('/api/analytics/:pageId/visitors-by-date', async (req, res) => {
   if (url) match.pageUrl = url;
 
   const pipeline = [
-    {$match:match},
-    {$group:{
-      _id:{date:'$dateKey', visitorId:'$visitorId'},
-      viewCount:{$sum:{$ifNull:['$viewCount',0]}},
-      revisitCount:{$sum:{$ifNull:['$revisitCount',0]}}
+    { $match: match },
+    { $group:{
+        _id:{ date:'$dateKey', visitorId:'$visitorId' },
+        viewCount:   { $sum: { $ifNull:['$viewCount',0]    }},
+        revisitCount:{ $sum: { $ifNull:['$revisitCount',0] }}
     }},
-    {$group:{
-      _id:'$_id.date',
-      totalVisitors:{$sum:1},
-      newVisitors:{$sum:{$cond:[{$gt:['$viewCount',0]},1,0]}},
-      returningVisitors:{$sum:{$cond:[{$gt:['$revisitCount',0]},1,0]}}
+    { $group:{
+        _id:'$_id.date',
+        totalVisitors:    { $sum:1 },
+        newVisitors:      { $sum:{ $cond:[{$gt:['$viewCount',0]},1,0] }},
+        returningVisitors:{ $sum:{ $cond:[{$gt:['$revisitCount',0]},1,0] }}
     }},
-    {$project:{
-      _id:0,
-      date:'$_id',
-      totalVisitors:1,
-      newVisitors:1,
-      returningVisitors:1,
-      revisitRate:{
-        $concat:[
-          {$toString:{$round:[{$multiply:[{$cond:[{$gt:['$totalVisitors',0]},{$divide:['$returningVisitors','$totalVisitors']},0]},100]},0]}},
-          ' %'
-        ]
-      }
+    { $project:{
+        _id:0,
+        date:'$_id',
+        totalVisitors:1,newVisitors:1,returningVisitors:1,
+        revisitRate:{
+          $concat:[
+            { $toString:{ $round:[{ $multiply:[
+              { $cond:[{$gt:['$totalVisitors',0]},
+                        { $divide:['$returningVisitors','$totalVisitors']},
+                        0
+                      ]},
+              100
+            ]},0] }},
+            ' %'
+          ]
+        }
     }},
-    {$sort:{date:1}}
+    { $sort:{ date:1 }}
   ];
-
   const stats = await visitsCol(mallId).aggregate(pipeline).toArray();
   res.json(stats);
 });
 
 // ─── 11) API: clicks-by-date ─────────────────────────────────────
 app.get('/api/analytics/:pageId/clicks-by-date', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   await initIndexesFor(mallId);
-
   const { pageId } = req.params;
   const { start_date, end_date, url } = req.query;
-  if (!start_date || !end_date) return res.status(400).json({error:'start/end 필수'});
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error:'start/end 필수' });
+  }
 
   const match = {
     pageId,
@@ -333,32 +323,37 @@ app.get('/api/analytics/:pageId/clicks-by-date', async (req, res) => {
   if (url) match.pageUrl = url;
 
   const pipeline = [
-    {$match:match},
-    {$group:{
-      _id:'$dateKey',
-      product:{$sum:{$ifNull:['$urlClickCount',0]}},
-      coupon:{$sum:{$ifNull:['$couponClickCount',0]}}
+    { $match: match },
+    { $group:{
+        _id:'$dateKey',
+        product: { $sum:{ $ifNull:['$urlClickCount',0] }},
+        coupon:  { $sum:{ $ifNull:['$couponClickCount',0] }}
     }},
-    {$project:{ _id:0, date:'$_id', product:1, coupon:1 }},
-    {$sort:{ date:1 }}
+    { $project:{ _id:0, date:'$_id', product:1, coupon:1 }},
+    { $sort:{ date:1 }}
   ];
-
   const data = await visitsCol(mallId).aggregate(pipeline).toArray();
   res.json(data);
 });
-
-// ─── 12) API: url-clicks ─────────────────────────────────────────
+// ─── 12) API: URL 클릭 수 조회 ─────────────────────────────────────────
 app.get('/api/analytics/:pageId/url-clicks', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   await initIndexesFor(mallId);
 
   const { pageId } = req.params;
   const { start_date, end_date, url } = req.query;
-  if (!start_date || !end_date) return res.status(400).json({error:'start/end 필수'});
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start/end 필수' });
+  }
 
   const filter = {
-    pageId, type:'click', element:'product',
-    timestamp:{ $gte:new Date(start_date), $lte:new Date(end_date) }
+    pageId,
+    type:    'click',
+    element: 'product',
+    timestamp: {
+      $gte: new Date(start_date),
+      $lte: new Date(end_date),
+    },
   };
   if (url) filter.pageUrl = url;
 
@@ -366,18 +361,25 @@ app.get('/api/analytics/:pageId/url-clicks', async (req, res) => {
   res.json({ count });
 });
 
-// ─── 13) API: coupon-clicks ────────────────────────────────────────
+// ─── 13) API: 쿠폰 클릭 수 조회 ────────────────────────────────────────
 app.get('/api/analytics/:pageId/coupon-clicks', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   await initIndexesFor(mallId);
 
   const { pageId } = req.params;
   const { start_date, end_date, url } = req.query;
-  if (!start_date || !end_date) return res.status(400).json({error:'start/end 필수'});
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start/end 필수' });
+  }
 
   const filter = {
-    pageId, type:'click', element:'coupon',
-    timestamp:{ $gte:new Date(start_date), $lte:new Date(end_date) }
+    pageId,
+    type:    'click',
+    element: 'coupon',
+    timestamp: {
+      $gte: new Date(start_date),
+      $lte: new Date(end_date),
+    },
   };
   if (url) filter.pageUrl = url;
 
@@ -385,78 +387,92 @@ app.get('/api/analytics/:pageId/coupon-clicks', async (req, res) => {
   res.json({ count });
 });
 
-// ─── 14) API: distinct URLs ───────────────────────────────────────
+// ─── 14) API: 페이지별 URL 목록 조회 ───────────────────────────────────
 app.get('/api/analytics/:pageId/urls', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   await initIndexesFor(mallId);
 
   const { pageId } = req.params;
-  const urls = await visitsCol(mallId).distinct('pageUrl',{ pageId });
+  const urls = await visitsCol(mallId).distinct('pageUrl', { pageId });
   res.json(urls);
 });
 
-// ─── 15) API: devices-by-date ─────────────────────────────────────
-app.get('/api/analytics/:pageId/devices-by-date', async (req, res) => {
-  const mallId = req.mallId;
+// ─── 15) API: 디바이스별 방문 총합 조회 ─────────────────────────────────
+app.get('/api/analytics/:pageId/devices', async (req, res) => {
+  const { mallId } = req;
   await initIndexesFor(mallId);
 
   const { pageId } = req.params;
   const { start_date, end_date, url } = req.query;
-  if (!start_date || !end_date) return res.status(400).json({error:'start/end 필수'});
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start/end 필수' });
+  }
 
   const match = {
     pageId,
-    dateKey:{ $gte:start_date.slice(0,10), $lte:end_date.slice(0,10) }
+    dateKey: { $gte: start_date.slice(0,10), $lte: end_date.slice(0,10) }
   };
   if (url) match.pageUrl = url;
 
   const pipeline = [
-    {$match:match},
-    {$group:{ _id:{ date:'$dateKey', device:'$device', visitor:'$visitorId' } }},
-    {$group:{ _id:{ date:'$_id.date', device:'$_id.device' }, count:{ $sum:1 } }},
-    {$project:{ _id:0, date:'$_id.date', device:'$_id.device', count:1 }},
-    {$sort:{ date:1, device:1 }}
+    { $match: match },
+    { $group: {
+        _id: '$device',
+        count: { $sum: { $add: [
+          { $ifNull: ['$viewCount',   0] },
+          { $ifNull: ['$revisitCount',0] }
+        ]}}
+    }},
+    { $project: { _id:0, device_type:'$_id', count:1 }}
   ];
 
   const data = await visitsCol(mallId).aggregate(pipeline).toArray();
   res.json(data);
 });
 
-// ─── 16) API: categories/products ─────────────────────────────────
-app.get('/api/categories/all', async (req, res) => {
-  const mallId = req.mallId;
-  try {
-    const all = [];
-    let offset = 0, limit = 100;
-    while (true) {
-      const url = `https://${mallId}.cafe24api.com/api/v2/admin/categories`;
-      const { categories } = await cafeApi(mallId, req.mallUserId, 'GET', url, {}, { limit, offset });
-      if (!categories.length) break;
-      all.push(...categories);
-      offset += categories.length;
-    }
-    res.json(all);
-  } catch (err) {
-    console.error('카테고리 전체 조회 실패', err);
-    res.status(500).json({ error: '전체 카테고리 조회 실패' });
+// ─── 16) API: 날짜별 디바이스 방문 수 조회 ───────────────────────────────
+app.get('/api/analytics/:pageId/devices-by-date', async (req, res) => {
+  const { mallId } = req;
+  await initIndexesFor(mallId);
+
+  const { pageId } = req.params;
+  const { start_date, end_date, url } = req.query;
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start/end 필수' });
   }
+
+  const match = {
+    pageId,
+    dateKey: { $gte: start_date.slice(0,10), $lte: end_date.slice(0,10) }
+  };
+  if (url) match.pageUrl = url;
+
+  const pipeline = [
+    // 1) 날짜 × 디바이스 × 방문자별 유니크 카운트
+    { $match: match },
+    { $group: { _id: { date:'$dateKey', device:'$device', visitor:'$visitorId' } }},
+    // 2) 날짜 × 디바이스별 고유 방문자 수 집계
+    { $group: {
+        _id: { date:'$_id.date', device:'$_id.device' },
+        count: { $sum: 1 }
+    }},
+    { $project: { _id:0, date:'$_id.date', device:'$_id.device', count:1 }},
+    { $sort: { date:1, device:1 }}
+  ];
+
+  const data = await visitsCol(mallId).aggregate(pipeline).toArray();
+  res.json(data);
 });
 
-app.get('/api/categories/:category_no/products', async (req, res) => {
-  const mallId = req.mallId;
-  const { category_no } = req.params;
-  // …기존 로직 그대로, cafeApi(mallId, …) 호출…
-});
-
-// ─── 17) API: coupons ─────────────────────────────────────────────
+// ─── 17) API: /api/coupons ─────────────────────────────────────────
 app.get('/api/coupons', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId, userId } = req;
   try {
     const all = [];
     let offset = 0, limit = 100;
     while (true) {
       const url = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
-      const { coupons } = await cafeApi(mallId, req.mallUserId, 'GET', url, {}, { shop_no:1, limit, offset });
+      const { coupons } = await cafeApi(mallId, userId, 'GET', url, {}, { shop_no:1, limit, offset });
       if (!coupons.length) break;
       all.push(...coupons);
       offset += coupons.length;
@@ -477,220 +493,94 @@ app.get('/api/coupons', async (req, res) => {
   }
 });
 
-// ─── 18) API: events CRUD ──────────────────────────────────────────
-const eventsCol = mallId => db.collection(`events_${mallId}`);
-
+// ─── 18) API: /api/events CRUD ─────────────────────────────────────
 app.get('/api/events', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   try {
-    const list = await eventsCol(mallId).find().sort({ createdAt:-1 }).toArray();
+    const list = await db.collection(`events_${mallId}`).find().sort({ createdAt:-1 }).toArray();
     res.json(list);
   } catch (err) {
     console.error('이벤트 목록 조회 실패', err);
     res.status(500).json({ error:'이벤트 목록 조회 실패' });
   }
 });
-
-app.get('/api/events/:id', async (req, res) => {
-  const mallId = req.mallId;
-  const { id } = req.params;
-  try {
-    const ev = await eventsCol(mallId).findOne({ _id:new ObjectId(id) });
-    if (!ev) return res.status(404).json({ error:'이벤트가 없습니다' });
-    res.json(ev);
-  } catch (err) {
-    console.error('이벤트 조회 실패', err);
-    res.status(500).json({ error:'이벤트 조회 실패' });
-  }
-});
+// ─── 19) API: 이벤트 생성 ─────────────────────────────────────────
+const eventsCol = mallId => db.collection(`events_${mallId}`);
 
 app.post('/api/events', async (req, res) => {
-  const mallId = req.mallId;
+  const { mallId } = req;
   try {
     const now = dayjs().tz('Asia/Seoul').toDate();
     const doc = {
       ...req.body,
       createdAt: now,
       updatedAt: now,
-      images: (req.body.images||[]).map(img=>({
-        _id:new ObjectId(), ...img,
-        regions:(img.regions||[]).map(r=>({ _id:new ObjectId(), ...r }))
+      images: (req.body.images || []).map(img => ({
+        _id:      new ObjectId(),
+        ...img,
+        regions: (img.regions || []).map(r => ({ _id: new ObjectId(), ...r }))
       }))
     };
     const { insertedId } = await eventsCol(mallId).insertOne(doc);
     res.json({ _id: insertedId, ...doc });
   } catch (err) {
     console.error('이벤트 생성 실패', err);
-    res.status(400).json({ error:'이벤트 생성 실패' });
+    res.status(400).json({ error: '이벤트 생성 실패' });
   }
 });
 
+// ─── 20) API: 이벤트 수정 ─────────────────────────────────────────
 app.put('/api/events/:id', async (req, res) => {
-  const mallId = req.mallId;
-  const { id } = req.params;
+  const { mallId } = req;
+  const { id }     = req.params;
   try {
     const now = dayjs().tz('Asia/Seoul').toDate();
     const result = await eventsCol(mallId).updateOne(
-      { _id:new ObjectId(id) },
-      { $set:{ ...req.body, updatedAt: now } }
+      { _id: new ObjectId(id) },
+      { $set: { ...req.body, updatedAt: now } }
     );
-    if (result.matchedCount===0) return res.status(404).json({ error:'이벤트가 없습니다' });
-    const updated = await eventsCol(mallId).findOne({ _id:new ObjectId(id) });
-    res.json({ success:true, data:updated });
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: '이벤트가 없습니다' });
+    }
+    const updated = await eventsCol(mallId).findOne({ _id: new ObjectId(id) });
+    res.json({ success: true, data: updated });
   } catch (err) {
     console.error('이벤트 수정 실패', err);
-    res.status(500).json({ error:'이벤트 수정 실패' });
+    res.status(500).json({ error: '이벤트 수정 실패' });
   }
 });
 
+// ─── 21) API: 이벤트 삭제 ─────────────────────────────────────────
 app.delete('/api/events/:id', async (req, res) => {
-  const mallId = req.mallId;
-  const { id } = req.params;
+  const { mallId } = req;
+  const { id }     = req.params;
   try {
-    const ev = await eventsCol(mallId).findOne({ _id:new ObjectId(id) });
-    if (!ev) return res.status(404).json({ error:'이벤트가 없습니다' });
-    const keys = (ev.images||[]).map(img=>
-      new URL(img.src).pathname.replace(/^\//,'')
+    const ev = await eventsCol(mallId).findOne({ _id: new ObjectId(id) });
+    if (!ev) {
+      return res.status(404).json({ error: '이벤트가 없습니다' });
+    }
+    // S3/R2에 업로드된 이미지 키 추출
+    const keys = (ev.images || []).map(img =>
+      new URL(img.src).pathname.replace(/^\//, '')
     );
-    await Promise.all(keys.map(k=>
-      s3Client.send(new DeleteObjectCommand({ Bucket:R2_BUCKET_NAME, Key:k }))
-    ));
-    await eventsCol(mallId).deleteOne({ _id:new ObjectId(id) });
-    await visitsCol(mallId).deleteMany({ pageId:id });
-    res.json({ success:true });
+    // 이미지 삭제
+    await Promise.all(
+      keys.map(k => s3Client.send(new DeleteObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key:    k
+      })))
+    );
+    // MongoDB에서 문서 및 연관 방문 기록 삭제
+    await eventsCol(mallId).deleteOne({ _id: new ObjectId(id) });
+    await visitsCol(mallId).deleteMany({ pageId: id });
+    res.json({ success: true });
   } catch (err) {
     console.error('이벤트 삭제 실패', err);
-    res.status(500).json({ error:'삭제 실패' });
+    res.status(500).json({ error: '이벤트 삭제 실패' });
   }
 });
 
-// ─── 카테고리 전체 조회 ─────────────────────────────────────────────
-app.get('/api/categories/all', async (req, res) => {
-  const mallId = req.mallId;
-  const userId = req.userId;  // OAuth 시 저장된 userId
-  try {
-    const all = [];
-    let offset = 0, limit = 100;
-    while (true) {
-      const url = `https://${mallId}.cafe24api.com/api/v2/admin/categories`;
-      const { categories } = await cafeApi(mallId, userId, 'GET', url, {}, { limit, offset });
-      if (!categories.length) break;
-      all.push(...categories);
-      offset += categories.length;
-    }
-    res.json(all);
-  } catch (err) {
-    console.error('카테고리 전체 조회 실패', err);
-    res.status(500).json({ error: '전체 카테고리 조회 실패' });
-  }
-});
-
-// ─── 특정 카테고리 내 상품 조회 ───────────────────────────────────────
-app.get('/api/categories/:category_no/products', async (req, res) => {
-  const mallId     = req.mallId;
-  const userId     = req.userId;
-  const { category_no } = req.params;
-  try {
-    // 1) 매핑 리스트
-    const mapUrl = `https://${mallId}.cafe24api.com/api/v2/admin/categories/${category_no}/products`;
-    const { products: mappings } = await cafeApi(mallId, userId, 'GET', mapUrl, {}, {
-      shop_no:1,
-      limit:  parseInt(req.query.limit,10)  || 100,
-      offset: parseInt(req.query.offset,10) || 0
-    });
-    const productNos = (mappings || []).map(m => m.product_no);
-    if (!productNos.length) return res.json([]);
-
-    // 2) 상세 정보
-    const detailUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
-    const { products: details } = await cafeApi(mallId, userId, 'GET', detailUrl, {}, {
-      shop_no:     1,
-      product_no:  productNos.join(','),
-      limit:       productNos.length
-    });
-
-    // 3) 응답
-    const detailMap = details.reduce((acc, p) => {
-      acc[p.product_no] = p;
-      return acc;
-    }, {});
-    const result = productNos.map(no => {
-      const p = detailMap[no];
-      return p ? {
-        product_no:         p.product_no,
-        product_name:       p.product_name,
-        summary_description:p.summary_description,
-        price:              p.price,
-        list_image:         p.list_image
-      } : null;
-    }).filter(Boolean);
-
-    res.json(result);
-  } catch (err) {
-    console.error('카테고리 내 상품 조회 실패', err);
-    res.status(500).json({ error: '카테고리 내 상품 조회 실패' });
-  }
-});
-
-// ─── 전체 상품 조회 ─────────────────────────────────────────────────
-app.get('/api/products', async (req, res) => {
-  const mallId = req.mallId;
-  const userId = req.userId;
-  try {
-    const limit  = parseInt(req.query.limit,10)  || 100;
-    const offset = parseInt(req.query.offset,10) || 0;
-    const q      = (req.query.q || '').trim();
-    const url    = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
-    const params = { shop_no:1, limit, offset };
-    if (q) params['search[product_name]'] = q;
-
-    const { products, total_count } = await cafeApi(mallId, userId, 'GET', url, {}, params);
-    res.json({
-      total: total_count,
-      products: products.map(p => ({
-        product_no:  p.product_no,
-        product_name:p.product_name,
-        price:       p.price,
-        list_image:  p.list_image
-      }))
-    });
-  } catch (err) {
-    console.error('전체 상품 조회 실패', err);
-    res.status(500).json({ error: '전체 상품 조회 실패' });
-  }
-});
-
-// ─── 단일 상품 상세 조회 ─────────────────────────────────────────────
-app.get('/api/products/:product_no', async (req, res) => {
-  const mallId     = req.mallId;
-  const userId     = req.userId;
-  const { product_no } = req.params;
-  try {
-    const url = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}`;
-    const { product:p0, products:plist } = await cafeApi(mallId, userId, 'GET', url, {}, { shop_no:1 });
-    const p = p0 || plist?.[0];
-    if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
-
-    // 즉시할인가 조회 (선택)
-    const dpUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
-    const { discountprice } = await cafeApi(mallId, userId, 'GET', dpUrl, {}, { shop_no:1 });
-
-    res.json({
-      product_no,
-      product_name:       p.product_name,
-      summary_description:p.summary_description || '',
-      price:              p.price,
-      sale_price:         discountprice?.pc_discount_price || null,
-      list_image:         p.list_image
-    });
-  } catch (err) {
-    console.error('단일 상품 조회 실패', err);
-    res.status(500).json({ error: '단일 상품 조회 실패' });
-  }
-});
-
-
-// 서버 시작dsfsdfsd
+// ─── 서버 시작 ─────────────────────────────────────────────────────
 initDb()
   .then(() => {
     app.listen(PORT, ()=>console.log(`▶️ Server running at ${APP_URL} (port ${PORT})`));
@@ -699,59 +589,3 @@ initDb()
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   });
-
-
-  
-// …initDb() 후, 다른 API 앞에 반드시 위치시킵니다…
-app.get('/api/mall', async (req, res) => {
-  // 1) 헤더 우선, 없으면 Origin 헤더에서 추출
-  let mallId = req.get('X-Mall-Id');
-  if (!mallId) {
-    try {
-      const origin = req.get('Origin') || req.get('Referer') || '';
-      mallId = new URL(origin).hostname.split('.')[0];
-    } catch {
-      return res.status(400).json({ error: 'mallId를 찾을 수 없습니다' });
-    }
-  }
-  // 2) 토큰 컬렉션에서 mallId로만 조회
-  const doc = await db.collection('token').findOne({ mallId });
-  if (!doc) return res.status(404).json({ error: '해당 mall에 앱 설치 정보가 없습니다' });
-
-  // 3) mallId, userId, userName 반환
-  res.json({
-    mallId:   doc.mallId,
-    userId:   doc.userId   || null,
-    userName: doc.userName || null
-  });
-});
-
-// ─── 이후에 공통 /api 미들웨어 ─────────────────────────────────
-app.use('/api', async (req, res, next) => {
-  // 헤더 또는 Origin/Referer 기반으로 mallId 결정
-  let mallId = req.get('X-Mall-Id');
-  if (!mallId) {
-    try {
-      const origin = req.get('Origin') || req.get('Referer') || '';
-      mallId = new URL(origin).hostname.split('.')[0];
-    } catch {
-      return res.status(400).json({ error: 'mallId를 찾을 수 없습니다' });
-    }
-  }
-  req.mallId = mallId;
-
-  // 액세스 로그
-  try {
-    await db.collection('access_logs').insertOne({
-      mallId,
-      path:      req.originalUrl,
-      method:    req.method,
-      timestamp: new Date(),
-      userAgent: req.get('User-Agent'),
-      ip:        req.ip
-    });
-  } catch (e) {
-    console.error('⚠️ 액세스 로그 실패', e);
-  }
-  next();
-});
