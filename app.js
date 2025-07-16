@@ -194,39 +194,6 @@ async function cafeApi(mallId, userId, method, url, data = {}, params = {}) {
     throw err;
   }
 }
-// ─── MallId 결정 & 액세스 로그 기록 ─────────────────────────────
-app.use('/api', async (req, res, next) => {
-  // 1) 우선 클라이언트가 보낸 X-Mall-Id 헤더를 사용
-  let mallId = req.get('X-Mall-Id');
-
-  // 2) 없으면 Origin 또는 Referer 헤더에서 도메인 파싱
-  if (!mallId) {
-    const origin = req.get('Origin') || req.get('Referer') || '';
-    try {
-      mallId = new URL(origin).hostname.split('.')[0];  // e.g. onimon.shop → 'onimon'
-    } catch {
-      return res.status(400).json({ error: 'Cannot detect mallId' });
-    }
-  }
-
-  req.mallId = mallId;
-
-  // 3) 액세스 로그 남기기
-  try {
-    await db.collection('access_logs').insertOne({
-      mallId,
-      path:      req.originalUrl,
-      method:    req.method,
-      timestamp: new Date(),
-      userAgent: req.get('User-Agent'),
-      ip:        req.ip
-    });
-  } catch (e) {
-    console.error('⚠️ 액세스 로그 실패', e);
-  }
-
-  next();
-});
 
 // ─── 6) Visits 컬렉션 헬퍼 ────────────────────────────────────────
 const visitsCol = mallId => db.collection(`visits_${mallId}`);
@@ -732,3 +699,59 @@ initDb()
     console.error('❌ 초기화 실패', err);
     process.exit(1);
   });
+
+
+  
+// …initDb() 후, 다른 API 앞에 반드시 위치시킵니다…
+app.get('/api/mall', async (req, res) => {
+  // 1) 헤더 우선, 없으면 Origin 헤더에서 추출
+  let mallId = req.get('X-Mall-Id');
+  if (!mallId) {
+    try {
+      const origin = req.get('Origin') || req.get('Referer') || '';
+      mallId = new URL(origin).hostname.split('.')[0];
+    } catch {
+      return res.status(400).json({ error: 'mallId를 찾을 수 없습니다' });
+    }
+  }
+  // 2) 토큰 컬렉션에서 mallId로만 조회
+  const doc = await db.collection('token').findOne({ mallId });
+  if (!doc) return res.status(404).json({ error: '해당 mall에 앱 설치 정보가 없습니다' });
+
+  // 3) mallId, userId, userName 반환
+  res.json({
+    mallId:   doc.mallId,
+    userId:   doc.userId   || null,
+    userName: doc.userName || null
+  });
+});
+
+// ─── 이후에 공통 /api 미들웨어 ─────────────────────────────────
+app.use('/api', async (req, res, next) => {
+  // 헤더 또는 Origin/Referer 기반으로 mallId 결정
+  let mallId = req.get('X-Mall-Id');
+  if (!mallId) {
+    try {
+      const origin = req.get('Origin') || req.get('Referer') || '';
+      mallId = new URL(origin).hostname.split('.')[0];
+    } catch {
+      return res.status(400).json({ error: 'mallId를 찾을 수 없습니다' });
+    }
+  }
+  req.mallId = mallId;
+
+  // 액세스 로그
+  try {
+    await db.collection('access_logs').insertOne({
+      mallId,
+      path:      req.originalUrl,
+      method:    req.method,
+      timestamp: new Date(),
+      userAgent: req.get('User-Agent'),
+      ip:        req.ip
+    });
+  } catch (e) {
+    console.error('⚠️ 액세스 로그 실패', e);
+  }
+  next();
+});
