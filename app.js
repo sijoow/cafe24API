@@ -16,6 +16,19 @@ const tz          = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(tz);
 
+async function cafeApi(mallId, userId, method, url, data = {}, params = {}) {
+  // token 컬렉션에서 accessToken 꺼내오기
+  const doc = await db.collection('token').findOne({ mallId, userId });
+  if (!doc) throw new Error('토큰 정보가 없습니다');
+
+  const headers = {
+    'Authorization': `Bearer ${doc.accessToken}`
+  };
+  // 필요하다면 userId 헤더 등 추가
+  return axios({ method, url, data, params, headers })
+    .then(r => r.data);
+}
+
 const { MongoClient, ObjectId } = require('mongodb');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
@@ -389,6 +402,7 @@ app.get('/api/analytics/:pageId/url-clicks', async (req, res) => {
   const count = await visitsCol(mallId).countDocuments(filter);
   res.json({ count });
 });
+
 
 // ─── 13) API: 쿠폰 클릭 수 조회 ───────────────────────────────────────
 app.get('/api/analytics/:pageId/coupon-clicks', async (req, res) => {
