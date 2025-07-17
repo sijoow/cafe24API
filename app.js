@@ -611,6 +611,11 @@ app.delete('/api/events/:id', async (req, res) => {
   }
 });
 
+app.get('/api/malls', async (req, res) => {
+  const list = await db.collection('token').distinct('mallId');
+  res.json(list);
+});
+
 // ─── 서버 시작 ───────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`▶️ Server running at ${APP_URL} (port ${PORT})`);
