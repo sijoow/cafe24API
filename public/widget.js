@@ -10,8 +10,16 @@
     console.warn('⚠️ Widget 스크립트를 찾을 수 없습니다.');
     return;
   }
-  const API_BASE      = script.dataset.apiBase;
-  const pageId        = script.dataset.pageId;
+
+  // ── 필수 dataset: apiBase, pageId, mallId ───────────────────────────────
+  const API_BASE    = script.dataset.apiBase;
+  const pageId      = script.dataset.pageId;
+  const mallId      = script.dataset.mallId;
+  if (!mallId) {
+    console.warn('⚠️ data-mall-id 가 지정되지 않았습니다.');
+    return;
+  }
+
   const tabCount      = parseInt(script.dataset.tabCount, 10) || 0;
   const activeColor   = script.dataset.activeColor || '#1890ff';
   const couponNos     = script.dataset.couponNos || '';
@@ -89,9 +97,7 @@
       const saleText      = p.sale_price    != null ? formatKRW(p.sale_price)    : null;
       const couponText    = p.benefit_price != null ? formatKRW(p.benefit_price) : null;
       const couponPercent = p.benefit_percentage               || null;
-
-      // 할인율 계산
-      const salePercent = saleText
+      const salePercent   = saleText
         ? Math.round((origPrice - p.sale_price) / origPrice * 100)
         : null;
 
@@ -99,41 +105,25 @@
         <li>
           <a href="/product/detail/${p.product_no}" class="prd_link">
             <img src="${p.list_image}"
-                alt="${p.product_name}"
-                style="width:100%;display:block" />
+                 alt="${p.product_name}"
+                 style="width:100%;display:block" />
             <div class="prd_desc">${p.summary_description||''}</div>
             <div class="prd_name">${p.product_name}</div>
           </a>
-
-          <!-- 쿠폰이 있으면 아예 숨김 -->
           <div class="prd_price"${couponText ? ' style="display:none;"' : ''}>
-            ${saleText
-              ? `
-                ${salePercent > 0
-                  ? `<div class="sale_wrapper">
-                      <div class="sale_percent">-${salePercent}%</div>
-                    </div>`
-                  : ''
-                }
-                <div class="sale_price">${saleText}</div>
-              `
-              : priceText
-            }
+            ${saleText ? `
+              ${salePercent > 0 ? `<div class="sale_wrapper"><div class="sale_percent">-${salePercent}%</div></div>` : ''}
+              <div class="sale_price">${saleText}</div>`
+            : priceText}
           </div>
-
-          <!-- 쿠폰이 있으면 이 부분만 보임 -->
           ${couponText ? `
             <div class="coupon_wrapper">
               <div class="prd_coupon_percent">${couponPercent}%</div>
               <div class="prd_coupon">${couponText}</div>
-            </div>
-          ` : ''}
-        </li>
-      `;
+            </div>` : ''}
+        </li>`;
     }).join('');
     ul.innerHTML = items;
-
-
   }
 
   // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────────
@@ -208,101 +198,67 @@
   const style = document.createElement('style');
   style.textContent = `
   .main_Grid_${pageId}{margin-top:10px}
-    /*글자 3줄이상 수정*/
-    .main_Grid_${pageId} .prd_name {
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-    .product_list_widget{padding-top:20px;padding-bottom:20px;}
-    /* 전역 grid row 간격 */
-    /* 탭 버튼 스타일 */
-    .tabs_${pageId} {
-      display: grid;
-      gap: 8px;
-      max-width: 800px;
-      margin: 16px auto;
-      grid-template-columns: repeat(${tabCount},1fr);
+  /*글자 3줄이상 수정*/
+  .main_Grid_${pageId} .prd_name {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: ellipsis;
+  }
+  .product_list_widget{padding-top:20px;padding-bottom:20px;}
+  /* 전역 grid row 간격 */
+  /* 탭 버튼 스타일 */
+  .tabs_${pageId} {
+    display: grid;
+    gap: 8px;
+    max-width: 800px;
+    margin: 16px auto;
+    grid-template-columns: repeat(${tabCount},1fr);
+  }
+  .tabs_${pageId} button {
+    padding:8px;
+    font-size:16px;
+    border:none;
+    background:#f5f5f5;
+    color:#333;
+    cursor:pointer;
+    border-radius:4px;
+    display:-webkit-box;
+    -webkit-line-clamp:2;
+    -webkit-box-orient:vertical;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .tabs_${pageId} button.active {
+    background-color:${activeColor};
+    color:#fff;
+  }
+
+  .main_Grid_${pageId} img{padding-bottom:10px;}
+  .main_Grid_${pageId}{row-gap:50px!important}
+  .main_Grid_${pageId} li{color:#000;}
+  .main_Grid_${pageId} .prd_desc{padding-bottom:3px;font-size:14px;color:#666;} 
+  .main_Grid_${pageId} .prd_name{padding-bottom:3px;} 
+  .main_Grid_${pageId} .prd_price{font-size: 16px;} 
+  .main_Grid_${pageId} .prd_coupon{float: left;font-weight: 500;} 
+  .main_Grid_${pageId} .prd_coupon_percent{float: left;color: #ff0000;font-size: 16px;padding-right:5px;} 
+  .main_Grid_${pageId} .sale_price{float: left;font-weight: 500;} 
+  .main_Grid_${pageId} .sale_percent{float: left;color: #ff0000;font-size: 16px;padding-right:5px;} 
+
+  @media (max-width: 400px) {
+    .main_Grid_${pageId} {
+      width: 95%;
+      margin: 0 auto;
+      gap:10px!important;
+      row-gap:30px!important;
     }
-    .tabs_${pageId} button {
-      padding:8px;
-      font-size:16px;
-      border:none;
-      background:#f5f5f5;
-      color:#333;
-      cursor:pointer;
-      border-radius:4px;
-      display:-webkit-box;
-      -webkit-line-clamp:2;
-      -webkit-box-orient:vertical;
-      overflow:hidden;
-      text-overflow:ellipsis;
-    }
-    .tabs_${pageId} button.active {
-      background-color:${activeColor};
-      color:#fff;
-    }
-
-    /* 쿠폰 퍼센트/금액 스타일 (스코프 적용) */
-    .main_Grid_${pageId} img{padding-bottom:10px;}
-     .main_Grid_${pageId}{row-gap:50px} 
-    .main_Grid_${pageId}{row-gap:50px!important}
-    .main_Grid_${pageId} li{color:#000;}
-    .main_Grid_${pageId} .prd_desc{padding-bottom:3px;
-     font-size:14px;color:#666;
-    } 
-    .main_Grid_${pageId} .prd_name{padding-bottom:3px;} 
-    .main_Grid_${pageId} .prd_price{font-size: 16px;} 
-    .main_Grid_${pageId} .prd_coupon{
-      float: left;
-      font-weight: 500;
-    } 
-    .main_Grid_${pageId} .prd_coupon_percent{
-      float: left;
-      color: #ff0000;
-      font-size: 16px;
-      padding-right:5px;
-    } 
-    /*즉시 할인율*/
-
-      .main_Grid_${pageId} .sale_price{
-        float: left;
-        font-weight: 500;
-      } 
-      .main_Grid_${pageId} .sale_percent{
-        float: left;
-        color: #ff0000;
-        font-size: 16px;
-        padding-right:5px;
-      } 
-
-
-    @media (max-width: 400px) {
-      .main_Grid_${pageId} {
-        width: 95%;
-        margin: 0 auto;
-        gab:10px!important;
-        row-gap:30px!important
-      }
-      .main_Grid_${pageId} .prd_desc{padding-bottom:5px;
-      font-size:12px;color:#666;
-      } 
-      .main_Grid_${pageId} .prd_name{padding-bottom:5px;} 
-      .main_Grid_${pageId} .prd_price{font-size: 15px;} 
-      .main_Grid_${pageId} .prd_coupon{
-        float: left;
-        font-weight: 500;
-      } 
-     .main_Grid_${pageId} .prd_price{font-size: 15px;} 
-      .main_Grid_${pageId} .sale_percent{
-        float: left;
-        color: #ff0000;
-        font-size: 15px;
-      } 
-    }
-
+    .main_Grid_${pageId} .prd_desc{padding-bottom:5px;font-size:12px;color:#666;} 
+    .main_Grid_${pageId} .prd_name{padding-bottom:5px;} 
+    .main_Grid_${pageId} .prd_price{font-size: 15px;} 
+    .main_Grid_${pageId} .prd_coupon{float: left;font-weight: 500;} 
+    .main_Grid_${pageId} .sale_percent{float: left;color: #ff0000;font-size: 15px;} 
+  }
   `;
   document.head.appendChild(style);
 
