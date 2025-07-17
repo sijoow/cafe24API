@@ -243,104 +243,134 @@ app.get('/api/:mallId/ping', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-// ─── (2) 게시판: POSTS CRUD ────────────────────────────────────────────
-// ─── 게시판 CRUD (events 컬렉션 재활용) ─────────────────────────────
 
-// 생성
+// ─── 생성
 app.post('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
   const payload = req.body;
-   if (!payload.title) {
-      return res.status(400).json({ error: '제목을 입력해주세요.' });
-   }
+
+  // 필수: 제목
+  if (!payload.title || typeof payload.title !== 'string') {
+    return res.status(400).json({ error: '제목(title)을 입력해주세요.' });
+  }
+  // 필수: images
+  if (!Array.isArray(payload.images)) {
+    return res.status(400).json({ error: 'images를 배열로 보내주세요.' });
+  }
+
   try {
     const now = new Date();
-       const doc = {
-        mallId,
-        ...payload,       // 이 안에 title, content, images, layoutType, classification 전부 포함
-        createdAt: now,
-        updatedAt: now
-      };
+    const doc = {
+      mallId,
+      title: payload.title.trim(),
+      content: payload.content || '',            // content는 optional
+      images: payload.images,                    // regions 포함된 배열
+      gridSize: payload.gridSize || null,
+      layoutType: payload.layoutType || 'none',
+      classification: payload.classification || {},
+      createdAt: now,
+      updatedAt: now,
+    };
+
     const result = await db.collection('events').insertOne(doc);
     res.json({ _id: result.insertedId, ...doc });
   } catch (err) {
     console.error('[CREATE EVENT ERROR]', err);
-    res.status(500).json({ error: '게시물 생성 실패' });
+    res.status(500).json({ error: '이벤트 생성에 실패했습니다.' });
   }
 });
 
-// 목록 조회
+// ─── 목록 조회
 app.get('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
   try {
-    const list = await db.collection('events')
-                         .find({ mallId })
-                         .sort({ createdAt: -1 })
-                         .toArray();
+    const list = await db
+      .collection('events')
+      .find({ mallId })
+      .sort({ createdAt: -1 })
+      .toArray();
     res.json(list);
   } catch (err) {
     console.error('[GET EVENTS ERROR]', err);
-    res.status(500).json({ error: '게시물 조회 실패' });
+    res.status(500).json({ error: '이벤트 목록 조회에 실패했습니다.' });
   }
 });
 
-// 단건 조회
+// ─── 단건 조회
 app.get('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
+  }
   try {
     const ev = await db.collection('events').findOne({
       _id: new ObjectId(id),
       mallId
     });
-    if (!ev) return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
+    if (!ev) {
+      return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
+    }
     res.json(ev);
   } catch (err) {
     console.error('[GET EVENT ERROR]', err);
-    res.status(500).json({ error: '게시물 조회 실패' });
+    res.status(500).json({ error: '이벤트 조회에 실패했습니다.' });
   }
 });
 
-// 수정
+// ─── 수정
 app.put('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
-  const { title, content } = req.body;
-  if (!title && !content) {
-    return res.status(400).json({ error: '수정할 제목 또는 내용을 입력해주세요.' });
+  const payload = req.body;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
   }
+  if (!payload.title && !payload.content && !payload.images) {
+    return res.status(400).json({ error: '수정할 내용을 하나 이상 보내주세요.' });
+  }
+
+  const update = { updatedAt: new Date() };
+  if (payload.title)   update.title   = payload.title.trim();
+  if (payload.content) update.content = payload.content;
+  if (Array.isArray(payload.images)) update.images = payload.images;
+  if (payload.gridSize !== undefined)   update.gridSize   = payload.gridSize;
+  if (payload.layoutType)               update.layoutType = payload.layoutType;
+  if (payload.classification)           update.classification = payload.classification;
+
   try {
-    const update = { updatedAt: new Date() };
-    if (title)   update.title   = title;
-    if (content) update.content = content;
     const result = await db.collection('events').updateOne(
       { _id: new ObjectId(id), mallId },
       { $set: update }
     );
     if (result.matchedCount === 0) {
-      return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
+      return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
     }
     const updated = await db.collection('events').findOne({ _id: new ObjectId(id) });
     res.json({ success: true, data: updated });
   } catch (err) {
     console.error('[UPDATE EVENT ERROR]', err);
-    res.status(500).json({ error: '게시물 수정 실패' });
+    res.status(500).json({ error: '이벤트 수정에 실패했습니다.' });
   }
 });
 
-// 삭제
+// ─── 삭제
 app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
+  }
   try {
     const result = await db.collection('events').deleteOne({
       _id: new ObjectId(id),
       mallId
     });
     if (result.deletedCount === 0) {
-      return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
+      return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
     }
     res.json({ success: true });
   } catch (err) {
     console.error('[DELETE EVENT ERROR]', err);
-    res.status(500).json({ error: '게시물 삭제 실패' });
+    res.status(500).json({ error: '이벤트 삭제에 실패했습니다.' });
   }
 });
 
