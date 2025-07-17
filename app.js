@@ -507,7 +507,7 @@ app.get('/api/analytics/:pageId/devices-by-date', async (req, res) => {
 });
 
 // ─── 17) API: /api/coupons ─────────────────────────────────────────
-app.get('/api/coupons', async (req, res) => {
+app.get('/api/:mallId/coupons', async (req, res) => {
   const { mallId, userId } = req;
   try {
     const all = [];
