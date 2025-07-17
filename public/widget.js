@@ -14,7 +14,7 @@
   // ── 필수 dataset: apiBase, pageId, mallId ───────────────────────────────
   const API_BASE    = script.dataset.apiBase;
   const pageId      = script.dataset.pageId;
-  const mallId      = script.dataset.mallId;
+   const mallId      = script.dataset.mallId;
   if (!mallId) {
     console.warn('⚠️ data-mall-id 가 지정되지 않았습니다.');
     return;
@@ -127,7 +127,7 @@
   }
 
   // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────────
-  fetch(`${API_BASE}/api/events/${pageId}`)
+  fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
     .then(res => res.json())
     .then(ev => {
       // 1-1) 이미지 영역 치환
@@ -185,7 +185,7 @@
           .catch(err => console.error('DIRECT GRID ERROR', err));
 
         } else {
-          fetch(`${API_BASE}/api/categories/${category}/products?limit=${limit}${couponQSAppend}`)
+         fetch(`${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`)
             .then(r => r.json())
             .then(products => renderProducts(ul, products, cols))
             .catch(err => console.error('PRODUCT GRID ERROR', err));
