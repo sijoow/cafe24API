@@ -91,36 +91,41 @@ app.get('/install/:mallId', (req, res) => {
   });
   res.redirect(`https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`);
 });
-// (1) 이미지 업로드
-app.post(
-  '/api/:mallId/uploads/image',
-  upload.single('file'),
-  async (req, res) => {
-    const { mallId } = req.params;
-    const localPath = req.file.path;
-    const key       = req.file.filename;
-    const fileStream = fs.createReadStream(localPath);
 
-    try {
-      await s3Client.send(
-        new PutObjectCommand({
-          Bucket:      R2_BUCKET_NAME,
-          Key:         key,
-          Body:        fileStream,
-          ContentType: req.file.mimetype,
-          ACL:         'public-read',
-        })
-      );
-      res.json({ url: `${R2_PUBLIC_BASE}/${key}` });
-    } catch (err) {
-      console.error('[UPLOAD IMAGE ERROR]', err);
-      res.status(500).json({ error: '파일 업로드 실패' });
-    } finally {
-      // 로컬에 임시 저장된 파일은 지워줍니다
-      fs.unlink(localPath, () => {});
-    }
+
+// ─── 이미지 업로드 (Multer + R2/S3) ─────────────────────────────────
+app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
+  try {
+    // 업로드된 파일 정보
+    const { mallId } = req.params;
+    const { filename, path: localPath, mimetype } = req.file;
+
+    // S3(R2)에 저장할 키(파일명) 결정
+    const key = `uploads/${mallId}/${filename}`;
+
+    // S3에 업로드
+    await s3Client.send(new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key:    key,
+      Body:   fs.createReadStream(localPath),
+      ContentType: mimetype,
+      ACL:    'public-read'
+    }));
+
+    // 업로드한 후 로컬 임시파일은 지워도 좋습니다.
+    fs.unlink(localPath, () => {});
+
+    // 퍼블릭 URL 조립
+    const url = `${R2_PUBLIC_BASE}/${key}`;
+
+    res.json({ url });
+  } catch (err) {
+    console.error('[IMAGE UPLOAD ERROR]', err);
+    res.status(500).json({ error: '이미지 업로드 실패' });
   }
-);
+});
+
+
 
 // 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장
 app.get('/auth/callback', async (req, res) => {
