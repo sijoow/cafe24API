@@ -16,9 +16,9 @@ const tz          = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(tz);
 
-async function cafeApi(mallId, userId, method, url, data = {}, params = {}) {
+async function cafeApi(mallId, method, url, data = {}, params = {}) {
   // token 컬렉션에서 accessToken 꺼내오기
-  const doc = await db.collection('token').findOne({ mallId, userId });
+  const doc = await db.collection('token').findOne({ mallId });
   if (!doc) throw new Error('토큰 정보가 없습니다');
 
   const headers = {
@@ -101,7 +101,7 @@ app.get('/install/:mallId', (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // 4) OAuth 콜백: code→token 교환 → DB 저장 → 프론트 리다이렉트
 app.get('/auth/callback', async (req, res) => {
-  const { code, state: mallId, user_id: userId, user_name: userName } = req.query;
+  const { code, state: mallId} = req.query;
   if (!code || !mallId) {
     return res.status(400).send('❌ code 또는 mallId(state)가 없습니다.');
   }
@@ -124,9 +124,9 @@ app.get('/auth/callback', async (req, res) => {
 
     // DB에 upsert
     await db.collection('token').updateOne(
-      { mallId, userId },
+      { mallId },
       { $set: {
-          mallId, userId, userName,
+          mallId,
           accessToken:  data.access_token,
           refreshToken: data.refresh_token,
           obtainedAt:   new Date(),
@@ -139,7 +139,6 @@ app.get('/auth/callback', async (req, res) => {
     // 프론트로 리다이렉트 (mallId, user_id, user_name 포함)
     const redirectTo = new URL(`${FRONTEND_URL}/auth/callback`);
     redirectTo.searchParams.set('mallId',    mallId);
-    redirectTo.searchParams.set('user_id',   userId);
     redirectTo.searchParams.set('user_name', userName);
     return res.redirect(redirectTo.toString());
   } catch (err) {
@@ -169,9 +168,7 @@ app.get('/api/mall', async (req, res) => {
   }
 
   return res.json({
-    mallId:   doc.mallId,
-    userId:   doc.userId   || null,
-    userName: doc.userName || null
+    mallId:   doc.mallId
   });
 });
 
@@ -188,8 +185,7 @@ app.use('/api', async (req, res, next) => {
       return res.status(400).json({ error: 'Cannot detect mallId' });
     }
   }
-  req.mallId = mallId;
-  req.userId = req.get('X-User-Id') || null;
+  req.mallId = mallId || null;
 
   // 액세스 로그
   try {
@@ -509,7 +505,7 @@ app.get('/api/analytics/:pageId/devices-by-date', async (req, res) => {
 
 // ─── 17) API: 카페24 쿠폰 목록 조회 ─────────────────────────────────
 app.get('/api/:mallId/coupons', async (req, res) => {
-  const { mallId, userId } = req;
+  const { mallId } = req;
   try {
     const all = [];
     let offset = 0, limit = 100;
