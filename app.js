@@ -439,17 +439,37 @@ app.get('/api/analytics/:pageId/devices', async (req, res) => {
 
 app.get('/api/:mallId/mall', async (req, res) => {
   const { mallId } = req.params;
-  // token 컬렉션에서 mallId 단독 조회
-  const doc = await db.collection('token').findOne({ mallId });
-  if (!doc) {
-    return res.status(404).json({ error: '해당 mall에 앱 설치 정보가 없습니다' });
+  console.log(`[GET /api/${mallId}/mall] req.params.mallId:`, mallId);
+
+  try {
+    // 1) 토큰 문서 조회 직전
+    console.log(`[GET /api/${mallId}/mall] 🕵️‍♂️ db.collection('token').findOne({ mallId: '${mallId}' }) 호출`);
+    const doc = await db.collection('token').findOne({ mallId });
+
+    // 2) 조회 결과
+    console.log(`[GET /api/${mallId}/mall] 조회 결과 doc:`, doc);
+
+    if (!doc) {
+      console.warn(`[GET /api/${mallId}/mall] ❌ 해당 mallId 정보 없음`);
+      return res
+        .status(404)
+        .json({ error: '해당 mall에 앱 설치 정보가 없습니다' });
+    }
+
+    // 3) 성공 반환 직전
+    const payload = {
+      mallId:   doc.mallId,
+      userId:   doc.userId   || null,
+      userName: doc.userName || null
+    };
+    console.log(`[GET /api/${mallId}/mall] ✅ 응답 payload:`, payload);
+
+    return res.json(payload);
+
+  } catch (err) {
+    console.error(`[GET /api/${mallId}/mall] 💥 에러 발생:`, err);
+    return res.status(500).json({ error: '서버 오류가 발생했습니다' });
   }
-  // mallId, userId, userName 반환
-  res.json({
-    mallId:   doc.mallId,
-    userId:   doc.userId   || null,
-    userName: doc.userName || null
-  });
 });
 
 // ─── 16) API: 날짜별 디바이스 방문 수 조회 ───────────────────────────────
