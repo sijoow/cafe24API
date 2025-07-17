@@ -51,7 +51,7 @@
                : /iPhone|iPad|iPod/i.test(ua) ? 'iOS'
                : 'PC';
   function track(payload) {
-    fetch(`${API_BASE}/api/${mallId}/track`, {
+    fetch(`${API_BASE}/api/track`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -137,7 +137,7 @@
   }
 
   // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────────
-  fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
+  fetch(`${API_BASE}/api/events/${pageId}`)
     .then(res => res.json())
     .then(ev => {
       // 1-1) 이미지 영역 치환
@@ -178,7 +178,7 @@
         if (ulDirect) {
           const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
           Promise.all(ids.map(no =>
-            fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
+            fetch(`${API_BASE}/api/products/${no}${couponQSStart}`)
               .then(r => r.json())
               .then(p => ({
                 product_no:          p.product_no,
@@ -195,7 +195,7 @@
           .catch(err => console.error('DIRECT GRID ERROR', err));
 
         } else {
-          fetch(`${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`)
+          fetch(`${API_BASE}/api/categories/${category}/products?limit=${limit}${couponQSAppend}`)
             .then(r => r.json())
             .then(products => renderProducts(ul, products, cols))
             .catch(err => console.error('PRODUCT GRID ERROR', err));
