@@ -500,8 +500,8 @@ app.get('/api/coupons', async (req, res) => {
 });
 
 // ─── 18) API: /api/events CRUD ─────────────────────────────────────
-app.get('/api/:mallId/events', async (req, res) => {
-  const { mallId } = req.params;
+app.get('/api/events', async (req, res) => {
+  const { mallId } = req;
   try {
     const list = await db.collection(`events_${mallId}`).find().sort({ createdAt:-1 }).toArray();
     res.json(list);
@@ -513,7 +513,7 @@ app.get('/api/:mallId/events', async (req, res) => {
 // ─── 19) API: 이벤트 생성 ─────────────────────────────────────────
 const eventsCol = mallId => db.collection(`events_${mallId}`);
 
-app.post('/api/:mallId/events', async (req, res) => {
+app.post('/api/events', async (req, res) => {
   const { mallId } = req;
   try {
     const now = dayjs().tz('Asia/Seoul').toDate();
@@ -536,7 +536,7 @@ app.post('/api/:mallId/events', async (req, res) => {
 });
 
 // ─── 20) API: 이벤트 수정 ─────────────────────────────────────────
-app.put('/api/:mallId/events/:id', async (req, res) => {
+app.put('/api/events/:id', async (req, res) => {
   const { mallId } = req;
   const { id }     = req.params;
   try {
@@ -557,7 +557,7 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
 });
 
 // ─── 21) API: 이벤트 삭제 ─────────────────────────────────────────
-app.delete('/api/:mallId/events/:id', async (req, res) => {
+app.delete('/api/events/:id', async (req, res) => {
   const { mallId } = req;
   const { id }     = req.params;
   try {
