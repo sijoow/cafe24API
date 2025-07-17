@@ -72,6 +72,8 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
+
+
 // ===================================================================
 // ① 설치 → 권한요청 → 콜백 (code → 토큰) → DB 저장
 // ===================================================================
@@ -89,6 +91,36 @@ app.get('/install/:mallId', (req, res) => {
   });
   res.redirect(`https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`);
 });
+// (1) 이미지 업로드
+app.post(
+  '/api/:mallId/uploads/image',
+  upload.single('file'),
+  async (req, res) => {
+    const { mallId } = req.params;
+    const localPath = req.file.path;
+    const key       = req.file.filename;
+    const fileStream = fs.createReadStream(localPath);
+
+    try {
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket:      R2_BUCKET_NAME,
+          Key:         key,
+          Body:        fileStream,
+          ContentType: req.file.mimetype,
+          ACL:         'public-read',
+        })
+      );
+      res.json({ url: `${R2_PUBLIC_BASE}/${key}` });
+    } catch (err) {
+      console.error('[UPLOAD IMAGE ERROR]', err);
+      res.status(500).json({ error: '파일 업로드 실패' });
+    } finally {
+      // 로컬에 임시 저장된 파일은 지워줍니다
+      fs.unlink(localPath, () => {});
+    }
+  }
+);
 
 // 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장
 app.get('/auth/callback', async (req, res) => {
