@@ -207,9 +207,10 @@ app.get('/api/:mallId/ping', (req, res) => {
 });
 
 // ─── (2) 게시판: POSTS CRUD ────────────────────────────────────────────
+// ─── 게시판 CRUD (events 컬렉션 재활용) ─────────────────────────────
 
 // 생성
-app.post('/api/:mallId/posts', async (req, res) => {
+app.post('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
   const { title, content } = req.body;
   if (!title || !content) {
@@ -218,47 +219,47 @@ app.post('/api/:mallId/posts', async (req, res) => {
   try {
     const now = new Date();
     const doc = { mallId, title, content, createdAt: now, updatedAt: now };
-    const result = await db.collection('posts').insertOne(doc);
+    const result = await db.collection('events').insertOne(doc);
     res.json({ _id: result.insertedId, ...doc });
   } catch (err) {
-    console.error('[CREATE POST ERROR]', err);
+    console.error('[CREATE EVENT ERROR]', err);
     res.status(500).json({ error: '게시물 생성 실패' });
   }
 });
 
 // 목록 조회
-app.get('/api/:mallId/posts', async (req, res) => {
+app.get('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
   try {
-    const list = await db.collection('posts')
+    const list = await db.collection('events')
                          .find({ mallId })
                          .sort({ createdAt: -1 })
                          .toArray();
     res.json(list);
   } catch (err) {
-    console.error('[GET POSTS ERROR]', err);
+    console.error('[GET EVENTS ERROR]', err);
     res.status(500).json({ error: '게시물 조회 실패' });
   }
 });
 
 // 단건 조회
-app.get('/api/:mallId/posts/:id', async (req, res) => {
+app.get('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   try {
-    const post = await db.collection('posts').findOne({
+    const ev = await db.collection('events').findOne({
       _id: new ObjectId(id),
       mallId
     });
-    if (!post) return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
-    res.json(post);
+    if (!ev) return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
+    res.json(ev);
   } catch (err) {
-    console.error('[GET POST ERROR]', err);
+    console.error('[GET EVENT ERROR]', err);
     res.status(500).json({ error: '게시물 조회 실패' });
   }
 });
 
 // 수정
-app.put('/api/:mallId/posts/:id', async (req, res) => {
+app.put('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   const { title, content } = req.body;
   if (!title && !content) {
@@ -268,26 +269,26 @@ app.put('/api/:mallId/posts/:id', async (req, res) => {
     const update = { updatedAt: new Date() };
     if (title)   update.title   = title;
     if (content) update.content = content;
-    const result = await db.collection('posts').updateOne(
+    const result = await db.collection('events').updateOne(
       { _id: new ObjectId(id), mallId },
       { $set: update }
     );
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
     }
-    const updated = await db.collection('posts').findOne({ _id: new ObjectId(id) });
+    const updated = await db.collection('events').findOne({ _id: new ObjectId(id) });
     res.json({ success: true, data: updated });
   } catch (err) {
-    console.error('[UPDATE POST ERROR]', err);
+    console.error('[UPDATE EVENT ERROR]', err);
     res.status(500).json({ error: '게시물 수정 실패' });
   }
 });
 
 // 삭제
-app.delete('/api/:mallId/posts/:id', async (req, res) => {
+app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   try {
-    const result = await db.collection('posts').deleteOne({
+    const result = await db.collection('events').deleteOne({
       _id: new ObjectId(id),
       mallId
     });
@@ -296,7 +297,7 @@ app.delete('/api/:mallId/posts/:id', async (req, res) => {
     }
     res.json({ success: true });
   } catch (err) {
-    console.error('[DELETE POST ERROR]', err);
+    console.error('[DELETE EVENT ERROR]', err);
     res.status(500).json({ error: '게시물 삭제 실패' });
   }
 });
