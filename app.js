@@ -206,140 +206,98 @@ app.get('/api/:mallId/ping', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-// (1) 이미지 업로드
-app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
+// ─── (2) 게시판: POSTS CRUD ────────────────────────────────────────────
+
+// 생성
+app.post('/api/:mallId/posts', async (req, res) => {
   const { mallId } = req.params;
-  const localPath = req.file.path;
-  const key = req.file.filename;
-  const fileStream = fs.createReadStream(localPath);
-
-  try {
-    await s3Client.send(new PutObjectCommand({
-      Bucket:      R2_BUCKET_NAME,
-      Key:         key,
-      Body:        fileStream,
-      ContentType: req.file.mimetype,
-      ACL:         'public-read',
-    }));
-    res.json({ url: `${R2_PUBLIC_BASE}/${key}` });
-  } catch (err) {
-    console.error('[UPLOAD IMAGE ERROR]', err);
-    res.status(500).json({ error: '파일 업로드 실패' });
-  } finally {
-    fs.unlink(localPath, ()=>{});
+  const { title, content } = req.body;
+  if (!title || !content) {
+    return res.status(400).json({ error: '제목과 내용을 입력해주세요.' });
   }
-});
-
-// (2) 이미지 삭제
-app.delete('/api/:mallId/events/:eventId/images/:imageId', async (req, res) => {
-  const { mallId, eventId, imageId } = req.params;
   try {
-    const ev = await db.collection('events').findOne({ _id: new ObjectId(eventId) });
-    if (!ev) return res.status(404).json({ error: '이벤트 없음' });
-    const img = ev.images.find(i => String(i._id) === imageId);
-    if (img?.src) {
-      const key = new URL(img.src).pathname.replace(/^\//,'');
-      await s3Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
-    }
-    await db.collection('events').updateOne(
-      { _id: new ObjectId(eventId) },
-      { $pull: { images: { _id: new ObjectId(imageId) } } }
-    );
-    res.json({ success: true });
-  } catch (err) {
-    console.error('[DELETE IMAGE ERROR]', err);
-    res.status(500).json({ error: '이미지 삭제 실패' });
-  }
-});
-
-// (3) 이벤트 목록 조회
-app.get('/api/:mallId/events', async (req, res) => {
-  try {
-    const list = await db.collection('events').find().sort({ createdAt: -1 }).toArray();
-    res.json(list);
-  } catch (err) {
-    console.error('[GET EVENTS ERROR]', err);
-    res.status(500).json({ error: '이벤트 목록 조회 실패' });
-  }
-});
-
-// (4) 이벤트 단건 조회
-app.get('/api/:mallId/events/:id', async (req, res) => {
-  try {
-    const ev = await db.collection('events').findOne({ _id: new ObjectId(req.params.id) });
-    if (!ev) return res.status(404).json({ error: '이벤트가 없습니다' });
-    res.json(ev);
-  } catch (err) {
-    console.error('[GET EVENT ERROR]', err);
-    res.status(500).json({ error: '이벤트 조회 실패' });
-  }
-});
-
-// (5) 이벤트 생성
-app.post('/api/:mallId/events', async (req, res) => {
-  try {
-    const nowKst = dayjs().tz('Asia/Seoul').toDate();
-    const doc = {
-      ...req.body,
-      createdAt: nowKst,
-      updatedAt: nowKst,
-      images: (req.body.images||[]).map(img => ({
-        _id: new ObjectId(), ...img,
-        regions: (img.regions||[]).map(r => ({ _id: new ObjectId(), ...r }))
-      }))
-    };
-    const result = await db.collection('events').insertOne(doc);
+    const now = new Date();
+    const doc = { mallId, title, content, createdAt: now, updatedAt: now };
+    const result = await db.collection('posts').insertOne(doc);
     res.json({ _id: result.insertedId, ...doc });
   } catch (err) {
-    console.error('[CREATE EVENT ERROR]', err);
-    res.status(400).json({ error: '이벤트 생성 실패' });
+    console.error('[CREATE POST ERROR]', err);
+    res.status(500).json({ error: '게시물 생성 실패' });
   }
 });
 
-// (6) 이벤트 수정
-app.put('/api/:mallId/events/:id', async (req, res) => {
+// 목록 조회
+app.get('/api/:mallId/posts', async (req, res) => {
+  const { mallId } = req.params;
   try {
-    const objId = new ObjectId(req.params.id);
-    const nowKst = dayjs().tz('Asia/Seoul').toDate();
-    const result = await db.collection('events').updateOne(
-      { _id: objId },
-      { $set: { ...req.body, updatedAt: nowKst } }
+    const list = await db.collection('posts')
+                         .find({ mallId })
+                         .sort({ createdAt: -1 })
+                         .toArray();
+    res.json(list);
+  } catch (err) {
+    console.error('[GET POSTS ERROR]', err);
+    res.status(500).json({ error: '게시물 조회 실패' });
+  }
+});
+
+// 단건 조회
+app.get('/api/:mallId/posts/:id', async (req, res) => {
+  const { mallId, id } = req.params;
+  try {
+    const post = await db.collection('posts').findOne({
+      _id: new ObjectId(id),
+      mallId
+    });
+    if (!post) return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
+    res.json(post);
+  } catch (err) {
+    console.error('[GET POST ERROR]', err);
+    res.status(500).json({ error: '게시물 조회 실패' });
+  }
+});
+
+// 수정
+app.put('/api/:mallId/posts/:id', async (req, res) => {
+  const { mallId, id } = req.params;
+  const { title, content } = req.body;
+  if (!title && !content) {
+    return res.status(400).json({ error: '수정할 제목 또는 내용을 입력해주세요.' });
+  }
+  try {
+    const update = { updatedAt: new Date() };
+    if (title)   update.title   = title;
+    if (content) update.content = content;
+    const result = await db.collection('posts').updateOne(
+      { _id: new ObjectId(id), mallId },
+      { $set: update }
     );
-    if (result.matchedCount === 0) return res.status(404).json({ error: '이벤트 없음' });
-    const updated = await db.collection('events').findOne({ _id: objId });
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
+    }
+    const updated = await db.collection('posts').findOne({ _id: new ObjectId(id) });
     res.json({ success: true, data: updated });
   } catch (err) {
-    console.error('[UPDATE EVENT ERROR]', err);
-    res.status(500).json({ error: '이벤트 수정 실패' });
+    console.error('[UPDATE POST ERROR]', err);
+    res.status(500).json({ error: '게시물 수정 실패' });
   }
 });
 
-// (7) 이벤트 삭제
-app.delete('/api/:mallId/events/:id', async (req, res) => {
+// 삭제
+app.delete('/api/:mallId/posts/:id', async (req, res) => {
+  const { mallId, id } = req.params;
   try {
-    const { id, mallId } = req.params;
-    const ev = await db.collection('events').findOne({ _id: new ObjectId(id) });
-    if (!ev) return res.status(404).json({ error: '이벤트가 없습니다' });
-
-    // 이미지 R2에서 삭제
-    const keys = (ev.images||[]).map(img => {
-      const p = img.src.startsWith('http') ? new URL(img.src).pathname : `/${img.src}`;
-      return p.replace(/^\//,'');
+    const result = await db.collection('posts').deleteOne({
+      _id: new ObjectId(id),
+      mallId
     });
-    await Promise.all(keys.map(key =>
-      s3Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }))
-    ));
-
-    // 이벤트 문서 삭제
-    await db.collection('events').deleteOne({ _id: new ObjectId(id) });
-
-    // 방문 통계 컬렉션도 mallId 기준으로 삭제 가능
-    await db.collection(`visits_${mallId}`).deleteMany({ pageId: id });
-
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: '게시물을 찾을 수 없습니다.' });
+    }
     res.json({ success: true });
   } catch (err) {
-    console.error('[DELETE EVENT ERROR]', err);
-    res.status(500).json({ error: '삭제 실패' });
+    console.error('[DELETE POST ERROR]', err);
+    res.status(500).json({ error: '게시물 삭제 실패' });
   }
 });
 
@@ -842,6 +800,7 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
 });
+
 
 // ===================================================================
 // 서버 시작
