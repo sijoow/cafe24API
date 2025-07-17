@@ -249,13 +249,18 @@ app.get('/api/:mallId/ping', (req, res) => {
 // 생성
 app.post('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
-  const { title, content } = req.body;
-  if (!title || !content) {
-    return res.status(400).json({ error: '제목과 내용을 입력해주세요.' });
-  }
+  const payload = req.body;
+   if (!payload.title) {
+      return res.status(400).json({ error: '제목을 입력해주세요.' });
+   }
   try {
     const now = new Date();
-    const doc = { mallId, title, content, createdAt: now, updatedAt: now };
+       const doc = {
+        mallId,
+        ...payload,       // 이 안에 title, content, images, layoutType, classification 전부 포함
+        createdAt: now,
+        updatedAt: now
+      };
     const result = await db.collection('events').insertOne(doc);
     res.json({ _id: result.insertedId, ...doc });
   } catch (err) {
