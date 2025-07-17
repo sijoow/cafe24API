@@ -436,6 +436,22 @@ app.get('/api/analytics/:pageId/devices', async (req, res) => {
   res.json(data);
 });
 
+
+app.get('/api/:mallId/mall', async (req, res) => {
+  const { mallId } = req.params;
+  // token 컬렉션에서 mallId 단독 조회
+  const doc = await db.collection('token').findOne({ mallId });
+  if (!doc) {
+    return res.status(404).json({ error: '해당 mall에 앱 설치 정보가 없습니다' });
+  }
+  // mallId, userId, userName 반환
+  res.json({
+    mallId:   doc.mallId,
+    userId:   doc.userId   || null,
+    userName: doc.userName || null
+  });
+});
+
 // ─── 16) API: 날짜별 디바이스 방문 수 조회 ───────────────────────────────
 app.get('/api/analytics/:pageId/devices-by-date', async (req, res) => {
   const { mallId } = req;
