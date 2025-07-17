@@ -42,6 +42,17 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// axios import 바로 아래에 추가
+async function cafeApi(mallId, method, url, data = {}, params = {}) {
+  const doc = await db.collection('token').findOne({ mallId })
+  if (!doc) {
+    throw new Error(`토큰 정보 없음: mallId=${mallId}`)
+  }
+  const headers = { Authorization: `Bearer ${doc.accessToken}` }
+  const response = await axios({ method, url, data, params, headers })
+  return response.data
+}
+
 // ─── MongoDB 연결 ───────────────────────────────────────────────
 let db;
 async function initDb() {
@@ -415,6 +426,10 @@ app.get('/api/:mallId/categories/all', async (req, res) => {
 // (10) 쿠폰 전체 조회
 app.get('/api/:mallId/coupons', async (req, res) => {
   const { mallId } = req.params;
+  console.log('[Coupons] URL param mallId =', mallId)
+  if (!mallId) {
+    return res.status(400).json({ error: 'mallId가 경로에 없습니다' })
+  }
   try {
     const all = [];
     let offset = 0, limit = 100;
