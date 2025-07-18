@@ -373,7 +373,6 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
     res.status(500).json({ error: '이벤트 삭제에 실패했습니다.' });
   }
 });
-
 // (8) 트래킹 저장
 app.post('/api/:mallId/track', async (req, res) => {
   try {
@@ -384,10 +383,13 @@ app.post('/api/:mallId/track', async (req, res) => {
 
     // 이벤트 유효성 검사
     if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
-    const ev = await db.collection('events').findOne({ _id: new ObjectId(pageId) }, { projection: { _id:1 } });
+    const ev = await db.collection('events').findOne(
+      { _id: new ObjectId(pageId) },
+      { projection: { _id: 1 } }
+    );
     if (!ev) return res.sendStatus(204);
 
-    const kstTs = dayjs(timestamp).tz('Asia/Seoul').toDate();
+    const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
 
     // URL path만 추출
@@ -406,18 +408,32 @@ app.post('/api/:mallId/track', async (req, res) => {
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
     };
-    if (type === 'view')    update.$inc.viewCount    = 1;
-    if (type === 'revisit') update.$inc.revisitCount = 1;
+
+    if (type === 'view') {
+      update.$inc.viewCount = 1;
+    }
+    if (type === 'revisit') {
+      update.$inc.revisitCount = 1;
+    }
     if (type === 'click') {
-      update.$inc.clickCount     = 1;
-      if (element === 'url')     update.$inc.urlClickCount    = 1;
-      if (element === 'product') update.$inc.productClickCount = 1;
-      if (element === 'coupon')  update.$inc.couponClickCount = 1;
+      update.$inc.clickCount = 1;
+      if (element === 'url') {
+        update.$inc.urlClickCount = 1;
+      }
+      if (element === 'product') {
+        // 상품 클릭도 urlClickCount 에 합산하거나 따로 관리하려면 아래 두 줄 중 하나를 활성화하세요:
+        update.$inc.urlClickCount     = 1;
+        // update.$inc.productClickCount = 1;
+      }
+      if (element === 'coupon') {
+        update.$inc.couponClickCount = 1;
+      }
     }
 
     await db.collection(`visits_${req.params.mallId}`)
             .updateOne(filter, update, { upsert: true });
     res.sendStatus(204);
+
   } catch (err) {
     console.error('[TRACK ERROR]', err);
     res.status(500).json({ error: '트래킹 실패' });
