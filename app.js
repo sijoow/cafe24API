@@ -374,10 +374,9 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
   }
 });
 // (8) 트래킹 저장
-// (8) 트래킹 저장
 app.post('/api/:mallId/track', async (req, res) => {
   try {
-    // 1) body에서 productNo까지 한꺼번에 꺼내기
+    // 1) body에서 productNo 추가로 받기
     const {
       pageId,
       pageUrl,
@@ -387,73 +386,70 @@ app.post('/api/:mallId/track', async (req, res) => {
       type,
       element,
       timestamp,
-      productNo    // ← 추가
+      productNo      // ← 상품번호
     } = req.body;
 
-    // 필수 필드 검증
+    // 2) 필수 필드 검증
     if (!pageId || !visitorId || !type || !timestamp) {
       return res.status(400).json({ error: '필수 필드 누락' });
     }
 
-    // 이벤트 유효성 검사
+    // 3) 이벤트 유효성 검사
     if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
-    const ev = await db.collection('events').findOne(
-      { _id: new ObjectId(pageId) },
-      { projection: { _id: 1 } }
-    );
+    const ev = await db
+      .collection('events')
+      .findOne({ _id: new ObjectId(pageId) }, { projection: { _id:1 } });
     if (!ev) return res.sendStatus(204);
 
-    // 2) 공통값 계산
+    // 4) 날짜 키, timestamp 변환
     const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
+
+    // 5) pageUrl에서 path만 추출
     let pathOnly;
     try { pathOnly = new URL(pageUrl).pathname; }
     catch { pathOnly = pageUrl; }
 
-    // 3) filter에 productNo 추가 (상품 클릭인 경우에만)
+    // 6) 기본 필터 (visitor+date+pageId)
     const filter = { pageId, visitorId, dateKey };
+
+    // 7) “상품 클릭” 이면 상품별 집계를 위해 filter에 productNo 추가
     if (type === 'click' && element === 'product' && productNo) {
       filter.productNo = productNo;
     }
 
-    // 4) update 문 구성: 최초 삽입 시에도 productNo 저장
+    // 8) 업데이트 객체 준비
     const update = {
       $set: {
         lastVisit: kstTs,
         pageUrl:   pathOnly,
         referrer:  referrer || null,
         device:    device   || null,
-        // insert 문에 productNo 필드 추가
-        ...(filter.productNo && { productNo: filter.productNo })
       },
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
     };
 
-    // 5) 타입별 증분값
+    // 9) 타입별 카운터 분기
     if (type === 'view') {
       update.$inc.viewCount = 1;
-    }
-    if (type === 'revisit') {
+    } else if (type === 'revisit') {
       update.$inc.revisitCount = 1;
-    }
-    if (type === 'click') {
+    } else if (type === 'click') {
       update.$inc.clickCount = 1;
       if (element === 'url') {
         update.$inc.urlClickCount = 1;
-      }
-      if (element === 'product') {
-        // 상품 클릭은 productClickCount에 기록
-        update.$inc.productClickCount = 1;
-      }
-      if (element === 'coupon') {
+      } else if (element === 'coupon') {
         update.$inc.couponClickCount = 1;
+      } else if (element === 'product' && productNo) {
+        update.$inc.productClickCount = 1; // ← 상품 클릭 카운트
       }
     }
 
-    // 6) upsert
-    await db.collection(`visits_${req.params.mallId}`)
-            .updateOne(filter, update, { upsert: true });
+    // 10) upsert
+    await db
+      .collection(`visits_${req.params.mallId}`)
+      .updateOne(filter, update, { upsert: true });
 
     res.sendStatus(204);
   } catch (err) {
@@ -461,6 +457,7 @@ app.post('/api/:mallId/track', async (req, res) => {
     res.status(500).json({ error: '트래킹 실패' });
   }
 });
+
 
 // (9) 카테고리 전체 조회
 app.get('/api/:mallId/categories/all', async (req, res) => {
