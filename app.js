@@ -394,36 +394,35 @@ app.post('/api/:mallId/track', async (req, res) => {
     }
     if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
     const ev = await db.collection('events')
-                       .findOne({ _id: new ObjectId(pageId) }, { projection:{_id:1} });
+                       .findOne({ _id: new ObjectId(pageId) }, { projection: { _id: 1 } });
     if (!ev) return res.sendStatus(204);
 
-    // KST 변환 및 dateKey
+    // KST 변환 및 dateKey 생성
     const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
 
-    // path 만
+    // URL path만 분리
     let pathOnly;
     try { pathOnly = new URL(pageUrl).pathname; }
     catch { pathOnly = pageUrl; }
 
-    // 기본 필터
+    // 필터 구성: 기본 + 제품 클릭 시 productNo
     const filter = { pageId, visitorId, dateKey };
-    // 제품 클릭이면 상품별 집계하도록 productNo 추가
     if (type === 'click' && element === 'product' && productNo) {
       filter.productNo = productNo;
     }
 
-    // 업데이트 객체
+    // 업데이트 문서
     const update = {
       $set: {
-        lastVisit: kstTs,
-        pageUrl:   pathOnly,
-        referrer:  referrer || null,
-        device:    device   || null,
-        type,                        // ← 저장
-        element,                     // ← 저장
-        timestamp: kstTs,            // ← 저장
-        ...(productNo && { productNo }) // ← 저장
+        lastVisit:  kstTs,
+        pageUrl:    pathOnly,
+        referrer:   referrer || null,
+        device:     device   || null,
+        type,                           // 요청 타입 저장
+        element,                        // 클릭 요소 저장
+        timestamp: kstTs,               // 이벤트 발생 시각 저장
+        ...(productNo && { productNo }) // productNo 저장
       },
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
@@ -445,14 +444,20 @@ app.post('/api/:mallId/track', async (req, res) => {
       }
     }
 
-    await db
-      .collection(`visits_${req.params.mallId}`)
-      .updateOne(filter, update, { upsert: true });
+    // 중복키 에러(E11000)만 무시
+    try {
+      await db
+        .collection(`visits_${req.params.mallId}`)
+        .updateOne(filter, update, { upsert: true });
+    } catch (e) {
+      if (e.code !== 11000) throw e;
+      // duplicate key: 이미 같은 필터로 기록이 있으므로 무시
+    }
 
-    res.sendStatus(204);
+    return res.sendStatus(204);
   } catch (err) {
     console.error('[TRACK ERROR]', err);
-    res.status(500).json({ error: '트래킹 실패' });
+    return res.status(500).json({ error: '트래킹 실패' });
   }
 });
 
