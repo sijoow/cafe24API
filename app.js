@@ -830,34 +830,58 @@ app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
 });
 
 // (15) analytics: clicks-by-date
+// ─── analytics: clicks-by-date (url / coupon 클릭 집계) ─────────────────────────────────────
 app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
   const { mallId, pageId } = req.params;
   const { start_date, end_date, url } = req.query;
-  if (!start_date||!end_date) return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
+  }
 
-  const startKey = start_date.slice(0,10), endKey = end_date.slice(0,10);
-  const match = { pageId, dateKey: { $gte: startKey, $lte: endKey } };
+  // 날짜 키 (YYYY-MM-DD) 범위
+  const startKey = start_date.slice(0,10);
+  const endKey   = end_date.  slice(0,10);
+
+  // clicks_<mallId> 컬렉션에서 element 필드로 그룹핑
+  const match = {
+    pageId,
+    dateKey: { $gte: startKey, $lte: endKey }
+  };
   if (url) match.pageUrl = url;
 
   const pipeline = [
     { $match: match },
+    // element: 'product' 혹은 'coupon' 별로 개수 집계
     { $group: {
-        _id: '$dateKey',
-        product: { $sum: { $ifNull: ['$urlClickCount', 0] }},
-        coupon:  { $sum: { $ifNull: ['$couponClickCount', 0] }}
+        _id: { date: '$dateKey', element: '$element' },
+        count: { $sum: 1 }
     }},
-    { $project: { _id:0, date:'$_id', product:1, coupon:1 }},
-    { $sort: { date:1 }}
+    // 날짜별로 다시 묶어서 product / coupon 필드를 만들어 줌
+    { $group: {
+        _id: '$_id.date',
+        product: { 
+          $sum: { $cond: [ { $eq: ['$_id.element', 'product'] }, '$count', 0 ] }
+        },
+        coupon: {
+          $sum: { $cond: [ { $eq: ['$_id.element', 'coupon'] }, '$count', 0 ] }
+        }
+    }},
+    { $project: { _id: 0, date: '$_id', product: 1, coupon: 1 }},
+    { $sort: { date: 1 }}
   ];
 
   try {
-    const data = await db.collection(`visits_${mallId}`).aggregate(pipeline).toArray();
+    const data = await db
+      .collection(`clicks_${mallId}`)
+      .aggregate(pipeline)
+      .toArray();
     res.json(data);
   } catch (err) {
     console.error('[CLICKS-BY-DATE ERROR]', err);
     res.status(500).json({ error: '클릭 집계에 실패했습니다.' });
   }
 });
+
 
 // (16) analytics: url-clicks count
 app.get('/api/:mallId/analytics/:pageId/url-clicks', async (req, res) => {
