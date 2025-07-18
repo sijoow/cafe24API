@@ -209,13 +209,13 @@
           <div class="prd_price"${couponText ? ' style="display:none;"' : ''} style="font-size:16px;font-weight:500;">
             ${saleText
               ? `
+               <span class="sale_price">${saleText}</span>
                 ${salePercent > 0
                   ? `<div class="sale_wrapper" style="display:inline-block;margin-right:4px;">
-                      <span class="sale_percent" style="color:#ff4d4f;">-${salePercent}%</span>
+                      <span class="sale_percent" style="color:#ff4d4f;">${salePercent}%</span>
                     </div>`
                   : ''
                 }
-                <span class="sale_price">${saleText}</span>
               `
               : `<span>${priceText}</span>`
             }
