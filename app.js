@@ -682,7 +682,7 @@ app.get('/api/:mallId/products/:product_no', async (req, res) => {
   }
 });
 
-// (14) analytics: visitors-by-date
+// (14) analytics: visitors-by-date 방문자 재방문자 Data
 app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
   const { mallId, pageId } = req.params;
   const { start_date, end_date, url } = req.query;
@@ -702,23 +702,37 @@ app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
     { $group: {
         _id: '$_id.date',
         totalVisitors:     { $sum: 1 },
-        newVisitors:       { $sum: { $cond: [ { $gt: ['$viewCount', 0] }, 1, 0 ] } },
-        returningVisitors: { $sum: { $cond: [ { $gt: ['$revisitCount', 0] }, 1, 0 ] } }
+        newVisitors:       { $sum: { $cond: [ { $gt: ['$viewCount',    0] }, 1, 0 ] } },
+        // ← 여기를 변경
+        returningVisitors: { $sum: '$revisitCount' }
     }},
     { $project: {
         _id: 0,
         date: '$_id',
-        totalVisitors: 1,
-        newVisitors: 1,
-        returningVisitors: 1,
+        totalVisitors:      1,
+        newVisitors:        1,
+        returningVisitors:  1,
         revisitRate: {
           $concat: [
-            { $toString: { $round: [ { $multiply: [ { $cond: [ { $gt: ['$totalVisitors', 0] }, { $divide: ['$returningVisitors', '$totalVisitors'] }, 0 ] }, 100 ] }, 0 ] }},
+            { $toString: {
+                $round: [
+                  { $multiply: [
+                      { $cond: [
+                          { $gt:['$totalVisitors', 0] },
+                          { $divide:['$returningVisitors', '$totalVisitors'] },
+                          0
+                      ]},
+                      100
+                  ]},
+                  0
+                ]
+              }
+            },
             ' %'
           ]
         }
     }},
-    { $sort: { date: 1 } }
+    { $sort:{ date:1 } }
   ];
 
   try {
