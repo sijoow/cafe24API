@@ -89,7 +89,7 @@
   document.body.addEventListener('click', e => {
     const el = e.target.closest('[data-track-click]');
     if (!el) return;
-    const elementType = el.dataset.trackClick; // 'url' or 'coupon'
+    const elementType = el.dataset.trackClick; // 'url' or 'coupon'prduct'
     track({
       pageId,
       pageUrl: location.pathname,
@@ -204,7 +204,7 @@
 
       return `
         <li style="list-style:none;">
-          <a href="/product/detail/${p.product_no}" class="prd_link" style="text-decoration:none;color:inherit;">
+          <a href="/product/detail/${p.product_no}" class="prd_link" style="text-decoration:none;color:inherit;"  data-track-click="product">
             <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
             <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;">${p.summary_description||''}</div>
             <div class="prd_name" style="font-weight:500;padding-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;">
