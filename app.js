@@ -376,7 +376,7 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
 // (8) 트래킹 저장
 app.post('/api/:mallId/track', async (req, res) => {
   try {
-    // 1) body에서 productNo 추가로 받기
+    // 1) body에서 필요한 값들 추출 (productNo 추가)
     const {
       pageId,
       pageUrl,
@@ -386,7 +386,7 @@ app.post('/api/:mallId/track', async (req, res) => {
       type,
       element,
       timestamp,
-      productNo      // ← 상품번호
+      productNo   // ← 상품 번호 (data-product-no)
     } = req.body;
 
     // 2) 필수 필드 검증
@@ -398,27 +398,30 @@ app.post('/api/:mallId/track', async (req, res) => {
     if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
     const ev = await db
       .collection('events')
-      .findOne({ _id: new ObjectId(pageId) }, { projection: { _id:1 } });
+      .findOne({ _id: new ObjectId(pageId) }, { projection: { _id: 1 } });
     if (!ev) return res.sendStatus(204);
 
-    // 4) 날짜 키, timestamp 변환
+    // 4) KST timestamp 변환 및 dateKey 생성
     const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
 
     // 5) pageUrl에서 path만 추출
     let pathOnly;
-    try { pathOnly = new URL(pageUrl).pathname; }
-    catch { pathOnly = pageUrl; }
+    try {
+      pathOnly = new URL(pageUrl).pathname;
+    } catch {
+      pathOnly = pageUrl;
+    }
 
-    // 6) 기본 필터 (visitor+date+pageId)
+    // 6) 기본 필터: 페이지ID + 방문자ID + 날짜
     const filter = { pageId, visitorId, dateKey };
 
-    // 7) “상품 클릭” 이면 상품별 집계를 위해 filter에 productNo 추가
+    // 7) 상품 클릭인 경우 filter에 productNo 추가 (상품별 집계)
     if (type === 'click' && element === 'product' && productNo) {
       filter.productNo = productNo;
     }
 
-    // 8) 업데이트 객체 준비
+    // 8) 업데이트 객체 생성
     const update = {
       $set: {
         lastVisit: kstTs,
@@ -430,7 +433,7 @@ app.post('/api/:mallId/track', async (req, res) => {
       $inc: {}
     };
 
-    // 9) 타입별 카운터 분기
+    // 9) 타입/엘리먼트 별 카운터 분기
     if (type === 'view') {
       update.$inc.viewCount = 1;
     } else if (type === 'revisit') {
@@ -442,11 +445,11 @@ app.post('/api/:mallId/track', async (req, res) => {
       } else if (element === 'coupon') {
         update.$inc.couponClickCount = 1;
       } else if (element === 'product' && productNo) {
-        update.$inc.productClickCount = 1; // ← 상품 클릭 카운트
+        update.$inc.productClickCount = 1;
       }
     }
 
-    // 10) upsert
+    // 10) upsert 수행
     await db
       .collection(`visits_${req.params.mallId}`)
       .updateOne(filter, update, { upsert: true });
