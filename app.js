@@ -927,15 +927,52 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
   }
 });
 
-// (21) analytics: product-clicks count
+// (21) analytics: product-clicks 순위
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
-  const { mallId, pageId } = req.params;
-  const match = {
-    pageId, type:'click', element:'product',
-    timestamp: { $gte: new Date(req.query.start_date), $lte: new Date(req.query.end_date) }
-  };
-  const count = await db.collection(`visits_${mallId}`).countDocuments(match);
-  res.json({ count });
+  try {
+    const { mallId, pageId } = req.params;
+    const { start_date, end_date } = req.query;
+    if (!start_date || !end_date) {
+      return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
+    }
+
+    // 날짜 필터
+    const startTs = new Date(start_date);
+    const endTs   = new Date(end_date);
+
+    // 클릭 이벤트 중에서 상품 클릭만 필터
+    const match = {
+      pageId,
+      type:    'click',
+      element: 'product',
+      timestamp: { $gte: startTs, $lte: endTs }
+    };
+
+    // aggregation pipeline
+    const pipeline = [
+      { $match: match },
+      { $group: {
+          _id: '$productNo',                        // 상품번호별로
+          clicks: { $sum: '$productClickCount' }    // 클릭수 누적
+      }},
+      { $project: {
+          _id: 0,
+          productNo: '$_id',
+          clicks: 1
+      }},
+      { $sort: { clicks: -1 } }                   // 클릭수 내림차순
+    ];
+
+    const result = await db
+      .collection(`visits_${mallId}`)
+      .aggregate(pipeline)
+      .toArray();
+
+    res.json(result);
+  } catch (err) {
+    console.error('[PRODUCT-CLICKS ERROR]', err);
+    res.status(500).json({ error: '상품 클릭 집계 실패' });
+  }
 });
 
 
