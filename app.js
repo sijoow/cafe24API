@@ -984,6 +984,52 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   res.json(results);
 });
 
+// (22) analytics: product-performance (상품별 클릭 퍼포먼스 전체 상품데이터)
+app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  try {
+    // 1) 이벤트 문서 조회
+    const ev = await db.collection('events').findOne({ _id: new ObjectId(pageId), mallId });
+    if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
+
+    // 2) 이벤트에 설정된 상품 목록 추출 (예: ev.classification.directNos = "101,102,103")
+    const directNos = ev.classification.directNos
+      ? ev.classification.directNos.split(',').map(s => s.trim())
+      : [];
+
+    // 3) 상품별 클릭 집계
+    const clicks = await db.collection(`clicks_${mallId}`).aggregate([
+      { $match: {
+          pageId,
+          element: 'product',
+          productNo: { $in: directNos }
+      }},
+      { $group: {
+          _id: '$productNo',
+          clicks: { $sum: '$clickCount' }
+      }}
+    ]).toArray();
+
+    const totalClicks = clicks.reduce((sum, c) => sum + c.clicks, 0);
+
+    // 4) 결과 조합
+    const performance = directNos.map(no => {
+      const rec = clicks.find(c => c._id === no) || { clicks: 0 };
+      const rate = totalClicks > 0 ? (rec.clicks / totalClicks) * 100 : 0;
+      return {
+        productNo:    no,
+        clicks:       rec.clicks,
+        clickRate:    `${rate.toFixed(1)}%`
+      };
+    });
+
+    res.json(performance);
+  } catch (err) {
+    console.error('[PRODUCT PERFORMANCE ERROR]', err);
+    res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
+  }
+});
+
 // ===================================================================
 // 서버 시작
 // ===================================================================
