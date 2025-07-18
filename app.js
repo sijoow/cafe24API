@@ -352,8 +352,6 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
     res.status(500).json({ error: '이벤트 수정에 실패했습니다.' });
   }
 });
-
-// ─── 삭제
 // ─── 삭제 (cascade delete) ───────────────────────────────
 app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
@@ -366,11 +364,11 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
 
   try {
     // 1) 이벤트 문서 삭제
-    const result = await db.collection('events').deleteOne({
+    const { deletedCount } = await db.collection('events').deleteOne({
       _id: eventId,
       mallId
     });
-    if (result.deletedCount === 0) {
+    if (!deletedCount) {
       return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
     }
 
@@ -428,10 +426,11 @@ app.post('/api/:mallId/track', async (req, res) => {
         $set: { lastClickAt: kstTs }
       };
       await db
-        .collection(`clicks_${req.params.mallId}`)
+        .collection(`clicks_${mallId}`)
         .updateOne(filter, update, { upsert: true });
       return res.sendStatus(204);
     }
+
 
     // ─── 기타 클릭 (url/coupon 등)은 insertOne 하려면 아래처럼 분기
     if (type === 'click') {
@@ -478,6 +477,8 @@ app.post('/api/:mallId/track', async (req, res) => {
     return res.status(500).json({ error: '트래킹 실패' });
   }
 });
+
+
 
 
 // (9) 카테고리 전체 조회
