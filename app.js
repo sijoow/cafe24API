@@ -411,6 +411,7 @@ app.post('/api/:mallId/track', async (req, res) => {
     if (type === 'click') {
       update.$inc.clickCount     = 1;
       if (element === 'url')     update.$inc.urlClickCount    = 1;
+      if (element === 'product') update.$inc.productClickCount = 1;
       if (element === 'coupon')  update.$inc.couponClickCount = 1;
     }
 
@@ -886,6 +887,17 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     console.error('[ANALYTICS DEVICES-BY-DATE ERROR]', err);
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
+});
+
+// (21) analytics: product-clicks count
+app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  const match = {
+    pageId, type:'click', element:'product',
+    timestamp: { $gte: new Date(req.query.start_date), $lte: new Date(req.query.end_date) }
+  };
+  const count = await db.collection(`visits_${mallId}`).countDocuments(match);
+  res.json({ count });
 });
 
 
