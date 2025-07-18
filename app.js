@@ -374,85 +374,72 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
   }
 });
 // (8) 트래킹 저장
-
 app.post('/api/:mallId/track', async (req, res) => {
   try {
     const {
-      pageId,
-      pageUrl,
-      visitorId,
-      referrer,
-      device,
-      type,
-      element,
-      timestamp,
-      productNo      // 클라이언트에서 반드시 실어 보낼 것
+      pageId, pageUrl, visitorId, referrer,
+      device, type, element, timestamp,
+      productNo
     } = req.body;
 
     if (!pageId || !visitorId || !type || !timestamp) {
       return res.status(400).json({ error: '필수 필드 누락' });
     }
     if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
+
+    // 이벤트 존재 체크
     const ev = await db.collection('events')
-                       .findOne({ _id: new ObjectId(pageId) }, { projection: { _id: 1 } });
+                       .findOne({ _id: new ObjectId(pageId) }, { projection:{_id:1} });
     if (!ev) return res.sendStatus(204);
 
-    // KST 변환 및 dateKey 생성
+    // 시간 처리
     const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
 
-    // URL path만 분리
+    // URL path 분리
     let pathOnly;
     try { pathOnly = new URL(pageUrl).pathname; }
     catch { pathOnly = pageUrl; }
 
-    // 필터 구성: 기본 + 제품 클릭 시 productNo
-    const filter = { pageId, visitorId, dateKey };
-    if (type === 'click' && element === 'product' && productNo) {
-      filter.productNo = productNo;
-    }
-
-    // 업데이트 문서
-    const update = {
-      $set: {
+    // **클릭 이벤트는 insertOne** (개별 레코드)
+    if (type === 'click') {
+      const doc = {
+        pageId,
+        visitorId,
+        dateKey,
+        firstVisit: kstTs,   // 필요하다면
         lastVisit:  kstTs,
         pageUrl:    pathOnly,
         referrer:   referrer || null,
         device:     device   || null,
-        type,                           // 요청 타입 저장
-        element,                        // 클릭 요소 저장
-        timestamp: kstTs,               // 이벤트 발생 시각 저장
-        ...(productNo && { productNo }) // productNo 저장
+        type,
+        element,
+        timestamp:  kstTs,
+        ...(element === 'product' && productNo ? { productNo } : {}),
+      };
+      // 개별 click 은 매번 새로 삽입
+      await db.collection(`visits_${req.params.mallId}`)
+              .insertOne(doc);
+      return res.sendStatus(204);
+    }
+
+    // **view/revisit** 은 기존 upsert 로 그대로
+    const filter = { pageId, visitorId, dateKey };
+    const update = {
+      $set: {
+        lastVisit: kstTs,
+        pageUrl:   pathOnly,
+        referrer:  referrer || null,
+        device:    device   || null
       },
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
     };
+    if (type === 'view')    update.$inc.viewCount    = 1;
+    if (type === 'revisit') update.$inc.revisitCount = 1;
 
-    // 카운터 분기
-    if (type === 'view') {
-      update.$inc.viewCount = 1;
-    } else if (type === 'revisit') {
-      update.$inc.revisitCount = 1;
-    } else if (type === 'click') {
-      update.$inc.clickCount = 1;
-      if (element === 'url') {
-        update.$inc.urlClickCount = 1;
-      } else if (element === 'coupon') {
-        update.$inc.couponClickCount = 1;
-      } else if (element === 'product') {
-        update.$inc.productClickCount = 1;
-      }
-    }
-
-    // 중복키 에러(E11000)만 무시
-    try {
-      await db
-        .collection(`visits_${req.params.mallId}`)
-        .updateOne(filter, update, { upsert: true });
-    } catch (e) {
-      if (e.code !== 11000) throw e;
-      // duplicate key: 이미 같은 필터로 기록이 있으므로 무시
-    }
+    await db.collection(`visits_${req.params.mallId}`)
+            .updateOne(filter, update, { upsert: true });
 
     return res.sendStatus(204);
   } catch (err) {
