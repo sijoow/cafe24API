@@ -985,68 +985,59 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
 
   res.json(results);
 });
-// (22) analytics: product-performance (상품별 클릭 퍼포먼스 전체 상품데이터)
+// (22) analytics: product-performance (클릭된 상품만 + 상품명 포함)
 app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
   const { mallId, pageId } = req.params;
   try {
-    // 1) 이벤트 문서 조회
-    const ev = await db
-      .collection('events')
-      .findOne({ _id: new ObjectId(pageId), mallId });
-    if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
-
-    // 2) 이벤트에 설정된 상품 목록 추출
-    let directNos = [];
-    if (ev.classification.directNos) {
-      directNos = ev.classification.directNos
-        .split(',')
-        .map(s => s.trim())
-        .filter(s => s);
-    }
-    // 2-1) directNos 가 빈 배열이면, 클릭 기록이 있는 모든 상품번호를 가져와 fallback
-    if (directNos.length === 0) {
-      directNos = await db
-        .collection(`clicks_${mallId}`)
-        .distinct('productNo', { pageId });
-    }
-
-    // 3) 클릭 집계 (clickCount 합산)
+    // 1) 클릭된 상품만 집계
     const clicks = await db
       .collection(`clicks_${mallId}`)
       .aggregate([
-        {
-          $match: {
-            pageId,
-            element:   'product',
-            productNo: { $in: directNos }
-          }
-        },
-        {
-          $group: {
-            _id:    '$productNo',
-            clicks: { $sum: '$clickCount' }
-          }
-        }
+        { $match: { pageId, element: 'product' } },
+        { $group: { _id: '$productNo', clicks: { $sum: '$clickCount' } } }
       ])
       .toArray();
+
+    if (clicks.length === 0) {
+      return res.json([]);
+    }
+
+    // 2) 상품번호 목록 추출
+    const productNos = clicks.map(c => c._id);
+
+    // 3) Cafe24 API 호출로 상품명 가져오기
+    const urlProds = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
+    const prodRes = await apiRequest(mallId, 'GET', urlProds, {}, {
+      shop_no:     1,
+      product_no:  productNos.join(','),
+      limit:       productNos.length,
+      fields:      'product_no,product_name'
+    });
+    const details = prodRes.products || [];
+    const detailMap = details.reduce((m, p) => {
+      m[p.product_no] = p.product_name;
+      return m;
+    }, {});
 
     // 4) 전체 클릭 수 합산
     const totalClicks = clicks.reduce((sum, c) => sum + c.clicks, 0);
 
-    // 5) 전체 상품 목록에 대해 결과 조합
-    //    클릭 기록이 없는 상품은 clicks=0, clickRate="0.0%"
-    const performance = directNos.map(no => {
-      const rec = clicks.find(c => c._id === no);
-      const cnt = rec ? rec.clicks : 0;
-      const rate = totalClicks > 0
-        ? ((cnt / totalClicks) * 100).toFixed(1)
-        : '0.0';
-      return {
-        productNo: no,
-        clicks:    cnt,
-        clickRate: `${rate}%`
-      };
-    });
+    // 5) 결과 조합 & 클릭율 계산 & 상품명 추가
+    const performance = clicks
+      .map(c => {
+        const cnt  = c.clicks;
+        const rate = totalClicks > 0
+          ? ((cnt / totalClicks) * 100).toFixed(1)
+          : '0.0';
+        return {
+          productNo:   c._id,
+          productName: detailMap[c._id] || '(이름없음)',
+          clicks:      cnt,
+          clickRate:   `${rate}%`
+        };
+      })
+      // 순위용 정렬 (클릭수 내림차순)
+      .sort((a, b) => b.clicks - a.clicks);
 
     res.json(performance);
   } catch (err) {
