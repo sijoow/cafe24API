@@ -89,21 +89,26 @@
   document.body.addEventListener('click', e => {
     const el = e.target.closest('[data-track-click]');
     if (!el) return;
-    const elementType = el.dataset.trackClick; // 'url' or 'coupon'prduct'
-    track({
+  
+    const elementType = el.dataset.trackClick; // 'url' | 'coupon' | 'product'
+    const payload = {
       pageId,
       pageUrl: location.pathname,
       visitorId,
       type: 'click',
       element: elementType,
-      productNo,
       device,
       referrer: document.referrer || 'direct',
-      timestamp: new Date().toISOString()
-    });
+      timestamp: new Date().toISOString(),
+    };
+  
+    // ⬇️ 상품 클릭이면 productNo 까지 추가
     if (elementType === 'product') {
-      payload.productNo = el.dataset.productNo;  // ← 여기!
+      const productNo = el.dataset.productNo;
+      if (productNo) payload.productNo = productNo;
     }
+  
+    track(payload);
   });
 
   // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────
