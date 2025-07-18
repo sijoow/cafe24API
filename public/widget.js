@@ -1,5 +1,4 @@
-`src="${API_BASE}/api/${mallId}/widget.js"`,
-관련해선
+
 ;(function(){
   // ─── 0) 스크립트 엘리먼트 찾기 & 설정값 가져오기 ─────────────────────────
   let script = document.currentScript;
