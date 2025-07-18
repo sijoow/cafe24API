@@ -374,9 +374,23 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
   }
 });
 // (8) 트래킹 저장
+// (8) 트래킹 저장
 app.post('/api/:mallId/track', async (req, res) => {
   try {
-    const { pageId, pageUrl, visitorId, referrer, device, type, element, timestamp } = req.body;
+    // 1) body에서 productNo까지 한꺼번에 꺼내기
+    const {
+      pageId,
+      pageUrl,
+      visitorId,
+      referrer,
+      device,
+      type,
+      element,
+      timestamp,
+      productNo    // ← 추가
+    } = req.body;
+
+    // 필수 필드 검증
     if (!pageId || !visitorId || !type || !timestamp) {
       return res.status(400).json({ error: '필수 필드 누락' });
     }
@@ -389,26 +403,34 @@ app.post('/api/:mallId/track', async (req, res) => {
     );
     if (!ev) return res.sendStatus(204);
 
+    // 2) 공통값 계산
     const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
-
-    // URL path만 추출
     let pathOnly;
     try { pathOnly = new URL(pageUrl).pathname; }
     catch { pathOnly = pageUrl; }
 
+    // 3) filter에 productNo 추가 (상품 클릭인 경우에만)
     const filter = { pageId, visitorId, dateKey };
+    if (type === 'click' && element === 'product' && productNo) {
+      filter.productNo = productNo;
+    }
+
+    // 4) update 문 구성: 최초 삽입 시에도 productNo 저장
     const update = {
       $set: {
         lastVisit: kstTs,
         pageUrl:   pathOnly,
         referrer:  referrer || null,
         device:    device   || null,
+        // insert 문에 productNo 필드 추가
+        ...(filter.productNo && { productNo: filter.productNo })
       },
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
     };
 
+    // 5) 타입별 증분값
     if (type === 'view') {
       update.$inc.viewCount = 1;
     }
@@ -421,19 +443,19 @@ app.post('/api/:mallId/track', async (req, res) => {
         update.$inc.urlClickCount = 1;
       }
       if (element === 'product') {
-        // 상품 클릭도 urlClickCount 에 합산하거나 따로 관리하려면 아래 두 줄 중 하나를 활성화하세요:
-        update.$inc.urlClickCount     = 1;
-        // update.$inc.productClickCount = 1;
+        // 상품 클릭은 productClickCount에 기록
+        update.$inc.productClickCount = 1;
       }
       if (element === 'coupon') {
         update.$inc.couponClickCount = 1;
       }
     }
 
+    // 6) upsert
     await db.collection(`visits_${req.params.mallId}`)
             .updateOne(filter, update, { upsert: true });
-    res.sendStatus(204);
 
+    res.sendStatus(204);
   } catch (err) {
     console.error('[TRACK ERROR]', err);
     res.status(500).json({ error: '트래킹 실패' });
