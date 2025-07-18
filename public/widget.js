@@ -101,6 +101,9 @@
       referrer: document.referrer || 'direct',
       timestamp: new Date().toISOString()
     });
+    if (elementType === 'product') {
+      payload.productNo = el.dataset.productNo;  // ← 여기!
+    }
   });
 
   // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────
