@@ -410,7 +410,7 @@ app.post('/api/:mallId/track', async (req, res) => {
     if (type === 'revisit') update.$inc.revisitCount = 1;
     if (type === 'click') {
       update.$inc.clickCount     = 1;
-      if (element === 'product') update.$inc.urlClickCount    = 1;
+      if (element === 'url')     update.$inc.urlClickCount    = 1;
       if (element === 'coupon')  update.$inc.couponClickCount = 1;
     }
 
