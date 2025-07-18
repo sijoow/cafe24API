@@ -926,55 +926,46 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
 });
-
-// (21) analytics: product-clicks 순위
+// app.js — product-clicks 집계 변경
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   try {
     const { mallId, pageId } = req.params;
     const { start_date, end_date } = req.query;
-    if (!start_date || !end_date) {
-      return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
-    }
 
-    // 날짜 필터
-    const startTs = new Date(start_date);
-    const endTs   = new Date(end_date);
-
-    // 클릭 이벤트 중에서 상품 클릭만 필터
     const match = {
       pageId,
-      type:    'click',
-      element: 'product',
-      timestamp: { $gte: startTs, $lte: endTs }
+      productNo: { $exists: true },  // 상품 클릭만
+      dateKey: { 
+        $gte: start_date.slice(0,10),
+        $lte: end_date.slice(0,10)
+      }
     };
 
-    // aggregation pipeline
     const pipeline = [
       { $match: match },
       { $group: {
-          _id: '$productNo',                        // 상품번호별로
-          clicks: { $sum: '$productClickCount' }    // 클릭수 누적
+          _id: '$productNo',
+          clicks: { $sum: '$productClickCount' }
       }},
       { $project: {
-          _id: 0,
+          _id:       0,
           productNo: '$_id',
-          clicks: 1
+          clicks:    1
       }},
-      { $sort: { clicks: -1 } }                   // 클릭수 내림차순
+      { $sort: { clicks: -1 } }
     ];
 
-    const result = await db
+    const ranking = await db
       .collection(`visits_${mallId}`)
       .aggregate(pipeline)
       .toArray();
 
-    res.json(result);
+    res.json(ranking);
   } catch (err) {
     console.error('[PRODUCT-CLICKS ERROR]', err);
     res.status(500).json({ error: '상품 클릭 집계 실패' });
   }
 });
-
 
 // ===================================================================
 // 서버 시작
