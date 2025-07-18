@@ -385,7 +385,7 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
   }
 });
 
-// (8) 트래킹 저장
+// (8) 트래킹 저장중
 app.post('/api/:mallId/track', async (req, res) => {
   try {
     const {
