@@ -21,7 +21,70 @@
   const directNos     = script.dataset.directNos || '';
 
   // ─── visitorId 관리, 트랙 함수 등은 그대로 ──────────────────────────────
-  // …(생략)…
+  // ─── visitorId 관리 ────────────────────────────────────────────
+  const visitorId = (() => {
+    const key = 'appVisitorId';
+    let id = localStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(key, id);
+    }
+    return id;
+  })();
+  const pageUrl = location.pathname;
+
+  // ─── 중복뷰 방지 헬퍼 ────────────────────────────────────
+  const pad = n => String(n).padStart(2, '0');
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+  function shouldTrack() {
+    if (/[?&]track=true/.test(location.search)) return true;
+    const key = `tracked_${pageId}_${visitorId}_${today()}`;
+    if (sessionStorage.getItem(key)) return false;
+    sessionStorage.setItem(key, '1');
+    return true;
+  }
+
+  // ─── Device 감지 & 트랙 전송 헬퍼 ────────────────────────────
+  const ua = navigator.userAgent;
+  const device = /Android/i.test(ua)
+    ? 'Android'
+    : /iPhone|iPad|iPod/i.test(ua)
+    ? 'iOS'
+    : 'PC';
+  function track(payload) {
+    fetch(`${API_BASE}/api/${mallId}/track`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(e => console.error('TRACK ERROR', e));
+  }
+
+  // ─── 페이지뷰/재방문 트래킹 ─────────────────────────────────
+  if (shouldTrack()) {
+    track({
+      pageId,
+      pageUrl,
+      visitorId,
+      type: 'view',
+      device,
+      referrer: document.referrer || 'direct',
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    track({
+      pageId,
+      pageUrl,
+      visitorId,
+      type: 'revisit',
+      device,
+      referrer: document.referrer || 'direct',
+      timestamp: new Date().toISOString()
+    });
+  }
+
 
   // ─── 페이지뷰/재방문 트래킹 ─────────────────────────────────
   function track(payload) {
@@ -31,14 +94,41 @@
       body: JSON.stringify(payload)
     }).catch(e => console.error('TRACK ERROR', e));
   }
-
-  // ─── 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────────
-  fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)  // ← 변경
+  // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────────
+  fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
     .then(res => res.json())
     .then(ev => {
-      // 이미지 처리 생략…
+      // 1-1) 이미지 영역 치환
+      const imagesHtml = ev.images.map((img, idx) => {
+        const regs = (img.regions || []).map(r => {
+          const l = (r.xRatio * 100).toFixed(2),
+                t = (r.yRatio * 100).toFixed(2),
+                w = (r.wRatio * 100).toFixed(2),
+                h = (r.hRatio * 100).toFixed(2);
+          if (r.coupon) {
+            return `<button
+  style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;border:none;cursor:pointer;opacity:0"
+  onclick="downloadCoupon('${r.coupon}')"></button>`;
+          } else {
+            const href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
+            return `<a
+  style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
+  href="${href}" target="_blank" rel="noreferrer"></a>`;
+          }
+        }).join('');
+        return `
+  <div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
+    <img src="${img.src}"
+         style="max-width:100%;height:auto;display:block;margin:0 auto;"
+         data-img-index="${idx}" />
+    ${regs}
+  </div>`;
+      }).join('\n');
 
-      // ─── 상품 그리드: directNos 우선 → 카테고리 API 호출 ───────────────
+      // 페이지 내 {#images} 플레이스홀더를 실제 이미지 HTML로 교체
+      document.body.innerHTML = document.body.innerHTML.replace('{#images}', imagesHtml);
+
+      // 1-2) 상품 그리드: directNos 우선 → 카테고리 API 호출
       document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
         const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
         const limit    = ul.dataset.count || 300;
@@ -48,7 +138,7 @@
         if (ulDirect) {
           const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
           Promise.all(ids.map(no =>
-            fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`) // ← 변경
+            fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
               .then(r => r.json())
               .then(p => ({
                 product_no:          p.product_no,
@@ -65,7 +155,7 @@
           .catch(err => console.error('DIRECT GRID ERROR', err));
 
         } else {
-          fetch(`${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`) // ← 변경
+          fetch(`${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`)
             .then(r => r.json())
             .then(products => renderProducts(ul, products, cols))
             .catch(err => console.error('PRODUCT GRID ERROR', err));
@@ -73,6 +163,7 @@
       });
     })
     .catch(err => console.error('EVENT LOAD ERROR', err));
+
 
 
   // ─── 2) CSS 동적 주입 ──────────────────────────────────────
