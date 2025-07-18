@@ -958,31 +958,47 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   const { mallId, pageId } = req.params;
   const { start_date, end_date } = req.query;
+
   if (!start_date || !end_date) {
     return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
   }
 
+  const start = new Date(start_date);
+  const end   = new Date(end_date);
+
   const pipeline = [
+    // 1) pageId 로 필터링 + 범위가 필요하면 lastClickAt 으로 날짜제한
     { $match: {
         pageId,
-        element: 'product',
-        timestamp: { $gte: new Date(start_date), $lte: new Date(end_date) }
+        lastClickAt: { $gte: start, $lte: end }
     }},
+    // 2) productNo 별 저장된 클릭 카운터를 모두 합산
     { $group: {
         _id: '$productNo',
-        clicks: { $sum: 1 }
+        clicks: { $sum: '$clickCount' }
     }},
+    // 3) JSON 포맷으로 변환
     { $project: {
         _id:       0,
         productNo: '$_id',
         clicks:    1
     }},
-    { $sort: { clicks: -1 }}
+    // 4) 클릭 많은 순 정렬
+    { $sort: { clicks: -1 } }
   ];
 
-  const results = await db.collection(`prdClick_${mallId}`).aggregate(pipeline).toArray();
-  res.json(results);
+  try {
+    const results = await db
+      .collection(`clicks_${mallId}`)
+      .aggregate(pipeline)
+      .toArray();
+    res.json(results);
+  } catch (err) {
+    console.error('[PRODUCT CLICKS ERROR]', err);
+    res.status(500).json({ error: '상품 클릭 집계 실패' });
+  }
 });
+
 
 // (22) analytics: product-performance (상품별 클릭 퍼포먼스 전체 상품데이터)
 app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
