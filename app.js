@@ -954,49 +954,36 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
 });
-// (21) analytics: product-clicks (게시판별 상품 클릭 랭킹)
+// ─── analytics: product-clicks (게시판별 상품 클릭 랭킹)
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   const { mallId, pageId } = req.params;
   const { start_date, end_date } = req.query;
 
-  if (!start_date || !end_date) {
-    return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
+  // 1) 기본 필터: pageId
+  const filter = { pageId };
+
+  // 2) 날짜 범위 필터 (선택)
+  if (start_date && end_date) {
+    filter.lastClickAt = {
+      $gte: new Date(start_date),
+      $lte: new Date(end_date)
+    };
   }
 
-  const start = new Date(start_date);
-  const end   = new Date(end_date);
+  // 3) prdClick_<mallId> 컬렉션에서 조회
+  const docs = await db
+    .collection(`prdClick_${mallId}`)
+    .find(filter)
+    .sort({ clickCount: -1 })   // 클릭 많은 순
+    .toArray();
 
-  const pipeline = [
-    // 1) pageId 로 필터링 + 범위가 필요하면 lastClickAt 으로 날짜제한
-    { $match: {
-        pageId,
-        lastClickAt: { $gte: start, $lte: end }
-    }},
-    // 2) productNo 별 저장된 클릭 카운터를 모두 합산
-    { $group: {
-        _id: '$productNo',
-        clicks: { $sum: '$clickCount' }
-    }},
-    // 3) JSON 포맷으로 변환
-    { $project: {
-        _id:       0,
-        productNo: '$_id',
-        clicks:    1
-    }},
-    // 4) 클릭 많은 순 정렬
-    { $sort: { clicks: -1 } }
-  ];
+  // 4) 프론트에서 쓸 필드로 매핑
+  const results = docs.map(d => ({
+    productNo: d.productNo,
+    clicks:    d.clickCount
+  }));
 
-  try {
-    const results = await db
-      .collection(`clicks_${mallId}`)
-      .aggregate(pipeline)
-      .toArray();
-    res.json(results);
-  } catch (err) {
-    console.error('[PRODUCT CLICKS ERROR]', err);
-    res.status(500).json({ error: '상품 클릭 집계 실패' });
-  }
+  res.json(results);
 });
 
 
