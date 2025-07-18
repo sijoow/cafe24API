@@ -985,7 +985,6 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
 
   res.json(results);
 });
-
 // (22) analytics: product-performance (상품별 클릭 퍼포먼스 전체 상품데이터)
 app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
   const { mallId, pageId } = req.params;
@@ -996,8 +995,7 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
       .findOne({ _id: new ObjectId(pageId), mallId });
     if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
 
-    // 2) 이벤트에 설정된 상품 목록 추출
-    //    ev.classification.directNos: "101,102,103" 형태라고 가정
+    // 2) classification.directNos에서 상품번호 배열 추출
     const directNos = ev.classification.directNos
       ? ev.classification.directNos
           .split(',')
@@ -1005,9 +1003,9 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
           .filter(s => s)
       : [];
 
-    // 3) 클릭 집계 (clickCount 필드를 합산)
+    // 3) 클릭 집계 — prdClick_${mallId} 콜렉션 사용
     const clicks = await db
-      .collection(`clicks_${mallId}`)
+      .collection(`prdClick_${mallId}`)
       .aggregate([
         {
           $match: {
@@ -1025,11 +1023,10 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
       ])
       .toArray();
 
-    // 4) 전체 클릭 수 합산
+    // 4) 전체 클릭 수 계산
     const totalClicks = clicks.reduce((sum, c) => sum + c.clicks, 0);
 
-    // 5) 전체 상품 목록에 대해 결과 조합
-    //    클릭 기록이 없는 상품은 clicks=0, clickRate="0.0%"
+    // 5) 모든 상품 번호에 대해 결과 조합
     const performance = directNos.map(no => {
       const rec = clicks.find(c => c._id === no);
       const cnt = rec ? rec.clicks : 0;
@@ -1049,6 +1046,7 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
+
 
 // ===================================================================
 // 서버 시작
