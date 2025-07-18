@@ -354,25 +354,39 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
 });
 
 // ─── 삭제
+// ─── 삭제 (cascade delete) ───────────────────────────────
 app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
   }
+  const eventId = new ObjectId(id);
+  const visitsColl = `visits_${mallId}`;
+  const clicksColl = `clicks_${mallId}`;
+
   try {
+    // 1) 이벤트 문서 삭제
     const result = await db.collection('events').deleteOne({
-      _id: new ObjectId(id),
+      _id: eventId,
       mallId
     });
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
     }
+
+    // 2) 연관된 트래킹 로그들도 삭제
+    await Promise.all([
+      db.collection(visitsColl).deleteMany({ pageId: id }),
+      db.collection(clicksColl).deleteMany({ pageId: id })
+    ]);
+
     res.json({ success: true });
   } catch (err) {
     console.error('[DELETE EVENT ERROR]', err);
     res.status(500).json({ error: '이벤트 삭제에 실패했습니다.' });
   }
 });
+
 // (8) 트래킹 저장
 app.post('/api/:mallId/track', async (req, res) => {
   try {
