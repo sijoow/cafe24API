@@ -21,7 +21,6 @@
   const directNos     = script.dataset.directNos || '';
 
   // ─── visitorId 관리, 트랙 함수 등은 그대로 ──────────────────────────────
-  // ─── visitorId 관리 ────────────────────────────────────────────
   const visitorId = (() => {
     const key = 'appVisitorId';
     let id = localStorage.getItem(key);
@@ -107,22 +106,22 @@
                 h = (r.hRatio * 100).toFixed(2);
           if (r.coupon) {
             return `<button
-  style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;border:none;cursor:pointer;opacity:0"
-  onclick="downloadCoupon('${r.coupon}')"></button>`;
-          } else {
-            const href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
-            return `<a
-  style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
-  href="${href}" target="_blank" rel="noreferrer"></a>`;
-          }
-        }).join('');
-        return `
-  <div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
-    <img src="${img.src}"
-         style="max-width:100%;height:auto;display:block;margin:0 auto;"
-         data-img-index="${idx}" />
-    ${regs}
-  </div>`;
+          style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;border:none;cursor:pointer;opacity:0"
+          onclick="downloadCoupon('${r.coupon}')"></button>`;
+                  } else {
+                    const href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
+                    return `<a
+          style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
+          href="${href}" target="_blank" rel="noreferrer"></a>`;
+                  }
+                }).join('');
+                return `
+          <div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
+            <img src="${img.src}"
+                style="max-width:100%;height:auto;display:block;margin:0 auto;"
+                data-img-index="${idx}" />
+            ${regs}
+          </div>`;
       }).join('\n');
 
       // 페이지 내 {#images} 플레이스홀더를 실제 이미지 HTML로 교체
@@ -164,6 +163,82 @@
     })
     .catch(err => console.error('EVENT LOAD ERROR', err));
 
+
+      // ─── 제품 목록 렌더링 헬퍼 ────────────────────────────────────
+  function renderProducts(ul, products, cols) {
+    // 그리드 스타일
+    ul.style.display = 'grid';
+    ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
+    ul.style.gap = '20px';
+    ul.style.maxWidth = '800px';
+    ul.style.margin = '0 auto';
+
+    // 가격 포맷터
+    function formatKRW(val) {
+      if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
+      if (typeof val === 'string') {
+        const t = val.trim();
+        if (t.endsWith('원')) return t;
+        const num = parseFloat(t.replace(/,/g,'')) || 0;
+        return `${num.toLocaleString('ko-KR')}원`;
+      }
+      return '-';
+    }
+
+    // 각 상품 <li> 생성
+    const items = products.map(p => {
+      const origPrice   = p.price;
+      const priceText   = formatKRW(origPrice);
+      const saleText    = p.sale_price    != null ? formatKRW(p.sale_price)    : null;
+      const couponText  = p.benefit_price != null ? formatKRW(p.benefit_price) : null;
+      const salePercent = saleText
+        ? Math.round((origPrice - p.sale_price) / origPrice * 100)
+        : null;
+
+      return `
+        <li style="list-style:none;">
+          <a href="/product/detail/${p.product_no}" class="prd_link" style="text-decoration:none;color:inherit;">
+            <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
+            <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;">${p.summary_description||''}</div>
+            <div class="prd_name" style="font-weight:500;padding-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;">
+              ${p.product_name}
+            </div>
+          </a>
+
+          <!-- 기본 가격 or 세일 가격 -->
+          <div class="prd_price"${couponText ? ' style="display:none;"' : ''} style="font-size:16px;font-weight:500;">
+            ${saleText
+              ? `
+                ${salePercent > 0
+                  ? `<div class="sale_wrapper" style="display:inline-block;margin-right:4px;">
+                      <span class="sale_percent" style="color:#ff4d4f;">-${salePercent}%</span>
+                    </div>`
+                  : ''
+                }
+                <span class="sale_price">${saleText}</span>
+              `
+              : `<span>${priceText}</span>`
+            }
+          </div>
+
+          <!-- 쿠폰가가 있을 때 -->
+          ${couponText ? `
+            <div class="coupon_wrapper" style="margin-top:4px;">
+              <span class="prd_coupon_percent" style="color:#ff4d4f;font-weight:500;margin-right:4px;">
+                ${p.benefit_percentage}%
+              </span>
+              <span class="prd_coupon" style="font-weight:500;">
+                ${couponText}
+              </span>
+            </div>
+          ` : ''}
+        </li>
+      `;
+    }).join('');
+
+    // UL에 삽입
+    ul.innerHTML = items;
+  }
 
 
   // ─── 2) CSS 동적 주입 ──────────────────────────────────────
