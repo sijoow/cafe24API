@@ -376,7 +376,7 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
 // (8) 트래킹 저장
 app.post('/api/:mallId/track', async (req, res) => {
   try {
-    // 1) body에서 필요한 값들 추출 (productNo 추가)
+    // 1) body에서 productNo 추가로 받기
     const {
       pageId,
       pageUrl,
@@ -386,7 +386,7 @@ app.post('/api/:mallId/track', async (req, res) => {
       type,
       element,
       timestamp,
-      productNo   // ← 상품 번호 (data-product-no)
+      productNo      // ← 상품번호
     } = req.body;
 
     // 2) 필수 필드 검증
@@ -396,32 +396,30 @@ app.post('/api/:mallId/track', async (req, res) => {
 
     // 3) 이벤트 유효성 검사
     if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
-    const ev = await db
-      .collection('events')
-      .findOne({ _id: new ObjectId(pageId) }, { projection: { _id: 1 } });
+    const ev = await db.collection('events').findOne(
+      { _id: new ObjectId(pageId) },
+      { projection: { _id:1 } }
+    );
     if (!ev) return res.sendStatus(204);
 
-    // 4) KST timestamp 변환 및 dateKey 생성
+    // 4) timestamp→KST, dateKey 생성
     const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
 
-    // 5) pageUrl에서 path만 추출
+    // 5) pageUrl 에서 path만 추출
     let pathOnly;
-    try {
-      pathOnly = new URL(pageUrl).pathname;
-    } catch {
-      pathOnly = pageUrl;
-    }
+    try { pathOnly = new URL(pageUrl).pathname; }
+    catch { pathOnly = pageUrl; }
 
-    // 6) 기본 필터: 페이지ID + 방문자ID + 날짜
+    // 6) 기본 필터 (페이지·방문자·날짜)
     const filter = { pageId, visitorId, dateKey };
 
-    // 7) 상품 클릭인 경우 filter에 productNo 추가 (상품별 집계)
+    // 7) 상품 클릭이면 filter 에 productNo 추가
     if (type === 'click' && element === 'product' && productNo) {
       filter.productNo = productNo;
     }
 
-    // 8) 업데이트 객체 생성
+    // 8) 업데이트 객체 준비
     const update = {
       $set: {
         lastVisit: kstTs,
@@ -433,7 +431,7 @@ app.post('/api/:mallId/track', async (req, res) => {
       $inc: {}
     };
 
-    // 9) 타입/엘리먼트 별 카운터 분기
+    // 9) 타입·엘리먼트별 카운터 분기
     if (type === 'view') {
       update.$inc.viewCount = 1;
     } else if (type === 'revisit') {
@@ -449,7 +447,7 @@ app.post('/api/:mallId/track', async (req, res) => {
       }
     }
 
-    // 10) upsert 수행
+    // 10) upsert 실행
     await db
       .collection(`visits_${req.params.mallId}`)
       .updateOne(filter, update, { upsert: true });
@@ -460,6 +458,7 @@ app.post('/api/:mallId/track', async (req, res) => {
     res.status(500).json({ error: '트래킹 실패' });
   }
 });
+
 
 
 // (9) 카테고리 전체 조회
@@ -926,43 +925,46 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
 });
-// app.js — product-clicks 집계 변경
+// (21) analytics: product-clicks (상품별 클릭 랭킹)
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
+  }
+
+  const match = {
+    pageId,
+    type: 'click',
+    element: 'product',
+    timestamp: {
+      $gte: new Date(start_date),
+      $lte: new Date(end_date)
+    }
+  };
+
+  const pipeline = [
+    { $match: match },
+    { $group: {
+        _id: '$productNo',
+        clicks: { $sum: 1 }
+    }},
+    { $project: {
+        _id:       0,
+        productNo: '$_id',
+        clicks:    1
+    }},
+    { $sort: { clicks: -1 }}
+  ];
+
   try {
-    const { mallId, pageId } = req.params;
-    const { start_date, end_date } = req.query;
-
-    const match = {
-      pageId,
-      productNo: { $exists: true },  // 상품 클릭만
-      dateKey: { 
-        $gte: start_date.slice(0,10),
-        $lte: end_date.slice(0,10)
-      }
-    };
-
-    const pipeline = [
-      { $match: match },
-      { $group: {
-          _id: '$productNo',
-          clicks: { $sum: '$productClickCount' }
-      }},
-      { $project: {
-          _id:       0,
-          productNo: '$_id',
-          clicks:    1
-      }},
-      { $sort: { clicks: -1 } }
-    ];
-
-    const ranking = await db
+    const results = await db
       .collection(`visits_${mallId}`)
       .aggregate(pipeline)
       .toArray();
-
-    res.json(ranking);
+    res.json(results);
   } catch (err) {
-    console.error('[PRODUCT-CLICKS ERROR]', err);
+    console.error('[PRODUCT CLICKS ERROR]', err);
     res.status(500).json({ error: '상품 클릭 집계 실패' });
   }
 });
