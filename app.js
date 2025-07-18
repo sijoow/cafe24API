@@ -985,57 +985,56 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
 
   res.json(results);
 });
-// (22) analytics: product-performance
+// (22) analytics: product-performance (상품별 클릭 퍼포먼스 전체 상품데이터)
 app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
   const { mallId, pageId } = req.params;
   try {
-    // 1) 이벤트 조회
-    const ev = await db.collection('events')
+    // 1) 이벤트 문서 조회
+    const ev = await db
+      .collection('events')
       .findOne({ _id: new ObjectId(pageId), mallId });
     if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
 
-    // 2) 상품 번호 리스트 추출 → 여기에 classification.directNos OR ev.images 중 사용하세요
-    // 예시: ev.images 에 productNo 가 있을 때
-    const directNos = Array.isArray(ev.images)
-      ? ev.images.map(img => img.productNo).filter(Boolean)
-      : (ev.classification.directNos || '')
-          .split(',')
-          .map(s => s.trim())
-          .filter(Boolean);
+    // 2) 이벤트에 설정된 상품 목록 추출
+    let directNos = [];
+    if (ev.classification.directNos) {
+      directNos = ev.classification.directNos
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s);
+    }
+    // 2-1) directNos 가 빈 배열이면, 클릭 기록이 있는 모든 상품번호를 가져와 fallback
+    if (directNos.length === 0) {
+      directNos = await db
+        .collection(`clicks_${mallId}`)
+        .distinct('productNo', { pageId });
+    }
 
-    // 3) 클릭 집계
-    const clicks = await db.collection(`clicks_${mallId}`).aggregate([
-      { $match: {
-          pageId,
-          element:   'product',
-          productNo: { $in: directNos }
-      }},
-      { $group: {
-          _id:    '$productNo',
-          clicks: { $sum: '$clickCount' }
-      }}
-    ]).toArray();
+    // 3) 클릭 집계 (clickCount 합산)
+    const clicks = await db
+      .collection(`clicks_${mallId}`)
+      .aggregate([
+        {
+          $match: {
+            pageId,
+            element:   'product',
+            productNo: { $in: directNos }
+          }
+        },
+        {
+          $group: {
+            _id:    '$productNo',
+            clicks: { $sum: '$clickCount' }
+          }
+        }
+      ])
+      .toArray();
 
+    // 4) 전체 클릭 수 합산
     const totalClicks = clicks.reduce((sum, c) => sum + c.clicks, 0);
 
-    // 4) 상품명 조회
-    const prodRes = await apiRequest(
-      mallId,
-      'GET',
-      `https://${mallId}.cafe24api.com/api/v2/admin/products`,
-      {},
-      {
-        shop_no:    1,
-        product_no: directNos.join(','),
-        fields:     'product_no,product_name'
-      }
-    );
-    const nameMap = (prodRes.products || []).reduce((m, p) => {
-      m[p.product_no] = p.product_name;
-      return m;
-    }, {});
-
-    // 5) 최종 결과 조합 (클릭 없는 건 0으로)
+    // 5) 전체 상품 목록에 대해 결과 조합
+    //    클릭 기록이 없는 상품은 clicks=0, clickRate="0.0%"
     const performance = directNos.map(no => {
       const rec = clicks.find(c => c._id === no);
       const cnt = rec ? rec.clicks : 0;
@@ -1043,10 +1042,9 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
         ? ((cnt / totalClicks) * 100).toFixed(1)
         : '0.0';
       return {
-        productNo:   no,
-        productName: nameMap[no] || '(이름없음)',
-        clicks:      cnt,
-        clickRate:   `${rate}%`
+        productNo: no,
+        clicks:    cnt,
+        clickRate: `${rate}%`
       };
     });
 
@@ -1056,8 +1054,6 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-
-
 
 
 // ===================================================================
