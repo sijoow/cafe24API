@@ -381,7 +381,6 @@ app.post('/api/:mallId/track', async (req, res) => {
       device, type, element, timestamp,
       productNo
     } = req.body;
-
     if (!pageId || !visitorId || !type || !timestamp) {
       return res.status(400).json({ error: '필수 필드 누락' });
     }
@@ -401,29 +400,27 @@ app.post('/api/:mallId/track', async (req, res) => {
     try { pathOnly = new URL(pageUrl).pathname; }
     catch { pathOnly = pageUrl; }
 
-    // **클릭 이벤트는 insertOne** (개별 레코드)
+    // ─── 클릭은 click 로그 컬렉션에 insert
     if (type === 'click') {
-      const doc = {
+      const clickDoc = {
         pageId,
         visitorId,
         dateKey,
-        firstVisit: kstTs,   // 필요하다면
-        lastVisit:  kstTs,
-        pageUrl:    pathOnly,
-        referrer:   referrer || null,
-        device:     device   || null,
+        pageUrl:   pathOnly,
+        referrer:  referrer || null,
+        device:    device   || null,
         type,
         element,
-        timestamp:  kstTs,
+        timestamp: kstTs,
         ...(element === 'product' && productNo ? { productNo } : {}),
       };
-      // 개별 click 은 매번 새로 삽입
-      await db.collection(`visits_${req.params.mallId}`)
-              .insertOne(doc);
+      await db
+        .collection(`clicks_${req.params.mallId}`)
+        .insertOne(clickDoc);
       return res.sendStatus(204);
     }
 
-    // **view/revisit** 은 기존 upsert 로 그대로
+    // ─── view/revisit 은 기존 visits 컬렉션에 upsert
     const filter = { pageId, visitorId, dateKey };
     const update = {
       $set: {
@@ -438,8 +435,9 @@ app.post('/api/:mallId/track', async (req, res) => {
     if (type === 'view')    update.$inc.viewCount    = 1;
     if (type === 'revisit') update.$inc.revisitCount = 1;
 
-    await db.collection(`visits_${req.params.mallId}`)
-            .updateOne(filter, update, { upsert: true });
+    await db
+      .collection(`visits_${req.params.mallId}`)
+      .updateOne(filter, update, { upsert: true });
 
     return res.sendStatus(204);
   } catch (err) {
@@ -914,7 +912,7 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
 });
-// (21) analytics: product-clicks (상품별 클릭 랭킹)
+// (21) analytics: product-clicks (게시판별 상품 클릭 랭킹)
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   const { mallId, pageId } = req.params;
   const { start_date, end_date } = req.query;
@@ -925,12 +923,11 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   const pipeline = [
     { $match: {
         pageId,
-        type:      'click',
-        element:   'product',
+        element: 'product',
         timestamp: { $gte: new Date(start_date), $lte: new Date(end_date) }
     }},
     { $group: {
-        _id:    '$productNo',
+        _id: '$productNo',
         clicks: { $sum: 1 }
     }},
     { $project: {
@@ -941,13 +938,8 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
     { $sort: { clicks: -1 }}
   ];
 
-  try {
-    const results = await db.collection(`visits_${mallId}`).aggregate(pipeline).toArray();
-    res.json(results);
-  } catch (err) {
-    console.error('[PRODUCT CLICKS ERROR]', err);
-    res.status(500).json({ error: '상품 클릭 집계 실패' });
-  }
+  const results = await db.collection(`clicks_${mallId}`).aggregate(pipeline).toArray();
+  res.json(results);
 });
 
 // ===================================================================
