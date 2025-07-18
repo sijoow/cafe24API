@@ -995,17 +995,17 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
       .findOne({ _id: new ObjectId(pageId), mallId });
     if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
 
-    // 2) classification.directNos에서 상품번호 배열 추출
+    // 2) 이벤트에 설정된 상품 목록 추출
     const directNos = ev.classification.directNos
       ? ev.classification.directNos
           .split(',')
           .map(s => s.trim())
-          .filter(s => s)
+          .filter(Boolean)
       : [];
 
-    // 3) 클릭 집계 — prdClick_${mallId} 콜렉션 사용
+    // 3) 상품별 클릭 집계 (clickCount 합산)
     const clicks = await db
-      .collection(`prdClick_${mallId}`)
+      .collection(`clicks_${mallId}`)
       .aggregate([
         {
           $match: {
@@ -1023,10 +1023,28 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
       ])
       .toArray();
 
-    // 4) 전체 클릭 수 계산
+    // 4) 전체 클릭 수 합산
     const totalClicks = clicks.reduce((sum, c) => sum + c.clicks, 0);
 
-    // 5) 모든 상품 번호에 대해 결과 조합
+    // 5) 상품명 조회를 위해 Cafe24 Admin API 호출
+    const prodRes = await apiRequest(
+      mallId,
+      'GET',
+      `https://${mallId}.cafe24api.com/api/v2/admin/products`,
+      {},
+      {
+        shop_no:    1,
+        product_no: directNos.join(','),
+        fields:     'product_no,product_name'
+      }
+    );
+    const products = prodRes.products || [];
+    const nameMap  = products.reduce((acc, p) => {
+      acc[p.product_no] = p.product_name;
+      return acc;
+    }, {});
+
+    // 6) directNos 전체에 대해 결과 조합 (클릭 없는 건 0으로)
     const performance = directNos.map(no => {
       const rec = clicks.find(c => c._id === no);
       const cnt = rec ? rec.clicks : 0;
@@ -1034,9 +1052,9 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
         ? ((cnt / totalClicks) * 100).toFixed(1)
         : '0.0';
       return {
-        productNo: no,
-        clicks:    cnt,
-        clickRate: `${rate}%`
+        productName: nameMap[no] || no,
+        clicks:      cnt,
+        clickRate:   `${rate}%`
       };
     });
 
@@ -1046,6 +1064,7 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
+
 
 
 // ===================================================================
