@@ -414,7 +414,26 @@ app.post('/api/:mallId/track', async (req, res) => {
     try { pathOnly = new URL(pageUrl).pathname; }
     catch { pathOnly = pageUrl; }
 
-    // ─── 클릭은 click 로그 컬렉션에 insert
+    // ─── 상품 클릭은 (pageId + productNo) 기준 upsert하여 카운터 증가
+    if (type === 'click' && element === 'product' && productNo) {
+      const filter = { pageId, productNo };
+      const update = {
+        $inc: { clickCount: 1 },
+        $setOnInsert: {
+          firstClickAt: kstTs,
+          pageUrl:      pathOnly,
+          referrer:     referrer || null,
+          device:       device   || null
+        },
+        $set: { lastClickAt: kstTs }
+      };
+      await db
+        .collection(`clicks_${req.params.mallId}`)
+        .updateOne(filter, update, { upsert: true });
+      return res.sendStatus(204);
+    }
+
+    // ─── 기타 클릭 (url/coupon 등)은 insertOne 하려면 아래처럼 분기
     if (type === 'click') {
       const clickDoc = {
         pageId,
@@ -426,7 +445,7 @@ app.post('/api/:mallId/track', async (req, res) => {
         type,
         element,
         timestamp: kstTs,
-        ...(element === 'product' && productNo ? { productNo } : {}),
+        ...(element === 'coupon' && { couponNo: productNo }), // 예시
       };
       await db
         .collection(`clicks_${req.params.mallId}`)
@@ -459,7 +478,6 @@ app.post('/api/:mallId/track', async (req, res) => {
     return res.status(500).json({ error: '트래킹 실패' });
   }
 });
-
 
 
 // (9) 카테고리 전체 조회
