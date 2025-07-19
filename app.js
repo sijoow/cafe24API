@@ -862,19 +862,22 @@ app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
         count: { $sum: 1 }
     }},
     // 날짜별로 다시 묶어서 product / coupon 필드를 만들어 줌
-    { $group: {
-        _id: '$_id.date',
-        product: { 
-          $sum: { $cond: [ { $eq: ['$_id.element', 'product'] }, '$count', 0 ] }
-        },
-        coupon: {
-          $sum: { $cond: [ { $eq: ['$_id.element', 'coupon'] }, '$count', 0 ] }
-        }
+   // ─── 날짜별로 다시 묶어서 url / product / coupon 필드를 만들어 줌
+   { $group: {
+       _id: '$_id.date',
+       url:     { $sum: { $cond: [ { $eq: ['$_id.element', 'url']    }, '$count', 0 ] } },
+       product: { $sum: { $cond: [ { $eq: ['$_id.element', 'product']}, '$count', 0 ] } },
+       coupon:  { $sum: { $cond: [ { $eq: ['$_id.element', 'coupon'] }, '$count', 0 ] } }
+   }},
+   { $project: {
+       _id: 0,
+       date: '$_id',
+        'URL 클릭':'$url',
+        'URL 클릭(기존 product)': '$product',
+        '쿠폰 클릭':'$coupon'
     }},
-    { $project: { _id: 0, date: '$_id', product: 1, coupon: 1 }},
     { $sort: { date: 1 }}
   ];
-
   try {
     const data = await db
       .collection(`clicks_${mallId}`)
