@@ -348,9 +348,16 @@
     document.getElementById(id).style.display = 'block';
     btn.classList.add('active');
   };
-  window.downloadCoupon = coupon => {
-    const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${coupon}`;
-    window.location.href = url + `&opener_url=${encodeURIComponent(location.href)}`;
+  window.downloadCoupon = coupons => {
+    const list = Array.isArray(coupons) ? coupons : [coupons];
+    list.forEach(cpn => {
+      const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${cpn}`;
+      // 새 탭으로 열어서 동시에 여러 다운로드를 트리거
+      window.open(
+        url + `&opener_url=${encodeURIComponent(location.href)}`,
+        '_blank'
+      );
+    });
   };
 
 })();
