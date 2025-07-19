@@ -974,16 +974,38 @@ app.get('/api/:mallId/analytics/:pageId/coupon-clicks', async (req, res) => {
 });
 
 // (18) analytics: distinct urls
+// app.js (기존 clicks-by-date 바로 아래쯤)
 app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
   const { mallId, pageId } = req.params;
-  try {
-    const urls = await db.collection(`visits_${mallId}`).distinct('pageUrl', { pageId });
-    res.json(urls);
-  } catch (err) {
-    console.error('[URLS DISTINCT ERROR]', err);
-    res.status(500).json({ error: 'URL 목록 조회 실패' });
+  if (!ObjectId.isValid(pageId)) return res.status(400).json({ error: '잘못된 pageId' });
+
+  // 1) 이벤트 설정 문서에서 링크만 추출
+  const ev = await db.collection('events').findOne(
+    { _id: new ObjectId(pageId), mallId },
+    { projection: { images:1, classification:1 } }
+  );
+  if (!ev) return res.json([]);
+
+  const urls = new Set();
+
+  // images → regions 필드에서 linkUrl 뽑기 (실제 필드명에 맞춰 수정하세요)
+  (ev.images || []).forEach(img => {
+    if (Array.isArray(img.regions)) {
+      img.regions.forEach(r => {
+        if (r.linkUrl) urls.add(r.linkUrl);
+      });
+    }
+    if (img.linkUrl) urls.add(img.linkUrl);
+  });
+
+  // classification 안에 별도 url 리스트가 있다면 여기도 추가
+  if (Array.isArray(ev.classification.urls)) {
+    ev.classification.urls.forEach(u => urls.add(u));
   }
+
+  res.json([...urls]);
 });
+
 
 // (18-1) analytics: distinct couponNos for this page
 app.get('/api/:mallId/analytics/:pageId/coupons-distinct', async (req, res) => {
