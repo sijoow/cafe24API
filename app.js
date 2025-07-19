@@ -462,31 +462,31 @@ app.post('/api/:mallId/track', async (req, res) => {
       return res.sendStatus(204);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 6) 기타 클릭 (URL, 쿠폰 등): clicks_{mallId} 컬렉션에 insert
-    if (type === 'click') {
-      // coupon 클릭일 때 productNo가 배열일 수 있으므로 배열/단일 처리
-      if (element === 'coupon') {
-        const coupons = Array.isArray(productNo) ? productNo : [productNo];
-        await Promise.all(coupons.map(cpn => {
-          const clickDoc = {
-            pageId,
-            visitorId,
-            dateKey,
-            pageUrl:   pathOnly,
-            referrer:  referrer || null,
-            device:    device   || null,
-            type,
-            element,
-            timestamp: kstTs,
-            couponNo:  cpn
-          };
-          return db.collection(`clicks_${mallId}`).insertOne(clickDoc);
-        }));
-        return res.sendStatus(204);
-      }
+  // 6) 기타 클릭 (URL, 쿠폰 등): clicks_{mallId} 컬렉션에 insert
+  if (type === 'click') {
+    // 6-1) 쿠폰 클릭: productNo가 배열일 수 있으므로 배열/단일 처리
+    if (element === 'coupon') {
+      const coupons = Array.isArray(productNo) ? productNo : [productNo];
+      await Promise.all(coupons.map(cpn => {
+        const clickDoc = {
+          pageId,
+          visitorId,
+          dateKey,
+          pageUrl:   pathOnly,
+          referrer:  referrer || null,
+          device:    device   || null,
+          type,
+          element,
+          timestamp: kstTs,
+          couponNo:  cpn
+        };
+        return db.collection(`clicks_${mallId}`).insertOne(clickDoc);
+      }));
+      return res.sendStatus(204);
+    }
 
-      // URL 클릭이나 기타 클릭
+    // 6-2) URL 클릭 전용 처리
+    if (element === 'url') {
       const clickDoc = {
         pageId,
         visitorId,
@@ -495,12 +495,28 @@ app.post('/api/:mallId/track', async (req, res) => {
         referrer:  referrer || null,
         device:    device   || null,
         type,
-        element,
+        element,    // 'url'
         timestamp: kstTs
       };
       await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
       return res.sendStatus(204);
     }
+
+    // 6-3) 그 외 기타 클릭
+    const clickDoc = {
+      pageId,
+      visitorId,
+      dateKey,
+      pageUrl:   pathOnly,
+      referrer:  referrer || null,
+      device:    device   || null,
+      type,
+      element,
+      timestamp: kstTs
+    };
+    await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
+    return res.sendStatus(204);
+  }
 
     // ─────────────────────────────────────────────────────────────
     // 7) view/revisit: visits_{mallId} 컬렉션에 upsert
@@ -796,32 +812,37 @@ app.get('/api/:mallId/products/:product_no', async (req, res) => {
 app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
   const { mallId, pageId } = req.params;
   const { start_date, end_date, url } = req.query;
-  if (!start_date||!end_date) return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
+  }
 
-  const startKey = start_date.slice(0,10), endKey = end_date.slice(0,10);
-  const match = { pageId, dateKey: { $gte: startKey, $lte: endKey } };
+  const startKey = start_date.slice(0, 10);
+  const endKey   = end_date.slice(0, 10);
+  const match    = { pageId, dateKey: { $gte: startKey, $lte: endKey } };
   if (url) match.pageUrl = url;
 
   const pipeline = [
     { $match: match },
+    // 방문자별 view/revisit 집계
     { $group: {
-        _id: { date:'$dateKey', visitorId:'$visitorId' },
+        _id: { date: '$dateKey', visitorId: '$visitorId' },
         viewCount:    { $sum: { $ifNull: ['$viewCount',   0] } },
         revisitCount: { $sum: { $ifNull: ['$revisitCount', 0] } }
     }},
+    // 날짜별로 다시 묶어서 총 방문자, 신규 방문자, 재방문자 수 계산
     { $group: {
         _id: '$_id.date',
         totalVisitors:     { $sum: 1 },
         newVisitors:       { $sum: { $cond: [ { $gt: ['$viewCount',    0] }, 1, 0 ] } },
-        // ← 여기를 변경
-        returningVisitors: { $sum: '$revisitCount' }
+        returningVisitors: { $sum: { $cond: [ { $gt: ['$revisitCount', 0] }, 1, 0 ] } }
     }},
+    // 결과 형식으로 가공
     { $project: {
         _id: 0,
         date: '$_id',
-        totalVisitors:      1,
-        newVisitors:        1,
-        returningVisitors:  1,
+        totalVisitors:     1,
+        newVisitors:       1,
+        returningVisitors: 1,
         revisitRate: {
           $concat: [
             { $toString: {
@@ -842,7 +863,7 @@ app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
           ]
         }
     }},
-    { $sort:{ date:1 } }
+    { $sort: { date: 1 } }
   ];
 
   try {
