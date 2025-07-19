@@ -985,6 +985,22 @@ app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
   }
 });
 
+// (18-1) analytics: distinct couponNos for this page
+app.get('/api/:mallId/analytics/:pageId/coupons-distinct', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  try {
+    // clicks 컬렉션 중 element==='coupon' 에서 couponNo 필드만 뽑아서 중복 제거
+    const couponNos = await db
+      .collection(`clicks_${mallId}`)
+      .distinct('couponNo', { pageId, element: 'coupon' });
+    res.json(couponNos);
+  } catch (err) {
+    console.error('[COUPONS-DISTINCT ERROR]', err);
+    res.status(500).json({ error: '쿠폰 목록 조회 실패' });
+  }
+});
+
+
 // (19) analytics: devices distribution
 app.get('/api/:mallId/analytics/:pageId/devices', async (req, res) => {
   const { mallId, pageId } = req.params;
