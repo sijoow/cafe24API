@@ -311,6 +311,17 @@
   }
 
   @media (max-width: 400px) {
+  .tabs_${pageId}{
+    width:95%;margin:0 auto;
+    font-weight:bold;
+  }
+    .tabs_${pageId} button{
+      font-size:14px;
+    }
+
+  tab-content_${pageId} {
+    margin-top:10px;
+  }
     .main_Grid_${pageId} {
       width:95%;
       margin:0 auto;
@@ -330,7 +341,6 @@
   }
   `;
   document.head.appendChild(style);
-
   // ─── 탭 전환 & 쿠폰 다운로드 헬퍼 ─────────────────────────────────
   window.showTab = (id, btn) => {
     document.querySelectorAll(`.tab-content_${pageId}`).forEach(el => el.style.display = 'none');
