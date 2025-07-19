@@ -125,17 +125,17 @@ app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) =
   }
 });
 
-
-
-// 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장
+// 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → onimon.shop 으로 리다이렉트 연결되게 설정ㅎ
 app.get('/auth/callback', async (req, res) => {
   const { code, state: mallId } = req.query;
-  if (!code || !mallId) return res.status(400).send('code 또는 mallId가 없습니다.');
+  if (!code || !mallId) {
+    return res.status(400).send('code 또는 mallId가 없습니다.');
+  }
 
   try {
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const body = new URLSearchParams({
+    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const body     = new URLSearchParams({
       grant_type:   'authorization_code',
       code,
       redirect_uri: `${APP_URL}/auth/callback`
@@ -143,14 +143,15 @@ app.get('/auth/callback', async (req, res) => {
 
     const { data } = await axios.post(tokenUrl, body, {
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Type':  'application/x-www-form-urlencoded',
         'Authorization': `Basic ${creds}`
       }
     });
 
     await db.collection('token').updateOne(
       { mallId },
-      { $set: {
+      {
+        $set: {
           mallId,
           accessToken:  data.access_token,
           refreshToken: data.refresh_token,
@@ -161,10 +162,14 @@ app.get('/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    res.send('앱 설치 및 토큰 교환 완료! DB에 저장되었습니다.');
+    // 앱 설치 완료 로그
+    console.log(`[AUTH CALLBACK] App installed for mallId: ${mallId}`);
+
+    // onimon.shop 으로 즉시 리다이렉트
+    return res.redirect('https://onimon.shop');
   } catch (err) {
     console.error('[AUTH CALLBACK ERROR]', err.response?.data || err);
-    res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
+    return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
 });
 
