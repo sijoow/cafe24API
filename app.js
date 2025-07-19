@@ -429,7 +429,6 @@ app.post('/api/:mallId/track', async (req, res) => {
     // ─────────────────────────────────────────────────────────────
     // 5) 상품 클릭: prdClick_{mallId} 컬렉션에 upsert (상품명 포함)
     if (type === 'click' && element === 'product' && productNo) {
-      // 5-1) 상품명 조회 (카페24 API 호출)
       let productName = null;
       try {
         const productRes = await apiRequest(
@@ -445,12 +444,11 @@ app.post('/api/:mallId/track', async (req, res) => {
         console.error('[PRODUCT NAME FETCH ERROR]', err);
       }
 
-      // 5-2) upsert 로 클릭 카운트 및 상품명 저장
       const filter = { pageId, productNo };
       const update = {
         $inc: { clickCount: 1 },
         $setOnInsert: {
-          productName,      // ← 여기에 상품명을 함께 저장
+          productName,
           firstClickAt: kstTs,
           pageUrl:      pathOnly,
           referrer:     referrer || null,
@@ -467,6 +465,28 @@ app.post('/api/:mallId/track', async (req, res) => {
     // ─────────────────────────────────────────────────────────────
     // 6) 기타 클릭 (URL, 쿠폰 등): clicks_{mallId} 컬렉션에 insert
     if (type === 'click') {
+      // coupon 클릭일 때 productNo가 배열일 수 있으므로 배열/단일 처리
+      if (element === 'coupon') {
+        const coupons = Array.isArray(productNo) ? productNo : [productNo];
+        await Promise.all(coupons.map(cpn => {
+          const clickDoc = {
+            pageId,
+            visitorId,
+            dateKey,
+            pageUrl:   pathOnly,
+            referrer:  referrer || null,
+            device:    device   || null,
+            type,
+            element,
+            timestamp: kstTs,
+            couponNo:  cpn
+          };
+          return db.collection(`clicks_${mallId}`).insertOne(clickDoc);
+        }));
+        return res.sendStatus(204);
+      }
+
+      // URL 클릭이나 기타 클릭
       const clickDoc = {
         pageId,
         visitorId,
@@ -476,8 +496,7 @@ app.post('/api/:mallId/track', async (req, res) => {
         device:    device   || null,
         type,
         element,
-        timestamp: kstTs,
-        ...(element === 'coupon' && { couponNo: productNo })
+        timestamp: kstTs
       };
       await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
       return res.sendStatus(204);
@@ -509,6 +528,7 @@ app.post('/api/:mallId/track', async (req, res) => {
     return res.status(500).json({ error: '트래킹 실패' });
   }
 });
+
 
 
 
@@ -861,7 +881,6 @@ app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
         _id: { date: '$dateKey', element: '$element' },
         count: { $sum: 1 }
     }},
-    // 날짜별로 다시 묶어서 product / coupon 필드를 만들어 줌
    // ─── 날짜별로 다시 묶어서 url / product / coupon 필드를 만들어 줌
    { $group: {
        _id: '$_id.date',
