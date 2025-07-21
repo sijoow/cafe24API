@@ -427,12 +427,13 @@ app.post('/api/:mallId/track', async (req, res) => {
         },
         $set: { lastClickAt: kstTs }
       };
+      // ↓ 여기서 잘못 쓰고 있던 clicks_ 대신 prdClick_ 로 바꿔야 합니다
       await db
-        .collection(`clicks_${req.params.mallId}`)
+        .collection(`prdClick_${mallId}`)
         .updateOne(filter, update, { upsert: true });
       return res.sendStatus(204);
     }
-
+    
     // ─── 기타 클릭 (url/coupon 등)은 insertOne 하려면 아래처럼 분기
     if (type === 'click') {
       const clickDoc = {
@@ -946,7 +947,8 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
 });
-// (21) analytics: product-clicks (게시판별 상품 클릭 랭킹)
+
+// ─── analytics: product-clicks (게시판별 상품 클릭 랭킹)
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   const { mallId, pageId } = req.params;
   const { start_date, end_date } = req.query;
@@ -954,37 +956,9 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
     return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
   }
 
-  const pipeline = [
-    { $match: {
-        pageId,
-        element: 'product',
-        timestamp: { $gte: new Date(start_date), $lte: new Date(end_date) }
-    }},
-    { $group: {
-        _id: '$productNo',
-        clicks: { $sum: 1 }
-    }},
-    { $project: {
-        _id:       0,
-        productNo: '$_id',
-        clicks:    1
-    }},
-    { $sort: { clicks: -1 }}
-  ];
-
-  const results = await db.collection(`clicks_${mallId}`).aggregate(pipeline).toArray();
-  res.json(results);
-});
-
-// ─── analytics: product-clicks (게시판별 상품 클릭 랭킹)
-app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
-  const { mallId, pageId } = req.params;
-  const { start_date, end_date } = req.query;
-
-  // 1) 기본 필터: pageId
+  // pageId 필터
   const filter = { pageId };
-
-  // 2) 날짜 범위 필터 (선택)
+  // 날짜 필터 추가
   if (start_date && end_date) {
     filter.lastClickAt = {
       $gte: new Date(start_date),
@@ -992,66 +966,20 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
     };
   }
 
-  // 3) prdClick_<mallId> 컬렉션에서 조회
+  // prdClick_<mallId> 컬렉션 조회
   const docs = await db
     .collection(`prdClick_${mallId}`)
     .find(filter)
-    .sort({ clickCount: -1 })   // 클릭 많은 순
+    .sort({ clickCount: -1 })
     .toArray();
 
-  // 4) 프론트에서 쓸 필드로 매핑
+  // 응답 포맷으로 변환
   const results = docs.map(d => ({
     productNo: d.productNo,
     clicks:    d.clickCount
   }));
 
   res.json(results);
-});
-// (22) analytics: product-performance (클릭된 상품만 + 상품명 포함)
-app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
-  const { mallId, pageId } = req.params;
-  try {
-    // 1) clicks_<mallId> 컬렉션에서 pageId + element==='product' 기준으로 집계
-    const clicks = await db.collection(`clicks_${mallId}`).aggregate([
-      { $match: { pageId, element: 'product' } },
-      { $group: { _id: '$productNo', clicks: { $sum: '$clickCount' } } }
-    ]).toArray();
-
-    if (clicks.length === 0) {
-      return res.json([]);
-    }
-
-    // 2) 상품번호 목록
-    const productNos = clicks.map(c => c._id);
-
-    // 3) 상품명 조회 (Cafe24 API)
-    const urlProds = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
-    const prodRes = await apiRequest(mallId, 'GET', urlProds, {}, {
-      shop_no:    1,
-      product_no: productNos.join(','),
-      limit:      productNos.length,
-      fields:     'product_no,product_name'
-    });
-    const detailMap = (prodRes.products||[]).reduce((m,p) => {
-      m[p.product_no] = p.product_name;
-      return m;
-    }, {});
-
-    // 4) 결과 조합 & 정렬
-    const performance = clicks
-      .map(c => ({
-        productNo:   c._id,
-        productName: detailMap[c._id] || '(이름없음)',
-        clicks:      c.clicks
-      }))
-      .sort((a,b) => b.clicks - a.clicks);
-
-    res.json(performance);
-
-  } catch (err) {
-    console.error('[PRODUCT PERFORMANCE ERROR]', err);
-    res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
-  }
 });
 
 
