@@ -1061,56 +1061,67 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-// ─── analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
+
+// ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
 
-  // 1) 이벤트 문서에서 classification + images 를 가져옵니다
+  // 1) 유효한 ObjectId 체크
+  if (!ObjectId.isValid(pageId)) {
+    return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
+  }
+
+  // 2) 이벤트 문서에서 classification, images 가져오기
   const ev = await db.collection('events').findOne(
     { _id: new ObjectId(pageId), mallId },
-    { projection: { 'classification.additional_coupon_no': 1, 'classification.coupons': 1, images: 1 } }
+    { projection: { 'classification.additional_coupon_no': 1, images: 1 } }
   );
-  if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
-
-  // 2) classification 의 두 필드를 우선 보고, 없으면 images.regions[].coupon 에서 추출
-  let couponNos = [];
-  if (Array.isArray(ev.classification?.additional_coupon_no) && ev.classification.additional_coupon_no.length) {
-    couponNos = ev.classification.additional_coupon_no;
-  } else if (Array.isArray(ev.classification?.coupons) && ev.classification.coupons.length) {
-    couponNos = ev.classification.coupons;
-  } else if (Array.isArray(ev.images)) {
-    couponNos = ev.images
-      .flatMap(img => (img.regions || [])
-        .map(r => r.coupon)
-        .filter(Boolean)
-      );
+  if (!ev) {
+    return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
   }
-  // 중복 제거
+
+  // 3) classification.additional_coupon_no 우선, 없으면 이미지 regions[].coupon
+  let couponNos = Array.isArray(ev.classification?.additional_coupon_no)
+    ? ev.classification.additional_coupon_no.slice()
+    : [];
+
+  if (couponNos.length === 0 && Array.isArray(ev.images)) {
+    ev.images.forEach(img => {
+      (img.regions || []).forEach(r => {
+        if (r.coupon) couponNos.push(r.coupon);
+      });
+    });
+  }
+
+  // 4) 중복 제거 후, 없으면 빈 배열 리턴
   couponNos = Array.from(new Set(couponNos));
-  if (!couponNos.length) {
-    return res.json([]);  // 등록된 쿠폰이 하나도 없으면 빈 배열
+  if (couponNos.length === 0) {
+    return res.json([]);
   }
 
   try {
-    // 3) 각 쿠폰별로 Café24 API 호출
+    // 5) 각 쿠폰별로 API 호출
     const stats = await Promise.all(couponNos.map(async no => {
-      // (a) 발급/다운로드 이력
+      // (a) 다운로드(발급) 집계
       const issueRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issue`,
         {}, { shop_no: 1, coupon_no: no }
       );
-      // (b) 사용 건수 조회
-      const useRes = await apiRequest(
+
+      // (b) 쿠폰 정보(used_count, coupon_name) 집계
+      const infoRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-        {}, { shop_no: 1, coupon_no: no, fields: 'coupon_no,used_count' }
+        {}, { shop_no: 1, coupon_no: no, fields: 'coupon_no,coupon_name,used_count' }
       );
 
+      const info = (infoRes.coupons || [])[0] || {};
       return {
         couponNo:      no,
+        couponName:    info.coupon_name || '',
         downloadCount: issueRes.total_count   || 0,
-        usedCount:     useRes.coupons?.[0]?.used_count || 0
+        usedCount:     info.used_count        || 0
       };
     }));
 
@@ -1121,6 +1132,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     res.status(500).json({ error: '쿠폰 통계 조회 실패', detail: err.message });
   }
 });
+
 
 // ===================================================================
 // 서버 시작
