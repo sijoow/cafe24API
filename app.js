@@ -1007,7 +1007,6 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
 
   res.json(results);
 });
-
 // (22) analytics: product-performance (클릭된 상품만 + 상품명 포함)
 app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
   const { mallId, pageId } = req.params;
@@ -1062,6 +1061,7 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
+
 // ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
@@ -1110,7 +1110,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     res.status(500).json({ error: '쿠폰 통계 조회 실패', detail: err.message });
   }
 });
-
 
 // ===================================================================
 // 서버 시작
