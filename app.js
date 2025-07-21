@@ -1007,15 +1007,16 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
 
   res.json(results);
 });
+
 // (22) analytics: product-performance (클릭된 상품만 + 상품명 포함)
 app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
   const { mallId, pageId } = req.params;
   try {
-    // 클릭된 상품만 필터 (element:'product' 이고 clickCount 누적된 문서들)
+    // 1) prdClick_<mallId> 컬렉션에서만 집계
     const clicks = await db
-      .collection(`clicks_${mallId}`)
+      .collection(`prdClick_${mallId}`)            // ← 여기 clicks_ → prdClick_ 로 변경
       .aggregate([
-        { $match: { pageId, element: 'product' } },
+        { $match: { pageId, /* element:'product' 는 선택사항 */ } },
         { $group: { _id: '$productNo', clicks: { $sum: '$clickCount' } } }
       ])
       .toArray();
@@ -1024,38 +1025,43 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
       return res.json([]);
     }
 
-    // 상품 번호 리스트
-    const productNos = clicks.map(c => c._id).join(',');
+    // 2) 상품번호 목록
+    const productNos = clicks.map(c => c._id);
 
-    // Cafe24 API로 상품명 한꺼번에 조회
+    // 3) 상품명 조회 (Cafe24 API)
     const urlProds = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
-    const { products = [] } = await apiRequest(mallId, 'GET', urlProds, {}, {
+    const prodRes = await apiRequest(mallId, 'GET', urlProds, {}, {
       shop_no:    1,
-      product_no: productNos,
-      limit:      clicks.length,
+      product_no: productNos.join(','),
+      limit:      productNos.length,
       fields:     'product_no,product_name'
     });
-
-    const nameMap = products.reduce((m,p) => {
+    const detailMap = (prodRes.products||[]).reduce((m,p) => {
       m[p.product_no] = p.product_name;
       return m;
     }, {});
 
-    // 최종 결과 조립 & 클릭수 내림차순 정렬
+    // 4) 전체 클릭수 합산
+    const total = clicks.reduce((sum,c) => sum + c.clicks, 0);
+
+    // 5) 결과 조합 & 정렬
     const performance = clicks
       .map(c => ({
         productNo:   c._id,
-        productName: nameMap[c._id] || '(이름없음)',
-        clicks:      c.clicks
+        productName: detailMap[c._id] || '(이름없음)',
+        clicks:      c.clicks,
+        // clickRate 제거하셨으니 생략
       }))
       .sort((a,b) => b.clicks - a.clicks);
 
     res.json(performance);
+
   } catch (err) {
     console.error('[PRODUCT PERFORMANCE ERROR]', err);
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
+
 
 // ===================================================================
 // 서버 시작
