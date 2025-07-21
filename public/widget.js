@@ -174,10 +174,24 @@
           .then(products => renderProducts(ul, products, cols))
           .catch(err => console.error('DIRECT GRID ERROR', err));
         } else {
-          fetch(`${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`)
-            .then(r => r.json())
-            .then(products => renderProducts(ul, products, cols))
-            .catch(err => console.error('PRODUCT GRID ERROR', err));
+          fetch(
+            `${API_BASE}/api/${mallId}/categories/${category}/products`
+            + `?limit=${limit}${couponQSAppend}`
+          ).then(r => r.json())
+          .then(rawProducts => {
+            const products = rawProducts.map(p => ({
+              product_no:          p.product_no,
+              product_name:        p.product_name,
+              summary_description: p.summary_description || '',
+              price:               p.price,
+              list_image:          p.list_image,
+              sale_price:          p.sale_price    || null,
+              benefit_price:       p.benefit_price || null,
+              benefit_percentage:  p.benefit_percentage || null,
+            }));
+            renderProducts(ul, products, cols);
+          })
+          .catch(err => console.error('PRODUCT GRID ERROR', err));
         }
       });
     })
