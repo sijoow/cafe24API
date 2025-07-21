@@ -1061,28 +1061,46 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-
-// ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
+// ─── analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
-  try {
-    // 1) 이벤트에 지정된 추가 쿠폰 번호 목록 가져오기
-    const ev = await db.collection('events').findOne(
-      { _id: new ObjectId(pageId), mallId },
-      { projection: { 'classification.additional_coupon_no': 1 } }
-    );
-    const couponNos = ev?.classification?.additional_coupon_no || [];
-    if (!couponNos.length) return res.json([]);
 
-    // 2) 각 쿠폰별로 Cafe24 API 호출
+  // 1) 이벤트 문서에서 classification + images 를 가져옵니다
+  const ev = await db.collection('events').findOne(
+    { _id: new ObjectId(pageId), mallId },
+    { projection: { 'classification.additional_coupon_no': 1, 'classification.coupons': 1, images: 1 } }
+  );
+  if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
+
+  // 2) classification 의 두 필드를 우선 보고, 없으면 images.regions[].coupon 에서 추출
+  let couponNos = [];
+  if (Array.isArray(ev.classification?.additional_coupon_no) && ev.classification.additional_coupon_no.length) {
+    couponNos = ev.classification.additional_coupon_no;
+  } else if (Array.isArray(ev.classification?.coupons) && ev.classification.coupons.length) {
+    couponNos = ev.classification.coupons;
+  } else if (Array.isArray(ev.images)) {
+    couponNos = ev.images
+      .flatMap(img => (img.regions || [])
+        .map(r => r.coupon)
+        .filter(Boolean)
+      );
+  }
+  // 중복 제거
+  couponNos = Array.from(new Set(couponNos));
+  if (!couponNos.length) {
+    return res.json([]);  // 등록된 쿠폰이 하나도 없으면 빈 배열
+  }
+
+  try {
+    // 3) 각 쿠폰별로 Café24 API 호출
     const stats = await Promise.all(couponNos.map(async no => {
-      // (a) 발급(다운로드) 이력 조회
+      // (a) 발급/다운로드 이력
       const issueRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issue`,
         {}, { shop_no: 1, coupon_no: no }
       );
-      // (b) 사용 횟수 조회
+      // (b) 사용 건수 조회
       const useRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
