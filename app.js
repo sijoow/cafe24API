@@ -1062,39 +1062,45 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
-
 // ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
+  // 1) 쿼리 스트링으로 들어온 coupon_no (쉼표구분)
+  let couponNos = req.query.coupon_no
+    ? req.query.coupon_no.split(',').map(s=>s.trim()).filter(Boolean)
+    : null;
 
-  // 1) 이벤트에서 분류(classification) 안의 추가 쿠폰 번호 배열 꺼내기
-  const ev = await db.collection('events').findOne(
-    { _id: new ObjectId(pageId), mallId },
-    { projection: { 'classification.additional_coupon_no': 1 } }
-  );
-  const couponNos = ev?.classification?.additional_coupon_no || [];
-  if (!couponNos.length) return res.json([]);
+  // 2) 쿼리 없으면 DB 이벤트 문서에서 분류된 쿠폰 배열 사용
+  if (!couponNos) {
+    const ev = await db.collection('events').findOne(
+      { _id: new ObjectId(pageId), mallId },
+      { projection: { 'classification.additional_coupon_no': 1 } }
+    );
+    couponNos = ev?.classification?.additional_coupon_no || [];
+  }
+
+  if (couponNos.length === 0) {
+    return res.json([]);
+  }
 
   try {
-    // 2) 각 쿠폰별로 리스트 조회 한 번에 issued_count, used_count 얻기
+    // 3) 카페24 쿠폰 조회 한 번에 issued_count, used_count 읽기
     const stats = await Promise.all(couponNos.map(async no => {
       const detailRes = await apiRequest(
-        mallId,
-        'GET',
+        mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-        {},
-        {
-          shop_no:     1,
-          coupon_no:   no,
-          fields:      'coupon_no,coupon_name,issued_count,used_count'
+        {}, {
+          shop_no:   1,
+          coupon_no: no,
+          fields:    'coupon_no,coupon_name,issued_count,used_count'
         }
       );
-      const coupon = (detailRes.coupons || [])[0] || {};
+      const c = (detailRes.coupons||[])[0]||{};
       return {
-        couponNo:      coupon.coupon_no    || no,
-        couponName:    coupon.coupon_name  || '',
-        downloadCount: coupon.issued_count  || 0,
-        usedCount:     coupon.used_count    || 0
+        couponNo:      c.coupon_no   || no,
+        couponName:    c.coupon_name || '',
+        downloadCount: c.issued_count || 0,
+        usedCount:     c.used_count   || 0
       };
     }));
 
