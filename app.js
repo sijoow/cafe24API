@@ -974,34 +974,25 @@ app.get('/api/:mallId/analytics/:pageId/coupon-clicks', async (req, res) => {
   }
 });
 
-// ─── analytics: distinct URLs for this page ─────────────────────────
+// ─── analytics: distinct URLs where this widget ran ─────────────────────────────────
 app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
   const { mallId, pageId } = req.params;
+  // pageId 검증
   if (!ObjectId.isValid(pageId)) {
     return res.status(400).json({ error: '잘못된 pageId' });
   }
 
-  // 1) 해당 이벤트 문서에서 images.regions.href 꺼내오기
-  const ev = await db.collection('events').findOne(
-    { _id: new ObjectId(pageId), mallId },
-    { projection: { images: 1 } }
-  );
-  if (!ev) {
-    return res.json([]);
+  try {
+    // visits_<mallId> 컬렉션에서, 이 pageId 로 view/revisit 이 찍힌 고유한 pageUrl 을 꺼내온다
+    const colName = `visits_${mallId}`;
+    const urls = await db.collection(colName)
+      .distinct('pageUrl', { pageId });
+    
+    res.json(urls);
+  } catch (err) {
+    console.error('[URLS ERROR]', err);
+    res.status(500).json({ error: 'URL 목록 조회 실패' });
   }
-
-  const urlSet = new Set();
-  (ev.images || []).forEach(img => {
-    (img.regions || []).forEach(region => {
-      // <-- 실제 필드명이 r.href 이므로, 이 값을 사용해야 합니다.
-      if (region.href) {
-        urlSet.add(region.href);
-      }
-    });
-  });
-
-
-  res.json([...urlSet]);
 });
 
 
