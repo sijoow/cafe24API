@@ -875,93 +875,59 @@ app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
   }
 });
 
-// (15) analytics: clicks-by-date 수정진행 쿠폰/URL클릭데이터
-// (15) analytics: clicks-by-date — 기존 + 새로운 피벗, 한 곳에서 다 처리
+// ─── analytics: clicks-by-date (url / coupon 클릭 집계) ─────────────────────────────────────
 app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
   const { mallId, pageId } = req.params;
-  const { start_date, end_date, url, coupon_no } = req.query;
+  const { start_date, end_date, url } = req.query;
   if (!start_date || !end_date) {
     return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
   }
 
-  // 시간 필터
-  const tsMatch = {
-    $gte: new Date(start_date),
-    $lte: new Date(end_date)
+  // 날짜 키 (YYYY-MM-DD) 범위
+  const startKey = start_date.slice(0,10);
+  const endKey   = end_date.  slice(0,10);
+
+  // clicks_<mallId> 컬렉션에서 element 필드로 그룹핑
+  const match = {
+    pageId,
+    dateKey: { $gte: startKey, $lte: endKey }
   };
+  if (url) match.pageUrl = url;
 
-  // 1) URL or 쿠폰 별 피벗 조회
-  if (url || coupon_no) {
-    // 1-a) 공통 매치
-    const match = {
-      pageId,
-      type: 'click',
-      timestamp: tsMatch
-    };
-
-    // 1-b) url 탭 vs coupon 탭
-    let keyField;
-    if (url) {
-      match.element = 'url';
-      match.pageUrl = { $in: url.split(',') };
-      keyField = 'pageUrl';
-    } else {
-      match.element = 'coupon';
-      match.couponNo = { $in: coupon_no.split(',') };
-      keyField = 'couponNo';
-    }
-
-    // 1-c) 피벗 파이프라인
-    const pivot = [
-      { $match: match },
-      { $group: {
-          _id: {
-            date: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } },
-            key: `$${keyField}`
-          },
-          count: { $sum: 1 }
-      }},
-      { $group: {
-          _id: '$_id.date',
-          counts: { $push: { k: '$_id.key', v: '$count' } }
-      }},
-      { $project: {
-          _id: 0,
-          date: '$_id',
-          data: { $arrayToObject: '$counts' }
-      }},
-      { $sort: { date: 1 } }
-    ];
-
-    const rows = await db.collection(`clicks_${mallId}`).aggregate(pivot).toArray();
-    return res.json(rows);
-  }
-
-  // 2) 기존 “URL 클릭수 / 쿠폰 클릭수” 조회 (no url, no coupon_no)
-  {
-    const match = {
-      pageId,
-      dateKey: {
-        $gte: start_date.slice(0,10),
-        $lte: end_date  .slice(0,10)
-      }
-    };
-    // visits_<mallId> 컬렉션에 URL/Coupon 카운트 필드가 있다고 가정
-    const pipeline = [
-      { $match: match },
-      { $group: {
-          _id: '$dateKey',
-          url:    { $sum: { $ifNull:['$urlClickCount',    0] } },
-          coupon: { $sum: { $ifNull:['$couponClickCount', 0] } }
-      }},
-      { $project: { _id:0, date:'$_id', url:1, coupon:1 } },
-      { $sort: { date:1 } }
-    ];
-    const stats = await db.collection(`visits_${mallId}`).aggregate(pipeline).toArray();
-    return res.json(stats);
+  const pipeline = [
+    { $match: match },
+    // element: 'product' 혹은 'coupon' 별로 개수 집계
+    { $group: {
+        _id: { date: '$dateKey', element: '$element' },
+        count: { $sum: 1 }
+    }},
+   // ─── 날짜별로 다시 묶어서 url / product / coupon 필드를 만들어 줌
+   { $group: {
+       _id: '$_id.date',
+       url:     { $sum: { $cond: [ { $eq: ['$_id.element', 'url']    }, '$count', 0 ] } },
+       product: { $sum: { $cond: [ { $eq: ['$_id.element', 'product']}, '$count', 0 ] } },
+       coupon:  { $sum: { $cond: [ { $eq: ['$_id.element', 'coupon'] }, '$count', 0 ] } }
+   }},
+   { $project: {
+       _id: 0,
+       date: '$_id',
+        'URL 클릭':'$url',
+        'URL 클릭(기존 product)': '$product',
+        '쿠폰 클릭':'$coupon'
+    }},
+    { $sort: { date: 1 }}
+  ];
+  try {
+    const data = await db
+      .collection(`clicks_${mallId}`)
+      .aggregate(pipeline)
+      .toArray();
+    res.json(data);
+  } catch (err) {
+    console.error('[CLICKS-BY-DATE ERROR]', err);
+    res.status(500).json({ error: '클릭 집계에 실패했습니다.' });
   }
 });
-
 
 
 // (16) analytics: url-clicks count
