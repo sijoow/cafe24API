@@ -15,28 +15,11 @@
   const mallId        = script.dataset.mallId;
   const tabCount      = parseInt(script.dataset.tabCount, 10) || 0;
   const activeColor   = script.dataset.activeColor || '#1890ff';
-  const couponNos = script.dataset.couponNos || '';  // "6082574579600000980,6082575121300000982"
-  if (couponNos) {
-    fetch(`${API_BASE}/api/${mallId}/analytics/${pageId}/coupon-stats?coupon_no=${couponNos}`)
-      .then(r => r.json())
-      .then(stats => {
-        // ❶ HTML 마크업 생성 대신, 콜백 호출 혹은 커스텀 이벤트로 데이터 전달
-        // 방법 A) 전역 콜백 함수가 있으면 호출
-        if (typeof window.onCouponStats === 'function') {
-          window.onCouponStats(stats);
-        }
-        // 방법 B) 아니면 커스텀 이벤트 발생
-        else {
-          document.dispatchEvent(new CustomEvent('couponStatsLoaded', { detail: stats }));
-        }
-      })
-      .catch(e => console.error('WIDGET COUPON STATS ERROR', e));
-  }
+  const couponNos     = script.dataset.couponNos || '';
   const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
   const couponQSAppend= couponNos ? `&coupon_no=${couponNos}` : '';
   const directNos     = script.dataset.directNos || '';
 
-  
   // ─── visitorId 관리 ───────────────────────────────────────────────
   const visitorId = (() => {
     const key = 'appVisitorId';
