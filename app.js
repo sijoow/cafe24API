@@ -1148,17 +1148,12 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-
-// ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계) ─────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
-
-  // 1) 쿼리스트링으로 들어온 coupon_no (쉼표구분)
   let couponNos = req.query.coupon_no
-    ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
+    ? req.query.coupon_no.split(',').map(s=>s.trim()).filter(Boolean)
     : null;
 
-  // 2) 없으면 DB 이벤트 문서에서 분류된 쿠폰 번호 배열 사용
   if (!couponNos) {
     const ev = await db.collection('events').findOne(
       { _id: new ObjectId(pageId), mallId },
@@ -1166,31 +1161,44 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     );
     couponNos = ev?.classification?.additional_coupon_no || [];
   }
-
-  // 3) 쿠폰이 하나도 없으면 빈 배열 반환
-  if (couponNos.length === 0) {
-    return res.json([]);
-  }
+  if (couponNos.length === 0) return res.json([]);
 
   try {
-    // 4) 한 번의 API 호출로 issued_count, used_count 모두 읽어오기
     const stats = await Promise.all(couponNos.map(async no => {
-      const { coupons } = await apiRequest(
+      // 1) 다운로드 건수 (issue API)
+      const issueRes = await apiRequest(
         mallId, 'GET',
-        `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
+        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issue`,
+        {}, { shop_no: 1 }
+      );
+      const downloadCount = issueRes.total_count || 0;
+
+      // 2) 사용 건수 (orders API 검색)
+      const orderRes = await apiRequest(
+        mallId, 'GET',
+        `https://${mallId}.cafe24api.com/api/v2/admin/orders`,
         {},
         {
-          shop_no:   1,
-          coupon_no: no,
-          fields:    'coupon_no,coupon_name,issued_count,used_count'
+          shop_no: 1,
+          'search[coupon_no]': no,
+          limit: 1    // total_count만 쓰면 되므로 1건만 조회
         }
       );
-      const c = (coupons || [])[0] || {};
+      const usedCount = orderRes.total_count || 0;
+
+      // 3) 쿠폰 이름
+      const detailRes = await apiRequest(
+        mallId, 'GET',
+        `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
+        {}, { shop_no: 1, coupon_no: no, fields: 'coupon_no,coupon_name' }
+      );
+      const c = (detailRes.coupons||[])[0] || {};
+
       return {
-        couponNo:      c.coupon_no      || no,
-        couponName:    c.coupon_name    || '',
-        downloadCount: Number(c.issued_count) || 0,
-        usedCount:     Number(c.used_count)   || 0
+        couponNo:      c.coupon_no   || no,
+        couponName:    c.coupon_name || '',
+        downloadCount,
+        usedCount
       };
     }));
 
