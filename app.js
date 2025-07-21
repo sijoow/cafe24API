@@ -885,11 +885,11 @@ app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
     return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
   }
 
-  // 날짜 키 (YYYY-MM-DD) 범위
-  const startKey = start_date.slice(0,10);
-  const endKey   = end_date.slice(0,10);
+  // YYYY-MM-DD 형태로 자르기
+  const startKey = start_date.slice(0, 10);
+  const endKey   = end_date.slice(0, 10);
 
-  // clicks_<mallId> 컬렉션에서 element 필드로 그룹핑
+  // 기본 match
   const match = {
     pageId,
     dateKey: { $gte: startKey, $lte: endKey }
@@ -898,24 +898,27 @@ app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
 
   const pipeline = [
     { $match: match },
-    // date + element 별로 개수 집계
+    // 날짜+element 별로 count 집계
     { $group: {
         _id: { date: '$dateKey', element: '$element' },
         count: { $sum: 1 }
     }},
-    // 날짜별로 다시 묶어서 URL 클릭 vs 쿠폰 클릭으로 분리
+    // 날짜별로 다시 묶어서 url/product/coupon 필드 생성
     { $group: {
         _id: '$_id.date',
-        urlClicks:    { $sum: { $cond: [ { $eq: ['$_id.element', 'url']    }, '$count', 0 ] } },
-        couponClicks: { $sum: { $cond: [ { $eq: ['$_id.element', 'coupon'] }, '$count', 0 ] } }
+        url:     { $sum: { $cond: [ { $eq: ['$_id.element', 'url']    }, '$count', 0 ] } },
+        product: { $sum: { $cond: [ { $eq: ['$_id.element', 'product']}, '$count', 0 ] } },
+        coupon:  { $sum: { $cond: [ { $eq: ['$_id.element', 'coupon'] }, '$count', 0 ] } }
     }},
+    // 출력 형식
     { $project: {
         _id: 0,
         date: '$_id',
-        'URL 클릭':  '$urlClicks',
-        '쿠폰 클릭': '$couponClicks'
+        urlClicks:     '$url',
+        productClicks: '$product',
+        couponClicks:  '$coupon'
     }},
-    { $sort: { date: 1 }}
+    { $sort: { date: 1 } }
   ];
 
   try {
@@ -929,8 +932,6 @@ app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
     res.status(500).json({ error: '클릭 집계에 실패했습니다.' });
   }
 });
-
-
 
 
 // (16) analytics: url-clicks count
