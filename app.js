@@ -971,18 +971,45 @@ app.get('/api/:mallId/analytics/:pageId/coupon-clicks', async (req, res) => {
   }
 });
 
-// (18) analytics: distinct urls
+// (18) analytics: distinct urls → event.images에서 추출
 app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
   const { mallId, pageId } = req.params;
-  try {
-    const urls = await db
-      .collection(`clicks_${mallId}`)
-      .distinct('pageUrl', { pageId, element: 'url' });
-    res.json(urls);
-  } catch (err) {
-    console.error('[URLS DISTINCT ERROR]', err);
-    res.status(500).json({ error: 'URL 목록 조회 실패' });
+
+  // pageId가 ObjectId가 아니면 바로 빈 배열
+  if (!ObjectId.isValid(pageId)) {
+    return res.json([]);
   }
+
+  // 1) 이벤트 문서에서 images.regions.linkUrl 과 classification.urls 꺼내오기
+  const ev = await db.collection('events').findOne(
+    { _id: new ObjectId(pageId), mallId },
+    { projection: { images: 1, classification: 1 } }
+  );
+  if (!ev) {
+    return res.json([]);
+  }
+
+  const urls = new Set();
+
+  // images 배열 내부 regions에 linkUrl이 있으면 추가
+  (ev.images || []).forEach(img => {
+    if (Array.isArray(img.regions)) {
+      img.regions.forEach(region => {
+        if (region.linkUrl) urls.add(region.linkUrl);
+      });
+    }
+    // 혹시 img 자체에 linkUrl 필드가 있으면
+    if (img.linkUrl) {
+      urls.add(img.linkUrl);
+    }
+  });
+
+  // classification.urls 에도 URL들이 정의돼 있다면
+  if (ev.classification && Array.isArray(ev.classification.urls)) {
+    ev.classification.urls.forEach(u => urls.add(u));
+  }
+
+  res.json(Array.from(urls));
 });
 
 
