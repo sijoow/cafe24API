@@ -387,39 +387,65 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
   }
 });
 
-// (8) 트래킹 저장
 app.post('/api/:mallId/track', async (req, res) => {
   try {
+    const { mallId } = req.params;
     const {
       pageId, pageUrl, visitorId, referrer,
       device, type, element, timestamp,
       productNo
     } = req.body;
+
+    // 1) 필수 필드 체크
     if (!pageId || !visitorId || !type || !timestamp) {
       return res.status(400).json({ error: '필수 필드 누락' });
     }
-    if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
+    if (!ObjectId.isValid(pageId)) {
+      return res.sendStatus(204);
+    }
 
-    // 이벤트 존재 체크
+    // 2) 이벤트 존재 여부 확인
     const ev = await db.collection('events')
-                       .findOne({ _id: new ObjectId(pageId) }, { projection:{_id:1} });
-    if (!ev) return res.sendStatus(204);
+                       .findOne({ _id: new ObjectId(pageId) }, { projection:{ _id:1 } });
+    if (!ev) {
+      return res.sendStatus(204);
+    }
 
-    // 시간 처리
+    // 3) 시간 처리 (KST) 및 dateKey 생성
     const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
 
-    // URL path 분리
+    // 4) URL path 분리
     let pathOnly;
-    try { pathOnly = new URL(pageUrl).pathname; }
-    catch { pathOnly = pageUrl; }
+    try {
+      pathOnly = new URL(pageUrl).pathname;
+    } catch {
+      pathOnly = pageUrl;
+    }
 
-    // ─── 상품 클릭은 (pageId + productNo) 기준 upsert하여 카운터 증가
+    // ─────────────────────────────────────────────────────────────
+    // 5) 상품 클릭: prdClick_{mallId} 컬렉션에 upsert (상품명 포함)
     if (type === 'click' && element === 'product' && productNo) {
+      let productName = null;
+      try {
+        const productRes = await apiRequest(
+          mallId,
+          'GET',
+          `https://${mallId}.cafe24api.com/api/v2/admin/products/${productNo}`,
+          {},
+          { shop_no: 1 }
+        );
+        const prod = productRes.product || productRes.products?.[0];
+        productName = prod?.product_name || null;
+      } catch (err) {
+        console.error('[PRODUCT NAME FETCH ERROR]', err);
+      }
+
       const filter = { pageId, productNo };
       const update = {
         $inc: { clickCount: 1 },
         $setOnInsert: {
+          productName,
           firstClickAt: kstTs,
           pageUrl:      pathOnly,
           referrer:     referrer || null,
@@ -427,15 +453,37 @@ app.post('/api/:mallId/track', async (req, res) => {
         },
         $set: { lastClickAt: kstTs }
       };
-      // ↓ 여기서 잘못 쓰고 있던 clicks_ 대신 prdClick_ 로 바꿔야 합니다
       await db
         .collection(`prdClick_${mallId}`)
         .updateOne(filter, update, { upsert: true });
       return res.sendStatus(204);
     }
 
-    // ─── 기타 클릭 (url/coupon 등)은 insertOne 하려면 아래처럼 분기
-    if (type === 'click') {
+  // 6) 기타 클릭 (URL, 쿠폰 등): clicks_{mallId} 컬렉션에 insert
+  if (type === 'click') {
+    // 6-1) 쿠폰 클릭: productNo가 배열일 수 있으므로 배열/단일 처리
+    if (element === 'coupon') {
+      const coupons = Array.isArray(productNo) ? productNo : [productNo];
+      await Promise.all(coupons.map(cpn => {
+        const clickDoc = {
+          pageId,
+          visitorId,
+          dateKey,
+          pageUrl:   pathOnly,
+          referrer:  referrer || null,
+          device:    device   || null,
+          type,
+          element,
+          timestamp: kstTs,
+          couponNo:  cpn
+        };
+        return db.collection(`clicks_${mallId}`).insertOne(clickDoc);
+      }));
+      return res.sendStatus(204);
+    }
+
+    // 6-2) URL 클릭 전용 처리
+    if (element === 'url') {
       const clickDoc = {
         pageId,
         visitorId,
@@ -444,19 +492,33 @@ app.post('/api/:mallId/track', async (req, res) => {
         referrer:  referrer || null,
         device:    device   || null,
         type,
-        element,
-        timestamp: kstTs,
-        ...(element === 'coupon' && { couponNo: productNo }), // 예시
+        element,    // 'url'
+        timestamp: kstTs
       };
-      await db
-        .collection(`clicks_${req.params.mallId}`)
-        .insertOne(clickDoc);
+      await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
       return res.sendStatus(204);
     }
 
-    // ─── view/revisit 은 기존 visits 컬렉션에 upsert
-    const filter = { pageId, visitorId, dateKey };
-    const update = {
+    // 6-3) 그 외 기타 클릭
+    const clickDoc = {
+      pageId,
+      visitorId,
+      dateKey,
+      pageUrl:   pathOnly,
+      referrer:  referrer || null,
+      device:    device   || null,
+      type,
+      element,
+      timestamp: kstTs
+    };
+    await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
+    return res.sendStatus(204);
+  }
+
+    // ─────────────────────────────────────────────────────────────
+    // 7) view/revisit: visits_{mallId} 컬렉션에 upsert
+    const filter2 = { pageId, visitorId, dateKey };
+    const update2 = {
       $set: {
         lastVisit: kstTs,
         pageUrl:   pathOnly,
@@ -466,12 +528,12 @@ app.post('/api/:mallId/track', async (req, res) => {
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
     };
-    if (type === 'view')    update.$inc.viewCount    = 1;
-    if (type === 'revisit') update.$inc.revisitCount = 1;
+    if (type === 'view')    update2.$inc.viewCount    = 1;
+    if (type === 'revisit') update2.$inc.revisitCount = 1;
 
     await db
-      .collection(`visits_${req.params.mallId}`)
-      .updateOne(filter, update, { upsert: true });
+      .collection(`visits_${mallId}`)
+      .updateOne(filter2, update2, { upsert: true });
 
     return res.sendStatus(204);
   } catch (err) {
