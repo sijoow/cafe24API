@@ -875,6 +875,7 @@ app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
   }
 });
 
+// (15) analytics: clicks-by-date
 // ─── analytics: clicks-by-date (url / coupon 클릭 집계) ─────────────────────────────────────
 app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
   const { mallId, pageId } = req.params;
