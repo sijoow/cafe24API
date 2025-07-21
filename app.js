@@ -974,37 +974,59 @@ app.get('/api/:mallId/analytics/:pageId/coupon-clicks', async (req, res) => {
   }
 });
 
-// (18) analytics: distinct urls
-// app.js (기존 clicks-by-date 바로 아래쯤)
-app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
+
+// ─── analytics: clicks-by-date (url / coupon 클릭 집계) ─────────────────────────────────────
+app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
   const { mallId, pageId } = req.params;
-  if (!ObjectId.isValid(pageId)) return res.status(400).json({ error: '잘못된 pageId' });
-
-  // 1) 이벤트 설정 문서에서 링크만 추출
-  const ev = await db.collection('events').findOne(
-    { _id: new ObjectId(pageId), mallId },
-    { projection: { images:1, classification:1 } }
-  );
-  if (!ev) return res.json([]);
-
-  const urls = new Set();
-
-  // images → regions 필드에서 linkUrl 뽑기 (실제 필드명에 맞춰 수정하세요)
-  (ev.images || []).forEach(img => {
-    if (Array.isArray(img.regions)) {
-      img.regions.forEach(r => {
-        if (r.linkUrl) urls.add(r.linkUrl);
-      });
-    }
-    if (img.linkUrl) urls.add(img.linkUrl);
-  });
-
-  // classification 안에 별도 url 리스트가 있다면 여기도 추가
-  if (Array.isArray(ev.classification.urls)) {
-    ev.classification.urls.forEach(u => urls.add(u));
+  const { start_date, end_date, url } = req.query;
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
   }
 
-  res.json([...urls]);
+  // 날짜 키 (YYYY-MM-DD) 범위
+  const startKey = start_date.slice(0,10);
+  const endKey   = end_date.  slice(0,10);
+
+  // clicks_<mallId> 컬렉션에서 element 필드로 그룹핑
+  const match = {
+    pageId,
+    dateKey: { $gte: startKey, $lte: endKey }
+  };
+  if (url) match.pageUrl = url;
+
+  const pipeline = [
+    { $match: match },
+    // element: 'product' 혹은 'coupon' 별로 개수 집계
+    { $group: {
+        _id: { date: '$dateKey', element: '$element' },
+        count: { $sum: 1 }
+    }},
+   // ─── 날짜별로 다시 묶어서 url / product / coupon 필드를 만들어 줌
+   { $group: {
+       _id: '$_id.date',
+       url:     { $sum: { $cond: [ { $eq: ['$_id.element', 'url']    }, '$count', 0 ] } },
+       product: { $sum: { $cond: [ { $eq: ['$_id.element', 'product']}, '$count', 0 ] } },
+       coupon:  { $sum: { $cond: [ { $eq: ['$_id.element', 'coupon'] }, '$count', 0 ] } }
+   }},
+   { $project: {
+       _id: 0,
+       date: '$_id',
+        'URL 클릭':'$url',
+        'URL 클릭(기존 product)': '$product',
+        '쿠폰 클릭':'$coupon'
+    }},
+    { $sort: { date: 1 }}
+  ];
+  try {
+    const data = await db
+      .collection(`clicks_${mallId}`)
+      .aggregate(pipeline)
+      .toArray();
+    res.json(data);
+  } catch (err) {
+    console.error('[CLICKS-BY-DATE ERROR]', err);
+    res.status(500).json({ error: '클릭 집계에 실패했습니다.' });
+  }
 });
 
 
