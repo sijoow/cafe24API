@@ -387,67 +387,39 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
   }
 });
 
-
-// (8) 트래킹 저장중
+// (8) 트래킹 저장
 app.post('/api/:mallId/track', async (req, res) => {
   try {
-    const { mallId } = req.params;
     const {
       pageId, pageUrl, visitorId, referrer,
       device, type, element, timestamp,
       productNo
     } = req.body;
-
-    // 1) 필수 필드 체크
     if (!pageId || !visitorId || !type || !timestamp) {
       return res.status(400).json({ error: '필수 필드 누락' });
     }
-    if (!ObjectId.isValid(pageId)) {
-      return res.sendStatus(204);
-    }
+    if (!ObjectId.isValid(pageId)) return res.sendStatus(204);
 
-    // 2) 이벤트 존재 여부 확인
+    // 이벤트 존재 체크
     const ev = await db.collection('events')
-                       .findOne({ _id: new ObjectId(pageId) }, { projection:{ _id:1 } });
-    if (!ev) {
-      return res.sendStatus(204);
-    }
+                       .findOne({ _id: new ObjectId(pageId) }, { projection:{_id:1} });
+    if (!ev) return res.sendStatus(204);
 
-    // 3) 시간 처리 (KST) 및 dateKey 생성
+    // 시간 처리
     const kstTs   = dayjs(timestamp).tz('Asia/Seoul').toDate();
     const dateKey = dayjs(timestamp).tz('Asia/Seoul').format('YYYY-MM-DD');
 
-    // 4) URL path 분리
+    // URL path 분리
     let pathOnly;
-    try {
-      pathOnly = new URL(pageUrl).pathname;
-    } catch {
-      pathOnly = pageUrl;
-    }
+    try { pathOnly = new URL(pageUrl).pathname; }
+    catch { pathOnly = pageUrl; }
 
-    // ─────────────────────────────────────────────────────────────
-    // 5) 상품 클릭: prdClick_{mallId} 컬렉션에 upsert (상품명 포함)
+    // ─── 상품 클릭은 (pageId + productNo) 기준 upsert하여 카운터 증가
     if (type === 'click' && element === 'product' && productNo) {
-      let productName = null;
-      try {
-        const productRes = await apiRequest(
-          mallId,
-          'GET',
-          `https://${mallId}.cafe24api.com/api/v2/admin/products/${productNo}`,
-          {},
-          { shop_no: 1 }
-        );
-        const prod = productRes.product || productRes.products?.[0];
-        productName = prod?.product_name || null;
-      } catch (err) {
-        console.error('[PRODUCT NAME FETCH ERROR]', err);
-      }
-
       const filter = { pageId, productNo };
       const update = {
         $inc: { clickCount: 1 },
         $setOnInsert: {
-          productName,
           firstClickAt: kstTs,
           pageUrl:      pathOnly,
           referrer:     referrer || null,
@@ -456,36 +428,13 @@ app.post('/api/:mallId/track', async (req, res) => {
         $set: { lastClickAt: kstTs }
       };
       await db
-        .collection(`prdClick_${mallId}`)
+        .collection(`clicks_${req.params.mallId}`)
         .updateOne(filter, update, { upsert: true });
       return res.sendStatus(204);
     }
 
-  // 6) 기타 클릭 (URL, 쿠폰 등): clicks_{mallId} 컬렉션에 insert
-  if (type === 'click') {
-    // 6-1) 쿠폰 클릭: productNo가 배열일 수 있으므로 배열/단일 처리
-    if (element === 'coupon') {
-      const coupons = Array.isArray(productNo) ? productNo : [productNo];
-      await Promise.all(coupons.map(cpn => {
-        const clickDoc = {
-          pageId,
-          visitorId,
-          dateKey,
-          pageUrl:   pathOnly,
-          referrer:  referrer || null,
-          device:    device   || null,
-          type,
-          element,
-          timestamp: kstTs,
-          couponNo:  cpn
-        };
-        return db.collection(`clicks_${mallId}`).insertOne(clickDoc);
-      }));
-      return res.sendStatus(204);
-    }
-
-    // 6-2) URL 클릭 전용 처리
-    if (element === 'url') {
+    // ─── 기타 클릭 (url/coupon 등)은 insertOne 하려면 아래처럼 분기
+    if (type === 'click') {
       const clickDoc = {
         pageId,
         visitorId,
@@ -494,33 +443,19 @@ app.post('/api/:mallId/track', async (req, res) => {
         referrer:  referrer || null,
         device:    device   || null,
         type,
-        element,    // 'url'
-        timestamp: kstTs
+        element,
+        timestamp: kstTs,
+        ...(element === 'coupon' && { couponNo: productNo }), // 예시
       };
-      await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
+      await db
+        .collection(`clicks_${req.params.mallId}`)
+        .insertOne(clickDoc);
       return res.sendStatus(204);
     }
 
-    // 6-3) 그 외 기타 클릭
-    const clickDoc = {
-      pageId,
-      visitorId,
-      dateKey,
-      pageUrl:   pathOnly,
-      referrer:  referrer || null,
-      device:    device   || null,
-      type,
-      element,
-      timestamp: kstTs
-    };
-    await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
-    return res.sendStatus(204);
-  }
-
-    // ─────────────────────────────────────────────────────────────
-    // 7) view/revisit: visits_{mallId} 컬렉션에 upsert
-    const filter2 = { pageId, visitorId, dateKey };
-    const update2 = {
+    // ─── view/revisit 은 기존 visits 컬렉션에 upsert
+    const filter = { pageId, visitorId, dateKey };
+    const update = {
       $set: {
         lastVisit: kstTs,
         pageUrl:   pathOnly,
@@ -530,12 +465,12 @@ app.post('/api/:mallId/track', async (req, res) => {
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
     };
-    if (type === 'view')    update2.$inc.viewCount    = 1;
-    if (type === 'revisit') update2.$inc.revisitCount = 1;
+    if (type === 'view')    update.$inc.viewCount    = 1;
+    if (type === 'revisit') update.$inc.revisitCount = 1;
 
     await db
-      .collection(`visits_${mallId}`)
-      .updateOne(filter2, update2, { upsert: true });
+      .collection(`visits_${req.params.mallId}`)
+      .updateOne(filter, update, { upsert: true });
 
     return res.sendStatus(204);
   } catch (err) {
@@ -543,6 +478,8 @@ app.post('/api/:mallId/track', async (req, res) => {
     return res.status(500).json({ error: '트래킹 실패' });
   }
 });
+
+
 
 
 // (9) 카테고리 전체 조회
@@ -866,92 +803,35 @@ app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
   }
 });
 
-// (15) analytics: clicks-by-date 수정 진행중
+// (15) analytics: clicks-by-date
 app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
   const { mallId, pageId } = req.params;
-  const { start_date, end_date, url, coupon_no } = req.query;
-  if (!start_date || !end_date) {
-    return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
-  }
+  const { start_date, end_date, url } = req.query;
+  if (!start_date||!end_date) return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
 
-  // 시간 필터
-  const tsMatch = {
-    $gte: new Date(start_date),
-    $lte: new Date(end_date)
-  };
+  const startKey = start_date.slice(0,10), endKey = end_date.slice(0,10);
+  const match = { pageId, dateKey: { $gte: startKey, $lte: endKey } };
+  if (url) match.pageUrl = url;
 
-  // 1) URL or 쿠폰 별 피벗 조회
-  if (url || coupon_no) {
-    // 1-a) 공통 매치
-    const match = {
-      pageId,
-      type: 'click',
-      timestamp: tsMatch
-    };
+  const pipeline = [
+    { $match: match },
+    { $group: {
+        _id: '$dateKey',
+        product: { $sum: { $ifNull: ['$urlClickCount', 0] }},
+        coupon:  { $sum: { $ifNull: ['$couponClickCount', 0] }}
+    }},
+    { $project: { _id:0, date:'$_id', product:1, coupon:1 }},
+    { $sort: { date:1 }}
+  ];
 
-    // 1-b) url 탭 vs coupon 탭
-    let keyField;
-    if (url) {
-      match.element = 'url';
-      match.pageUrl = { $in: url.split(',') };
-      keyField = 'pageUrl';
-    } else {
-      match.element = 'coupon';
-      match.couponNo = { $in: coupon_no.split(',') };
-      keyField = 'couponNo';
-    }
-
-    // 1-c) 피벗 파이프라인
-    const pivot = [
-      { $match: match },
-      { $group: {
-          _id: {
-            date: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } },
-            key: `$${keyField}`
-          },
-          count: { $sum: 1 }
-      }},
-      { $group: {
-          _id: '$_id.date',
-          counts: { $push: { k: '$_id.key', v: '$count' } }
-      }},
-      { $project: {
-          _id: 0,
-          date: '$_id',
-          data: { $arrayToObject: '$counts' }
-      }},
-      { $sort: { date: 1 } }
-    ];
-
-    const rows = await db.collection(`clicks_${mallId}`).aggregate(pivot).toArray();
-    return res.json(rows);
-  }
-
-  // 2) 기존 “URL 클릭수 / 쿠폰 클릭수” 조회 (no url, no coupon_no)
-  {
-    const match = {
-      pageId,
-      dateKey: {
-        $gte: start_date.slice(0,10),
-        $lte: end_date  .slice(0,10)
-      }
-    };
-    // visits_<mallId> 컬렉션에 URL/Coupon 카운트 필드가 있다고 가정
-    const pipeline = [
-      { $match: match },
-      { $group: {
-          _id: '$dateKey',
-          url:    { $sum: { $ifNull:['$urlClickCount',    0] } },
-          coupon: { $sum: { $ifNull:['$couponClickCount', 0] } }
-      }},
-      { $project: { _id:0, date:'$_id', url:1, coupon:1 } },
-      { $sort: { date:1 } }
-    ];
-    const stats = await db.collection(`visits_${mallId}`).aggregate(pipeline).toArray();
-    return res.json(stats);
+  try {
+    const data = await db.collection(`visits_${mallId}`).aggregate(pipeline).toArray();
+    res.json(data);
+  } catch (err) {
+    console.error('[CLICKS-BY-DATE ERROR]', err);
+    res.status(500).json({ error: '클릭 집계에 실패했습니다.' });
   }
 });
-
 
 // (16) analytics: url-clicks count
 app.get('/api/:mallId/analytics/:pageId/url-clicks', async (req, res) => {
@@ -1005,23 +885,7 @@ app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
     console.error('[URLS DISTINCT ERROR]', err);
     res.status(500).json({ error: 'URL 목록 조회 실패' });
   }
-  
 });
-
-
-app.get('/api/:mallId/analytics/:pageId/coupons-distinct', async (req, res) => {
-  const { mallId, pageId } = req.params;
-  try {
-    const list = await db
-      .collection(`clicks_${mallId}`)
-      .distinct('couponNo', { pageId, element: 'coupon' });
-    res.json(list);
-  } catch (err) {
-    console.error('[COUPONS-DISTINCT ERROR]', err);
-    res.status(500).json({ error: '쿠폰 목록 조회 실패' });
-  }
-});
-
 
 // (19) analytics: devices distribution
 app.get('/api/:mallId/analytics/:pageId/devices', async (req, res) => {
@@ -1082,8 +946,7 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
 });
-
-// ─── analytics: product-clicks (게시판별 상품 클릭 랭킹)
+// (21) analytics: product-clicks (게시판별 상품 클릭 랭킹)
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   const { mallId, pageId } = req.params;
   const { start_date, end_date } = req.query;
@@ -1091,9 +954,37 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
     return res.status(400).json({ error: 'start_date, end_date는 필수입니다.' });
   }
 
-  // pageId 필터
+  const pipeline = [
+    { $match: {
+        pageId,
+        element: 'product',
+        timestamp: { $gte: new Date(start_date), $lte: new Date(end_date) }
+    }},
+    { $group: {
+        _id: '$productNo',
+        clicks: { $sum: 1 }
+    }},
+    { $project: {
+        _id:       0,
+        productNo: '$_id',
+        clicks:    1
+    }},
+    { $sort: { clicks: -1 }}
+  ];
+
+  const results = await db.collection(`clicks_${mallId}`).aggregate(pipeline).toArray();
+  res.json(results);
+});
+
+// ─── analytics: product-clicks (게시판별 상품 클릭 랭킹)
+app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  const { start_date, end_date } = req.query;
+
+  // 1) 기본 필터: pageId
   const filter = { pageId };
-  // 날짜 필터 추가
+
+  // 2) 날짜 범위 필터 (선택)
   if (start_date && end_date) {
     filter.lastClickAt = {
       $gte: new Date(start_date),
@@ -1101,14 +992,14 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
     };
   }
 
-  // prdClick_<mallId> 컬렉션 조회
+  // 3) prdClick_<mallId> 컬렉션에서 조회
   const docs = await db
     .collection(`prdClick_${mallId}`)
     .find(filter)
-    .sort({ clickCount: -1 })
+    .sort({ clickCount: -1 })   // 클릭 많은 순
     .toArray();
 
-  // 응답 포맷으로 변환
+  // 4) 프론트에서 쓸 필드로 매핑
   const results = docs.map(d => ({
     productNo: d.productNo,
     clicks:    d.clickCount
@@ -1116,18 +1007,17 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
 
   res.json(results);
 });
-// (22) analytics: product-performance
+
+// (22) analytics: product-performance (클릭된 상품만 + 상품명 포함)
 app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
   const { mallId, pageId } = req.params;
   try {
+    // 1) prdClick_<mallId> 컬렉션에서만 집계
     const clicks = await db
-      .collection(`prdClick_${mallId}`)      // ← 여기 clicks_ → prdClick_ 로 변경
+      .collection(`prdClick_${mallId}`)            // ← 여기 clicks_ → prdClick_ 로 변경
       .aggregate([
-        { $match: { pageId } },             // element 필터 제거
-        { $group: { 
-            _id: '$productNo', 
-            clicks: { $sum: '$clickCount' } 
-        }}
+        { $match: { pageId, /* element:'product' 는 선택사항 */ } },
+        { $group: { _id: '$productNo', clicks: { $sum: '$clickCount' } } }
       ])
       .toArray();
 
@@ -1135,10 +1025,10 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
       return res.json([]);
     }
 
-    // 상품 번호 목록
+    // 2) 상품번호 목록
     const productNos = clicks.map(c => c._id);
 
-    // 상품명 조회
+    // 3) 상품명 조회 (Cafe24 API)
     const urlProds = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
     const prodRes = await apiRequest(mallId, 'GET', urlProds, {}, {
       shop_no:    1,
@@ -1146,17 +1036,21 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
       limit:      productNos.length,
       fields:     'product_no,product_name'
     });
-    const detailMap = (prodRes.products || []).reduce((m,p) => {
+    const detailMap = (prodRes.products||[]).reduce((m,p) => {
       m[p.product_no] = p.product_name;
       return m;
     }, {});
 
-    // 결과 조합 & 정렬
+    // 4) 전체 클릭수 합산
+    const total = clicks.reduce((sum,c) => sum + c.clicks, 0);
+
+    // 5) 결과 조합 & 정렬
     const performance = clicks
       .map(c => ({
         productNo:   c._id,
         productName: detailMap[c._id] || '(이름없음)',
-        clicks:      c.clicks
+        clicks:      c.clicks,
+        // clickRate 제거하셨으니 생략
       }))
       .sort((a,b) => b.clicks - a.clicks);
 
@@ -1164,10 +1058,52 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
 
   } catch (err) {
     console.error('[PRODUCT PERFORMANCE ERROR]', err);
-    res.status(500).json({ error: '상품 퍼포먼스 집계 실패', detail: err.message });
+    res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
 
+
+
+// app.js 에 추가
+// ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
+app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
+  const { mallId, pageId } = req.params;
+
+  // 1) 이 이벤트에 할당된 쿠폰 번호들 조회
+  const ev = await db.collection('events').findOne(
+    { _id: new ObjectId(pageId), mallId },
+    { projection: { 'classification.coupons': 1 } }
+  );
+  // classification.coupons 에다 쿠폰 번호 배열을 담아두셨다면
+  const couponNos = ev?.classification?.coupons || [];
+  if (!couponNos.length) return res.json([]);
+
+  try {
+    // 2) 각 쿠폰별로 Cafe24 API 호출해서 다운로드(issue)·사용(count) 정보 가져오기
+    const stats = await Promise.all(couponNos.map(async no => {
+      // 발급(다운로드) 정보
+      const issueRes = await apiRequest(mallId, 'GET',
+        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issue`,
+        {}, { shop_no: 1, coupon_no: no }
+      );
+      // 사용 정보
+      const useRes = await apiRequest(mallId, 'GET',
+        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}`,
+        {}, { shop_no: 1, coupon_no: no, fields: 'coupon_no,used_count' }
+      );
+      return {
+        couponNo: no,
+        issuedCount:    issueRes.total_count || 0,
+        usedCount:      useRes.coupons?.[0]?.used_count || 0
+      };
+    }));
+
+    res.json(stats);
+  } catch (err) {
+    console.error('[COUPON STATS ERROR]', err);
+    res.status(500).json({ error: '쿠폰 통계 조회 실패', detail: err.message });
+  }
+});
 
 // ===================================================================
 // 서버 시작
