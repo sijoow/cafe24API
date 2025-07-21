@@ -988,16 +988,48 @@ app.get('/api/:mallId/analytics/:pageId/coupon-clicks', async (req, res) => {
 });
 
 // (18) analytics: distinct urls
+// app.js 에서 기존 코드를 찾아서 교체
 app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
   const { mallId, pageId } = req.params;
+  // pageId 가 ObjectId 임을 검증
+  if (!ObjectId.isValid(pageId)) {
+    return res.status(400).json({ error: '잘못된 이벤트 ID' });
+  }
+
   try {
-    const urls = await db.collection(`visits_${mallId}`).distinct('pageUrl', { pageId });
-    res.json(urls);
+    // 1) 이벤트 문서에서 images.regions 를 전부 꺼내오기
+    const ev = await db.collection('events').findOne(
+      { _id: new ObjectId(pageId), mallId },
+      { projection: { images: 1 } }
+    );
+    if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
+
+    // 2) regions 중 element === 'url' 인 것만 href 로 추출
+    const hrefs = (ev.images || []).flatMap(img =>
+      (img.regions || [])
+        .filter(r => !r.coupon /* url 영역만 */)
+        .map(r => {
+          let href = r.href;
+          // https 가 빠져 있다면 pathname 만 쓰거나,
+          // 필요하면 전체 URL 로 돌려주세요
+          try {
+            const url = new URL(href.startsWith('http') ? href : `https://${href}`);
+            return url.pathname;  // 혹은 url.toString() 
+          } catch {
+            return href;
+          }
+        })
+    );
+
+    // 3) 중복 제거1
+    const distinct = Array.from(new Set(hrefs));
+
+    res.json(distinct);
+
   } catch (err) {
     console.error('[URLS DISTINCT ERROR]', err);
     res.status(500).json({ error: 'URL 목록 조회 실패' });
   }
-  
 });
 
 
