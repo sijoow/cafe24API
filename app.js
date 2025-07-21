@@ -1150,7 +1150,6 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
 });
 
 
-
 // ─── (XX) analytics: coupon-stats ─────────────────────────────────
 // 이벤트에 등록된 coupon_no 리스트를 받아,
 // 1) 발급(issue) API → 다운로드 수
@@ -1160,7 +1159,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
   // 1) query string 으로 넘어온 coupon_no (쉼표구분)
   let couponNos = req.query.coupon_no
-    ? req.query.coupon_no.split(',').map(s=>s.trim()).filter(Boolean)
+    ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
     : null;
 
   // 2) 없으면 event.classification.additional_coupon_no 에서 가져오기
@@ -1179,16 +1178,16 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   try {
     const stats = await Promise.all(couponNos.map(async no => {
       // ─── 1) 다운로드(발급) 수 조회 ────────────────────────────────
-      // 발급 이력 API: coupon 발급 리스트를 반환, total_count 에 카운트
+      // 올바른 엔드포인트: /coupons/issue?shop_no=1&coupon_no={no}
       const issueRes = await apiRequest(
         mallId, 'GET',
-        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issue`,
-        {}, { shop_no: 1 }
+        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/issue`,
+        {}, { shop_no: 1, coupon_no: no }
       );
+      // API 스펙에 따르면 total_count 에 발급 건수가 담겨 옵니다.
       const downloadCount = issueRes.total_count ?? (issueRes.issues?.length) ?? 0;
 
       // ─── 2) 사용 수(used_count) 조회 ─────────────────────────────
-      // coupons API 에 used_count 필드를 요청
       const detailRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
@@ -1198,7 +1197,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
           fields:    'coupon_no,coupon_name,used_count'
         }
       );
-      const c = (detailRes.coupons||[])[0] || {};
+      const c = (detailRes.coupons || [])[0] || {};
       const usedCount = c.used_count ?? 0;
 
       return {
@@ -1215,7 +1214,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     res.status(500).json({ error: '쿠폰 통계 조회 실패', detail: err.message });
   }
 });
-
 
 // ===================================================================
 // 서버 시작
