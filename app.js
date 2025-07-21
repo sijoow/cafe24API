@@ -1149,25 +1149,22 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
-
-// ─── (XX) analytics: coupon-stats ─────────────────────────────────
-// 이벤트에 등록된 coupon_no 리스트를 받아,
-// 1) 발급(issue) API → 다운로드 수
-// 2) coupons API → 사용(used_count) 수
+// ─── analytics: coupon-stats ────────────────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
 
-  // 1) query string 으로 넘어온 coupon_no (쉼표구분)
+  // 1) ?coupon_no=123,456 로 넘어온 경우
   let couponNos = req.query.coupon_no
     ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
     : null;
 
-  // 2) 없으면 event.classification.additional_coupon_no 에서 가져오기
+  // 2) 없으면 events.classification.additional_coupon_no 에서 가져오기
   if (!couponNos) {
-    const ev = await db.collection('events').findOne(
-      { _id: new ObjectId(pageId), mallId },
-      { projection: { 'classification.additional_coupon_no': 1 } }
-    );
+    const ev = await db.collection('events')
+      .findOne(
+        { _id: new ObjectId(pageId), mallId },
+        { projection: { 'classification.additional_coupon_no': 1 } }
+      );
     couponNos = ev?.classification?.additional_coupon_no || [];
   }
 
@@ -1177,17 +1174,16 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
   try {
     const stats = await Promise.all(couponNos.map(async no => {
-      // ─── 1) 다운로드(발급) 수 조회 ────────────────────────────────
-      // 올바른 엔드포인트: /coupons/issue?shop_no=1&coupon_no={no}
+      // — 발급(다운로드) 수 조회
       const issueRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons/issue`,
         {}, { shop_no: 1, coupon_no: no }
       );
-      // API 스펙에 따르면 total_count 에 발급 건수가 담겨 옵니다.
-      const downloadCount = issueRes.total_count ?? (issueRes.issues?.length) ?? 0;
+      // 발급 총 건수는 total_count 에 담겨 옵니다
+      const downloadCount = issueRes.total_count ?? 0;
 
-      // ─── 2) 사용 수(used_count) 조회 ─────────────────────────────
+      // — 사용(used_count) 수 조회
       const detailRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
