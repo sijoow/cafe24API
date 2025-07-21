@@ -174,24 +174,43 @@
           .then(products => renderProducts(ul, products, cols))
           .catch(err => console.error('DIRECT GRID ERROR', err));
         } else {
-          fetch(
+          // 1) 카테고리 상품 리스트
+          const prodPromise = fetch(
             `${API_BASE}/api/${mallId}/categories/${category}/products`
             + `?limit=${limit}${couponQSAppend}`
-          ).then(r => r.json())
-          .then(rawProducts => {
-            const products = rawProducts.map(p => ({
-              product_no:          p.product_no,
-              product_name:        p.product_name,
-              summary_description: p.summary_description || '',
-              price:               p.price,
-              list_image:          p.list_image,
-              sale_price:          p.sale_price    || null,
-              benefit_price:       p.benefit_price || null,
-              benefit_percentage:  p.benefit_percentage || null,
-            }));
-            renderProducts(ul, products, cols);
-          })
-          .catch(err => console.error('PRODUCT GRID ERROR', err));
+          ).then(r => r.json());
+      
+          // 2) 같은 카테고리 상품별 클릭수
+          const clickPromise = fetch(
+            `${API_BASE}/api/${mallId}/analytics/${pageId}/product-performance`
+            + `?category_no=${category}`
+          ).then(r => r.json());
+      
+          // 둘 다 받은 뒤에…
+          Promise.all([prodPromise, clickPromise])
+            .then(([rawProducts, clicksData]) => {
+              // 클릭수를 매핑
+              const clickMap = clicksData.reduce((m, c) => {
+                m[c.productNo] = c.clicks;
+                return m;
+              }, {});
+      
+              // renderProducts 가 기대하는 형태로 맞추기
+              const products = rawProducts.map(p => ({
+                product_no:         p.product_no,
+                product_name:       p.product_name,
+                summary_description: p.summary_description || '',
+                price:              p.price,
+                list_image:         p.list_image,
+                sale_price:         p.sale_price    || null,
+                benefit_price:      p.benefit_price || null,
+                benefit_percentage: p.benefit_percentage || null,
+                clicks:             clickMap[p.product_no] || 0    // 여기!
+              }));
+      
+              renderProducts(ul, products, cols);
+            })
+            .catch(err => console.error('PRODUCT GRID ERROR', err));
         }
       });
     })
@@ -251,6 +270,8 @@
               <span class="prd_coupon" style="font-weight:500;">
                 ${couponText}</span>
             </div>`:''}
+
+            
         </li>`;
     }).join('');
 
