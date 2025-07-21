@@ -389,6 +389,8 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
     res.status(500).json({ error: '이벤트 삭제에 실패했습니다.' });
   }
 });
+
+
 // (8) 트래킹 저장중
 app.post('/api/:mallId/track', async (req, res) => {
   try {
