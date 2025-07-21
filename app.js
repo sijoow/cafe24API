@@ -1062,71 +1062,43 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
+
 // ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
 
-  // 1) 유효한 ObjectId 체크
-  if (!ObjectId.isValid(pageId)) {
-    return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
-  }
-
-  // 2) 이벤트 문서에서 classification, images 가져오기
+  // 1) 이벤트에서 분류(classification) 안의 추가 쿠폰 번호 배열 꺼내기
   const ev = await db.collection('events').findOne(
     { _id: new ObjectId(pageId), mallId },
-    { projection: { 'classification.additional_coupon_no': 1, images: 1 } }
+    { projection: { 'classification.additional_coupon_no': 1 } }
   );
-  if (!ev) {
-    return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
-  }
-
-  // 3) classification.additional_coupon_no 우선, 없으면 이미지 regions[].coupon
-  let couponNos = Array.isArray(ev.classification?.additional_coupon_no)
-    ? ev.classification.additional_coupon_no.slice()
-    : [];
-
-  if (couponNos.length === 0 && Array.isArray(ev.images)) {
-    ev.images.forEach(img => {
-      (img.regions || []).forEach(r => {
-        if (r.coupon) couponNos.push(r.coupon);
-      });
-    });
-  }
-
-  // 4) 중복 제거 후, 없으면 빈 배열 리턴
-  couponNos = Array.from(new Set(couponNos));
-  if (couponNos.length === 0) {
-    return res.json([]);
-  }
+  const couponNos = ev?.classification?.additional_coupon_no || [];
+  if (!couponNos.length) return res.json([]);
 
   try {
-    // 5) 각 쿠폰별로 API 호출
+    // 2) 각 쿠폰별로 리스트 조회 한 번에 issued_count, used_count 얻기
     const stats = await Promise.all(couponNos.map(async no => {
-      // (a) 다운로드(발급) 집계
-      const issueRes = await apiRequest(
-        mallId, 'GET',
-        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issue`,
-        {}, { shop_no: 1, coupon_no: no }
-      );
-
-      // (b) 쿠폰 정보(used_count, coupon_name) 집계
-      const infoRes = await apiRequest(
-        mallId, 'GET',
+      const detailRes = await apiRequest(
+        mallId,
+        'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-        {}, { shop_no: 1, coupon_no: no, fields: 'coupon_no,coupon_name,used_count' }
+        {},
+        {
+          shop_no:     1,
+          coupon_no:   no,
+          fields:      'coupon_no,coupon_name,issued_count,used_count'
+        }
       );
-
-      const info = (infoRes.coupons || [])[0] || {};
+      const coupon = (detailRes.coupons || [])[0] || {};
       return {
-        couponNo:      no,
-        couponName:    info.coupon_name || '',
-        downloadCount: issueRes.total_count   || 0,
-        usedCount:     info.used_count        || 0
+        couponNo:      coupon.coupon_no    || no,
+        couponName:    coupon.coupon_name  || '',
+        downloadCount: coupon.issued_count  || 0,
+        usedCount:     coupon.used_count    || 0
       };
     }));
 
     res.json(stats);
-
   } catch (err) {
     console.error('[COUPON STATS ERROR]', err);
     res.status(500).json({ error: '쿠폰 통계 조회 실패', detail: err.message });
