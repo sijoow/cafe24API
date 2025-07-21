@@ -103,15 +103,11 @@
     };
   
     // ⬇️ 상품 클릭이면 productNo 까지 추가
-       if (elementType === 'product') {
-         const productNo = el.dataset.productNo;
-         if (productNo) payload.productNo = productNo;
-       }
-       if (elementType === 'coupon') {
-         // data-track-coupon 으로 셋업해 둔 쿠폰번호를 payload.couponNo 에 담아 줍니다.
-         const couponNo = el.dataset.couponNo || el.getAttribute('data-coupon');
-         if (couponNo) payload.couponNo = couponNo;
-       }    
+    if (elementType === 'product') {
+      const productNo = el.dataset.productNo;
+      if (productNo) payload.productNo = productNo;
+    }
+  
     track(payload);
   });
 
