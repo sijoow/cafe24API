@@ -1171,7 +1171,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   if (couponNos.length === 0) {
     return res.json([]);
   }
-
+//데이터
   try {
     const stats = await Promise.all(couponNos.map(async no => {
       // — 발급(다운로드) 수 조회
