@@ -113,70 +113,75 @@
 
   // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────
   fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
-  .then(res => res.json())
-  .then(ev => {
-    // 1-1) 이미지 영역 치환
-    const imagesHtml = ev.images.map((img, idx) => {
-      /* … 생략 … */
-    }).join('\n');
-    document.body.innerHTML = document.body.innerHTML.replace('{#images}', imagesHtml);
+    .then(res => res.json())
+    .then(ev => {
+      // 1-1) 이미지 영역 치환
+      const imagesHtml = ev.images.map((img, idx) => {
+        const regs = (img.regions || []).map(r => {
+          const l = (r.xRatio * 100).toFixed(2),
+                t = (r.yRatio * 100).toFixed(2),
+                w = (r.wRatio * 100).toFixed(2),
+                h = (r.hRatio * 100).toFixed(2);
+          if (r.coupon) {
+            // 쿠폰 클릭 트래킹
+            return `<button
+              data-track-click="coupon"
+              style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;border:none;cursor:pointer;opacity:0"
+              onclick="downloadCoupon('${r.coupon}')"></button>`;
+          } else {
+            const href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
+            // URL 클릭 트래킹
+            return `<a
+              data-track-click="url"
+              style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
+              href="${href}" target="_blank" rel="noreferrer"></a>`;
+          }
+        }).join('');
+        return `
+          <div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
+            <img src="${img.src}"
+                 style="max-width:100%;height:auto;display:block;margin:0 auto;"
+                 data-img-index="${idx}" />
+            ${regs}
+          </div>`;
+      }).join('\n');
 
-    // 1-2) 상품 그리드
-    document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
-      const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
-      const limit    = ul.dataset.count || 300;
-      const category = ul.dataset.cate;
-      const ulDirect = ul.dataset.directNos || directNos;
+      document.body.innerHTML = document.body.innerHTML.replace('{#images}', imagesHtml);
 
-      if (ulDirect) {
-        // directNos가 있을 때 …
-        const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
-        Promise.all(ids.map(no =>
-          fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
+      // 1-2) 상품 그리드
+      document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
+        const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
+        const limit    = ul.dataset.count || 300;
+        const category = ul.dataset.cate;
+        const ulDirect = ul.dataset.directNos || directNos;
+
+        if (ulDirect) {
+          const ids = ulDirect.split(',').map(s=>s.trim()).filter(Boolean);
+          Promise.all(ids.map(no =>
+            fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
+              .then(r => r.json())
+              .then(p => ({
+                product_no:          p.product_no,
+                product_name:        p.product_name,
+                summary_description: p.summary_description || '',
+                price:               p.price,
+                list_image:          p.list_image,
+                sale_price:          p.sale_price    || null,
+                benefit_price:       p.benefit_price || null,
+                benefit_percentage:  p.benefit_percentage || null,
+              }))
+          ))
+          .then(products => renderProducts(ul, products, cols))
+          .catch(err => console.error('DIRECT GRID ERROR', err));
+        } else {
+          fetch(`${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`)
             .then(r => r.json())
-            .then(p => ({
-              product_no:          p.product_no,
-              product_name:        p.product_name,
-              summary_description: p.summary_description || '',
-              price:               p.price,
-              list_image:          p.list_image,
-              sale_price:          p.sale_price    || null,
-              benefit_price:       p.benefit_price || null,
-              benefit_percentage:  p.benefit_percentage || null,
-            }))
-        ))
-        .then(products => renderProducts(ul, products, cols))
-        .catch(err => console.error('DIRECT GRID ERROR', err));
-
-      } else {
-        // 카테고리 기반 …
-        fetch(
-          `${API_BASE}/api/${mallId}/categories/${category}/products`
-          + `?limit=${limit}${couponQSAppend}`
-        )
-        .then(r => r.json())
-        .then(rawProducts => {
-          const products = rawProducts.map(p => ({
-            product_no:          p.product_no,
-            product_name:        p.product_name,
-            summary_description: p.summary_description || '',
-            price:               p.price,
-            list_image:          p.list_image,
-            sale_price:          p.sale_price    || null,
-            benefit_price:       p.benefit_price || null,
-            benefit_percentage:  p.benefit_percentage || null,
-          }));
-          renderProducts(ul, products, cols);
-        })
-        .catch(err => console.error('PRODUCT GRID ERROR', err));
-      }
-    }); // ← 여기 forEach 끝
-
-  }) // ← 여기 then(ev => { … }) 끝
-  .catch(err => console.error('EVENT LOAD ERROR', err));  // ← 에러 핸들러
-
-
-    
+            .then(products => renderProducts(ul, products, cols))
+            .catch(err => console.error('PRODUCT GRID ERROR', err));
+        }
+      });
+    })
+    .catch(err => console.error('EVENT LOAD ERROR', err));
 
   // ─── 제품 목록 렌더링 헬퍼 ───────────────────────────────────────
   function renderProducts(ul, products, cols) {
