@@ -1167,6 +1167,11 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
+
+
+
+
+
 // ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
@@ -1193,7 +1198,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     const stats = await Promise.all(couponNos.map(async no => {
       const detailRes = await apiRequest(
         mallId, 'GET',
-        https://${mallId}.cafe24api.com/api/v2/admin/coupons,
+        `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
         {}, {
           shop_no:   1,
           coupon_no: no,
