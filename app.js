@@ -433,7 +433,7 @@ app.post('/api/:mallId/track', async (req, res) => {
         .updateOne(filter, update, { upsert: true });
       return res.sendStatus(204);
     }
-    
+
     // ─── 기타 클릭 (url/coupon 등)은 insertOne 하려면 아래처럼 분기
     if (type === 'click') {
       const clickDoc = {
@@ -980,6 +980,57 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
   }));
 
   res.json(results);
+});
+// (22) analytics: product-performance
+app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  try {
+    const clicks = await db
+      .collection(`prdClick_${mallId}`)      // ← 여기 clicks_ → prdClick_ 로 변경
+      .aggregate([
+        { $match: { pageId } },             // element 필터 제거
+        { $group: { 
+            _id: '$productNo', 
+            clicks: { $sum: '$clickCount' } 
+        }}
+      ])
+      .toArray();
+
+    if (clicks.length === 0) {
+      return res.json([]);
+    }
+
+    // 상품 번호 목록
+    const productNos = clicks.map(c => c._id);
+
+    // 상품명 조회
+    const urlProds = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
+    const prodRes = await apiRequest(mallId, 'GET', urlProds, {}, {
+      shop_no:    1,
+      product_no: productNos.join(','),
+      limit:      productNos.length,
+      fields:     'product_no,product_name'
+    });
+    const detailMap = (prodRes.products || []).reduce((m,p) => {
+      m[p.product_no] = p.product_name;
+      return m;
+    }, {});
+
+    // 결과 조합 & 정렬
+    const performance = clicks
+      .map(c => ({
+        productNo:   c._id,
+        productName: detailMap[c._id] || '(이름없음)',
+        clicks:      c.clicks
+      }))
+      .sort((a,b) => b.clicks - a.clicks);
+
+    res.json(performance);
+
+  } catch (err) {
+    console.error('[PRODUCT PERFORMANCE ERROR]', err);
+    res.status(500).json({ error: '상품 퍼포먼스 집계 실패', detail: err.message });
+  }
 });
 
 
