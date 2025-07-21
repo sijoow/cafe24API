@@ -1007,7 +1007,20 @@ app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
     res.status(500).json({ error: 'URL 목록 조회 실패' });
   }
 });
-
+// 클릭된 쿠폰번호만 뽑아 옵니다.
+app.get('/api/:mallId/analytics/:pageId/coupons-distinct', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  try {
+    // 'coupon' 요소로 클릭된 문서들 중에서 couponNo 필드만 distinct
+    const list = await db
+      .collection(`clicks_${mallId}`)
+      .distinct('couponNo', { pageId, element: 'coupon' });
+    res.json(list);
+  } catch (err) {
+    console.error('[COUPONS-DISTINCT ERROR]', err);
+    res.status(500).json({ error: '쿠폰 목록 조회 실패' });
+  }
+});
 // (19) analytics: devices distribution
 app.get('/api/:mallId/analytics/:pageId/devices', async (req, res) => {
   const { mallId, pageId } = req.params;
