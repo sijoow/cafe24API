@@ -1062,43 +1062,42 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
-
-
-// app.js 에 추가
 // ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용 집계)
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
-
-  // 1) 이 이벤트에 할당된 쿠폰 번호들 조회
-  const ev = await db.collection('events').findOne(
-    { _id: new ObjectId(pageId), mallId },
-    { projection: { 'classification.coupons': 1 } }
-  );
-  // classification.coupons 에다 쿠폰 번호 배열을 담아두셨다면
-  const couponNos = ev?.classification?.coupons || [];
-  if (!couponNos.length) return res.json([]);
-
   try {
-    // 2) 각 쿠폰별로 Cafe24 API 호출해서 다운로드(issue)·사용(count) 정보 가져오기
+    // 1) 이벤트에 지정된 추가 쿠폰 번호 목록 가져오기
+    const ev = await db.collection('events').findOne(
+      { _id: new ObjectId(pageId), mallId },
+      { projection: { 'classification.additional_coupon_no': 1 } }
+    );
+    const couponNos = ev?.classification?.additional_coupon_no || [];
+    if (!couponNos.length) return res.json([]);
+
+    // 2) 각 쿠폰별로 Cafe24 API 호출
     const stats = await Promise.all(couponNos.map(async no => {
-      // 발급(다운로드) 정보
-      const issueRes = await apiRequest(mallId, 'GET',
+      // (a) 발급(다운로드) 이력 조회
+      const issueRes = await apiRequest(
+        mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issue`,
         {}, { shop_no: 1, coupon_no: no }
       );
-      // 사용 정보
-      const useRes = await apiRequest(mallId, 'GET',
-        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}`,
+      // (b) 사용 횟수 조회
+      const useRes = await apiRequest(
+        mallId, 'GET',
+        `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
         {}, { shop_no: 1, coupon_no: no, fields: 'coupon_no,used_count' }
       );
+
       return {
-        couponNo: no,
-        issuedCount:    issueRes.total_count || 0,
-        usedCount:      useRes.coupons?.[0]?.used_count || 0
+        couponNo:      no,
+        downloadCount: issueRes.total_count   || 0,
+        usedCount:     useRes.coupons?.[0]?.used_count || 0
       };
     }));
 
     res.json(stats);
+
   } catch (err) {
     console.error('[COUPON STATS ERROR]', err);
     res.status(500).json({ error: '쿠폰 통계 조회 실패', detail: err.message });
