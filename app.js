@@ -1007,19 +1007,15 @@ app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
 
   res.json(results);
 });
-
 // (22) analytics: product-performance (클릭된 상품만 + 상품명 포함)
 app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) => {
   const { mallId, pageId } = req.params;
   try {
-    // 1) prdClick_<mallId> 컬렉션에서만 집계
-    const clicks = await db
-      .collection(`prdClick_${mallId}`)            // ← 여기 clicks_ → prdClick_ 로 변경
-      .aggregate([
-        { $match: { pageId, /* element:'product' 는 선택사항 */ } },
-        { $group: { _id: '$productNo', clicks: { $sum: '$clickCount' } } }
-      ])
-      .toArray();
+    // 1) clicks_<mallId> 컬렉션에서 pageId + element==='product' 기준으로 집계
+    const clicks = await db.collection(`clicks_${mallId}`).aggregate([
+      { $match: { pageId, element: 'product' } },
+      { $group: { _id: '$productNo', clicks: { $sum: '$clickCount' } } }
+    ]).toArray();
 
     if (clicks.length === 0) {
       return res.json([]);
@@ -1041,16 +1037,12 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
       return m;
     }, {});
 
-    // 4) 전체 클릭수 합산
-    const total = clicks.reduce((sum,c) => sum + c.clicks, 0);
-
-    // 5) 결과 조합 & 정렬
+    // 4) 결과 조합 & 정렬
     const performance = clicks
       .map(c => ({
         productNo:   c._id,
         productName: detailMap[c._id] || '(이름없음)',
-        clicks:      c.clicks,
-        // clickRate 제거하셨으니 생략
+        clicks:      c.clicks
       }))
       .sort((a,b) => b.clicks - a.clicks);
 
