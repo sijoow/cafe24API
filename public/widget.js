@@ -146,7 +146,8 @@
           </div>`;
       }).join('\n');
 
-      document.body.innerHTML = document.body.innerHTML.replace('{#images}', imagesHtml);
+    const wrap = document.querySelector('#evt-images');
+   if (wrap) wrap.innerHTML = imagesHtml;
 
       // 1-2) 상품 그리드
       document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
