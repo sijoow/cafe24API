@@ -1148,7 +1148,6 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-
 // ─── analytics: coupon‑stats (발급/사용 통계) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
@@ -1156,7 +1155,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
     : null;
 
-  // fallback to event document if none in query
+  // 쿼리스트링에 없으면 이벤트 문서에서 가져오기
   if (!couponNos) {
     const ev = await db
       .collection('events')
@@ -1166,36 +1165,35 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       );
     couponNos = ev?.classification?.additional_coupon_no || [];
   }
-  if (!couponNos.length) return res.json([]);
+  if (!couponNos.length) {
+    return res.json([]);
+  }
 
   const { start_date, end_date } = req.query;
   try {
     const stats = await Promise.all(
       couponNos.map(async couponNo => {
-        // ── 1) 발급 수: 올바른 쿠폰 발급 이력 조회 API
+        // ── 1) 발급 수: 쿠폰 발급 이력 조회 API
         const issueRes = await apiRequest(
           mallId,
           'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${couponNo}/issues`,
           {},
           {
-            shop_no:    1,
-            start_date,          // YYYY-MM-DD (optional)
-            end_date,            // YYYY-MM-DD (optional)
-            limit:      1        // total_count 용
+            shop_no:   1,
+            ...(start_date && end_date && { start_date, end_date }),
+            limit:     1    // total_count 가져오기용
           }
         );
         const downloadCount = issueRes.total_count || 0;
 
         // ── 2) 사용 수: 기존 Orders API 호출
         const orderParams = {
-          shop_no:           1,
+          shop_no:            1,
           'search[coupon_no]': couponNo,
-          limit:             1
+          ...(start_date && end_date && { start_date, end_date }),
+          limit:              1
         };
-        if (start_date && end_date) {
-          Object.assign(orderParams, { start_date, end_date });
-        }
         const orderRes = await apiRequest(
           mallId,
           'GET',
@@ -1226,13 +1224,12 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
     return res.json(stats);
   } catch (err) {
-    console.error('[COUPON STATS ERROR]', err);
+    console.error('[COUPON STATS ERROR]', err.response?.data || err.stack || err);
     return res
       .status(500)
-      .json({ error: err.response?.data || err.message || '알 수 없는 서버 에러' });
+      .json({ error: err.response?.data || err.message || '쿠폰 통계 조회 실패' });
   }
 });
-
 
 // ===================================================================
 // 서버 시작
