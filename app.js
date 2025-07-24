@@ -1149,9 +1149,8 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
-
-// ─── analytics: coupon‑stats (발급/사용 통계) ─────────────────────────
-app.get('/api/:mallId/analytics/:pageId/coupon‑stats', async (req, res) => {
+// ─── analytics: coupon-stats (발급/사용 통계) ─────────────────────────
+app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
 
   // 1) 쿼리스트링 쿠폰 목록 추출 (없으면 이벤트 문서에서)
@@ -1175,7 +1174,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon‑stats', async (req, res) => {
   try {
     const stats = await Promise.all(
       couponNos.map(async couponNo => {
-        // ── 2-1) 발급 수: since_issue_no=0 으로 전체 내역 중 total_count만 조회
+        // ── 2-1) 발급 수: 전체 발급 건수 조회
         const issueRes = await apiRequest(
           mallId,
           'GET',
@@ -1184,12 +1183,12 @@ app.get('/api/:mallId/analytics/:pageId/coupon‑stats', async (req, res) => {
           {
             shop_no:        1,
             since_issue_no: 0,
-            limit:          1  // total_count만 필요
+            limit:          1
           }
         );
         const downloadCount = issueRes.total_count || 0;
 
-        // ── 2-2) 사용 수: 주문 API로 조회
+        // ── 2-2) 사용 수: 주문 건수 조회
         const orderRes = await apiRequest(
           mallId,
           'GET',
@@ -1198,7 +1197,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon‑stats', async (req, res) => {
           {
             shop_no:            1,
             'search[coupon_no]': couponNo,
-            limit:              1  // 역시 total_count만 필요
+            limit:              1
           }
         );
         const usedCount = orderRes.total_count || 0;
@@ -1230,7 +1229,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon‑stats', async (req, res) => {
       .json({ error: err.response?.data || err.message || '쿠폰 통계 조회 실패' });
   }
 });
-
 
 // ===================================================================
 // 서버 시작
