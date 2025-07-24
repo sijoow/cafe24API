@@ -1148,14 +1148,16 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-
 // app.js 중 /* (XX) analytics: coupon-stats */ 부분
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
 
   // 1) 쿠폰 번호들: 쿼리스트링 우선, 없으면 이벤트 문서에서
   let couponNos = req.query.coupon_no
-    ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
+    ? req.query.coupon_no
+        .split(',')
+        .map(s => Number(s.trim()))      // ← 문자열을 숫자로 변환
+        .filter(n => !isNaN(n))
     : null;
 
   if (!couponNos) {
@@ -1178,7 +1180,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       const downloadMatch = {
         pageId,
         element: 'coupon',
-        couponNo,
+        couponNo,                      // 이제 숫자로 잘 매칭됩니다
       };
       if (start_date && end_date) {
         downloadMatch.dateKey = {
@@ -1190,10 +1192,10 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
         .collection(`clicks_${mallId}`)
         .countDocuments(downloadMatch);
 
-      // ── 2-2) 사용 수: Cafe24 주문 API 조회 (변경 없음)
+      // ── 2-2) 사용 수: Cafe24 주문 API 조회
       const orderParams = {
         shop_no: 1,
-        'search[coupon_no]': couponNo,
+        'search[coupon_no]': couponNo, // 숫자든 문자열이든 OK
         limit: 1,
       };
       if (start_date && end_date) {
