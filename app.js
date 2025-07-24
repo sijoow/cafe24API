@@ -1148,33 +1148,37 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-
 // ─── analytics: coupon-stats (발급/사용 통계) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
 
-  // 1) 쿼리스트링 쿠폰 목록 추출 (없으면 이벤트 문서에서)
+  // 1) 쿠폰 리스트 얻기 (쿼리스트링 or 이벤트 문서)
   let couponNos = req.query.coupon_no
     ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
     : null;
 
+  // 이벤트 문서에서 fallback
+  const ev = await db
+    .collection('events')
+    .findOne(
+      { _id: new ObjectId(pageId), mallId },
+      { projection: { createdAt: 1, 'classification.additional_coupon_no': 1 } }
+    );
   if (!couponNos) {
-    const ev = await db
-      .collection('events')
-      .findOne(
-        { _id: new ObjectId(pageId), mallId },
-        { projection: { 'classification.additional_coupon_no': 1 } }
-      );
     couponNos = ev?.classification?.additional_coupon_no || [];
   }
   if (!couponNos.length) {
     return res.json([]);
   }
 
+  // 2) 서버에서 기간 계산: 생성일 → 오늘
+  const startDate = new Date(ev.createdAt).toISOString().slice(0, 10); // YYYY-MM-DD
+  const endDate   = new Date().toISOString().slice(0, 10);
+
   try {
     const stats = await Promise.all(
       couponNos.map(async couponNo => {
-        // ── 2-1) 발급 수: 전체 발급 건수 조회
+        // ── 2-1) 발급 수: 전체 이력에서 total_count 조회
         const issueRes = await apiRequest(
           mallId,
           'GET',
@@ -1183,12 +1187,13 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
           {
             shop_no:        1,
             since_issue_no: 0,
-            limit:          1
+            limit:          1,
+            offset:         0
           }
         );
         const downloadCount = issueRes.total_count || 0;
 
-        // ── 2-2) 사용 수: 주문 건수 조회
+        // ── 2-2) 사용 수: 기간 필터를 붙여서 Orders API 호출
         const orderRes = await apiRequest(
           mallId,
           'GET',
@@ -1197,7 +1202,10 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
           {
             shop_no:            1,
             'search[coupon_no]': couponNo,
-            limit:              1
+            start_date:         startDate,
+            end_date:           endDate,
+            limit:              1,
+            offset:             0
           }
         );
         const usedCount = orderRes.total_count || 0;
