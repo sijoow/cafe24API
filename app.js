@@ -1220,8 +1220,9 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
     return res.json(stats);
   } catch (err) {
-    console.error('[COUPON STATS ERROR]', err);
-    return res.status(500).json({ error: '쿠폰 통계 조회 실패', detail: err.message });
+     console.error('[COUPON STATS ERROR]', err.response?.data || err.stack || err);
+    return res.status(500).json({  error: err.response?.data || err.message || '알 수 없는 서버 에러'
+    });
   }
 });
 
