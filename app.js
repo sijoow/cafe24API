@@ -1148,14 +1148,17 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-// app.js 중 /* analytics: coupon‑stats (발급/사용 통계) */ 부분 전체를 아래로 교체하세요.
-app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
+
+
+// ─── analytics: coupon‑stats (발급/사용 통계) ─────────────────────────
+app.get('/api/:mallId/analytics/:pageId/coupon‑stats', async (req, res) => {
   const { mallId, pageId } = req.params;
+
+  // 1) 쿼리스트링 쿠폰 목록 추출 (없으면 이벤트 문서에서)
   let couponNos = req.query.coupon_no
     ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
     : null;
 
-  // 쿼리에 없으면 이벤트 문서에서 꺼내오고
   if (!couponNos) {
     const ev = await db
       .collection('events')
@@ -1169,54 +1172,41 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     return res.json([]);
   }
 
-  const { start_date, end_date } = req.query;
   try {
     const stats = await Promise.all(
       couponNos.map(async couponNo => {
-        // ── 1) 발급 수: 고객 쿠폰 발급 이력 조회
-        const issueParams = {
-          shop_no:   1,
-          coupon_no: couponNo,
-          start_date,
-          end_date,
-          limit:     1,
-          offset:    0
-        };
+        // ── 2-1) 발급 수: since_issue_no=0 으로 전체 내역 중 total_count만 조회
         const issueRes = await apiRequest(
-          mallId, 'GET',
-          `https://${mallId}.cafe24api.com/api/v2/admin/customers/coupons`,
+          mallId,
+          'GET',
+          `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${couponNo}/issues`,
           {},
-          issueParams
+          {
+            shop_no:        1,
+            since_issue_no: 0,
+            limit:          1  // total_count만 필요
+          }
         );
-        // total_count 는 최상위 혹은 meta.pagination 아래에 있을 수 있으니 fallback
-        const downloadCount =
-          issueRes.total_count
-          || issueRes.meta?.pagination?.total_count
-          || 0;
+        const downloadCount = issueRes.total_count || 0;
 
-        // ── 2) 사용 수: 주문 조회
-        const orderParams = {
-          shop_no:            1,
-          'search[coupon_no]': couponNo,
-          start_date,
-          end_date,
-          limit:              1,
-          offset:             0
-        };
+        // ── 2-2) 사용 수: 주문 API로 조회
         const orderRes = await apiRequest(
-          mallId, 'GET',
+          mallId,
+          'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/orders`,
           {},
-          orderParams
+          {
+            shop_no:            1,
+            'search[coupon_no]': couponNo,
+            limit:              1  // 역시 total_count만 필요
+          }
         );
-        const usedCount =
-          orderRes.total_count
-          || orderRes.meta?.pagination?.total_count
-          || 0;
+        const usedCount = orderRes.total_count || 0;
 
-        // ── 3) 쿠폰명 조회
+        // ── 2-3) 쿠폰명 조회
         const couponRes = await apiRequest(
-          mallId, 'GET',
+          mallId,
+          'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
           {},
           { shop_no: 1, coupon_no: couponNo, fields: 'coupon_no,coupon_name' }
@@ -1225,7 +1215,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
         return {
           couponNo,
-          couponName: c.coupon_name || '',
+          couponName:    c.coupon_name || '',
           downloadCount,
           usedCount
         };
