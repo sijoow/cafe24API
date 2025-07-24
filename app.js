@@ -1148,22 +1148,21 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-
-
-// ─── analytics: coupon-stats (발급/사용 통계) ─────────────────────────
+// ─── analytics: coupon‑stats (발급/사용 통계) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
 
-  // 1) 쿠폰 번호 배열 추출 (쿼리스트링 우선, 없으면 이벤트 문서에서)
+  // 1) 조회할 couponNos 결정
   let couponNos = req.query.coupon_no
     ? req.query.coupon_no.split(',').map(x => x.trim()).filter(Boolean)
     : null;
 
+  // 없으면 이벤트 문서에서 fallback
   const ev = await db
     .collection('events')
     .findOne(
       { _id: new ObjectId(pageId), mallId },
-      { projection: { createdAt: 1, 'classification.additional_coupon_no': 1 } }
+      { projection: { createdAt:1, 'classification.additional_coupon_no':1 } }
     );
 
   if (!couponNos) {
@@ -1174,27 +1173,30 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   }
 
   // 2) 날짜 범위 계산 (이벤트 생성일 → 오늘)
-  const start_date = new Date(ev.createdAt).toISOString().slice(0, 10); // 'YYYY-MM-DD'
-  const end_date   = new Date().toISOString().slice(0, 10);
+  const start_date = new Date(ev.createdAt).toISOString().slice(0,10);
+  const end_date   = new Date().toISOString().slice(0,10);
 
   try {
     const stats = await Promise.all(
       couponNos.map(async couponNo => {
-        // ── A) 총 발급 수 조회 (이력 전체 → total_count)
+        // ── (A) 발급 수 조회 (/admin/customers/coupons)
         const issueRes = await apiRequest(
           mallId, 'GET',
-          `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${couponNo}/issues`,
+          `https://${mallId}.cafe24api.com/api/v2/admin/customers/coupons`,
           {},
           {
-            shop_no:        1,
-            since_issue_no: 0,
-            limit:          1,
-            offset:         0
+            shop_no:   1,
+            coupon_no: couponNo,
+            // 기간 제한을 걸고 싶으면 아래 두 줄 활성화
+            // start_date,
+            // end_date,
+            limit:     1,
+            offset:    0
           }
         );
         const downloadCount = issueRes.total_count || 0;
 
-        // ── B) 사용 수 조회 (반드시 날짜 필터 포함, date_type 필수)
+        // ── (B) 사용 수 조회 (/admin/orders → date_type 필수)
         const orderRes = await apiRequest(
           mallId, 'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/orders`,
@@ -1202,8 +1204,8 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
           {
             shop_no:            1,
             'search[coupon_no]': couponNo,
-            start_date,        // 이벤트 시작일
-            end_date,          // 오늘
+            start_date,
+            end_date,
             date_type:          'order_date',
             limit:              1,
             offset:             0
@@ -1211,14 +1213,14 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
         );
         const usedCount = orderRes.total_count || 0;
 
-        // ── C) 쿠폰명 조회
-        const couponRes = await apiRequest(
+        // ── (C) 쿠폰명 조회 (/admin/coupons)
+        const cRes = await apiRequest(
           mallId, 'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
           {},
-          { shop_no: 1, coupon_no: couponNo, fields: 'coupon_no,coupon_name' }
+          { shop_no:1, coupon_no:couponNo, fields:'coupon_no,coupon_name' }
         );
-        const couponName = (couponRes.coupons || [])[0]?.coupon_name || '';
+        const couponName = (cRes.coupons||[])[0]?.coupon_name || '';
 
         return {
           couponNo,
@@ -1231,12 +1233,11 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
     return res.json(stats);
   } catch (err) {
-    console.error('[COUPON STATS ERROR]', err.response?.data || err.stack || err);
-    return res
-      .status(500)
-      .json({ error: err.response?.data || err.message || '쿠폰 통계 조회 실패' });
+    console.error('[COUPON STATS ERROR]', err.response?.data || err);
+    return res.status(500).json({ error: '쿠폰 통계 조회 실패' });
   }
 });
+
 
 
 // ===================================================================
