@@ -1148,55 +1148,52 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
+
+
+// app.js
+
 // ─── analytics: coupon-stats (발급/사용 통계) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
 
-  // 1) 쿠폰 리스트 얻기 (쿼리스트링 or 이벤트 문서)
+  // 1) 쿠폰 번호 리스트
   let couponNos = req.query.coupon_no
-    ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
+    ? req.query.coupon_no.split(',').map(x => x.trim()).filter(Boolean)
     : null;
 
-  // 이벤트 문서에서 fallback
-  const ev = await db
+  // 없으면 이벤트 문서에서 꺼내오기
+  const evDoc = await db
     .collection('events')
     .findOne(
       { _id: new ObjectId(pageId), mallId },
       { projection: { createdAt: 1, 'classification.additional_coupon_no': 1 } }
     );
   if (!couponNos) {
-    couponNos = ev?.classification?.additional_coupon_no || [];
+    couponNos = evDoc?.classification?.additional_coupon_no || [];
   }
   if (!couponNos.length) {
     return res.json([]);
   }
 
-  // 2) 서버에서 기간 계산: 생성일 → 오늘
-  const startDate = new Date(ev.createdAt).toISOString().slice(0, 10); // YYYY-MM-DD
-  const endDate   = new Date().toISOString().slice(0, 10);
+  // 2) 기간 계산 (발급은 전체, 사용은 생성일→오늘)
+  const startDate = evDoc.createdAt.toISOString().slice(0,10); // YYYY-MM-DD
+  const endDate   = new Date().toISOString().slice(0,10);
 
   try {
     const stats = await Promise.all(
       couponNos.map(async couponNo => {
-        // ── 2-1) 발급 수: 전체 이력에서 total_count 조회
+        // ── (A) 총 발급 수 조회
         const issueRes = await apiRequest(
-          mallId,
-          'GET',
+          mallId, 'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${couponNo}/issues`,
           {},
-          {
-            shop_no:        1,
-            since_issue_no: 0,
-            limit:          1,
-            offset:         0
-          }
+          { shop_no:1, since_issue_no:0, limit:1, offset:0 }
         );
-        const downloadCount = issueRes.total_count || 0;
+        const totalIssued = issueRes.total_count || 0;
 
-        // ── 2-2) 사용 수: 기간 필터를 붙여서 Orders API 호출
+        // ── (B) 사용 수 조회 (기간 필터 필수)
         const orderRes = await apiRequest(
-          mallId,
-          'GET',
+          mallId, 'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/orders`,
           {},
           {
@@ -1210,33 +1207,31 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
         );
         const usedCount = orderRes.total_count || 0;
 
-        // ── 2-3) 쿠폰명 조회
+        // ── (C) 쿠폰명 조회
         const couponRes = await apiRequest(
-          mallId,
-          'GET',
+          mallId, 'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
           {},
-          { shop_no: 1, coupon_no: couponNo, fields: 'coupon_no,coupon_name' }
+          { shop_no:1, coupon_no:couponNo, fields:'coupon_no,coupon_name' }
         );
-        const c = (couponRes.coupons || [])[0] || {};
+        const couponName = (couponRes.coupons||[])[0]?.coupon_name || '';
 
         return {
           couponNo,
-          couponName:    c.coupon_name || '',
-          downloadCount,
-          usedCount
+          couponName,
+          usedCount,
+          unusedCount: totalIssued - usedCount
         };
       })
     );
 
     return res.json(stats);
   } catch (err) {
-    console.error('[COUPON STATS ERROR]', err.response?.data || err.stack || err);
-    return res
-      .status(500)
-      .json({ error: err.response?.data || err.message || '쿠폰 통계 조회 실패' });
+    console.error('[COUPON STATS ERROR]', err);
+    return res.status(500).json({ error: '쿠폰 통계 조회 실패' });
   }
 });
+
 
 // ===================================================================
 // 서버 시작
