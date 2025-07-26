@@ -148,11 +148,11 @@
 
    
       // 1-1) 이미지 영역 치환 (전체 body가 아니라, placeholder 요소만)
-      const imagesContainer = document.getElementById('widget-images-container');
+      const imagesContainer = document.getElementById('evt-images');
       if (imagesContainer) {
         imagesContainer.innerHTML = imagesHtml;
       } else {
-        console.warn('⚠️ widget-images-container가 없습니다.');
+        console.warn('⚠️ evt-images가 없습니다.');
       }
       // 1-2) 상품 그리드
       document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
