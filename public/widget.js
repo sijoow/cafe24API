@@ -64,13 +64,19 @@
 
   // ─── 페이지뷰/재방문 트래킹 ─────────────────────────────────────
   if (shouldTrack()) {
-    track({ pageId, pageUrl: location.pathname, visitorId, type: 'view',
-            device, referrer: document.referrer||'direct',
-            timestamp: new Date().toISOString() });
+    track({
+      pageId, pageUrl: location.pathname, visitorId,
+      type: 'view', device,
+      referrer: document.referrer || 'direct',
+      timestamp: new Date().toISOString()
+    });
   } else {
-    track({ pageId, pageUrl: location.pathname, visitorId, type: 'revisit',
-            device, referrer: document.referrer||'direct',
-            timestamp: new Date().toISOString() });
+    track({
+      pageId, pageUrl: location.pathname, visitorId,
+      type: 'revisit', device,
+      referrer: document.referrer || 'direct',
+      timestamp: new Date().toISOString()
+    });
   }
 
   // ─── 클릭 트래킹 (URL / 쿠폰 / 상품) ───────────────────────────────
@@ -79,9 +85,8 @@
     if (!el) return;
     const payload = {
       pageId, pageUrl: location.pathname, visitorId,
-      type: 'click',
-      element: el.dataset.trackClick,
-      device, referrer: document.referrer||'direct',
+      type: 'click', element: el.dataset.trackClick,
+      device, referrer: document.referrer || 'direct',
       timestamp: new Date().toISOString()
     };
     if (payload.element === 'product' && el.dataset.productNo) {
@@ -96,18 +101,18 @@
     .then(ev => {
       // 1-1) 이미지 영역 치환
       const imagesHtml = ev.images.map((img, idx) => {
-        const regs = (img.regions||[]).map(r => {
-          const l = (r.xRatio*100).toFixed(2),
-                t = (r.yRatio*100).toFixed(2),
-                w = (r.wRatio*100).toFixed(2),
-                h = (r.hRatio*100).toFixed(2);
+        const regs = (img.regions || []).map(r => {
+          const l = (r.xRatio * 100).toFixed(2),
+                t = (r.yRatio * 100).toFixed(2),
+                w = (r.wRatio * 100).toFixed(2),
+                h = (r.hRatio * 100).toFixed(2);
           if (r.coupon) {
             return `<button data-track-click="coupon"
                             style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;
                                    border:none;cursor:pointer;opacity:0"
                             onclick="downloadCoupon('${r.coupon}')"></button>`;
           } else {
-            const href = /^https?:\/\//.test(r.href)? r.href : `https://${r.href}`;
+            const href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
             return `<a data-track-click="url"
                        style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
                        href="${href}" target="_blank" rel="noreferrer"></a>`;
@@ -129,44 +134,51 @@
         console.warn('⚠️ evt-images가 없습니다.');
       }
 
-      // 1-2) 상품 그리드
+      // 1-2) 상품 그리드 (배치 로드 + 더보기 버튼)
       document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
         const cols       = parseInt(ul.dataset.gridSize, 10) || 1;
         const category   = ul.dataset.cate;
-        const batchCount = parseInt(ul.dataset.batchCount, 10) || cols*2;
+        const batchCount = parseInt(ul.dataset.batchCount, 10) || cols * 2;
         let offset       = 0;
         let isLoading    = false;
         let clickMap     = {};
 
-        // directNos 우선 처리
+        // directly 등록된 상품이 있는 경우, 페이징 대신 한 번에 로드
         const ulDirect = ul.dataset.directNos || directNos;
         if (ulDirect) {
-          const ids = ulDirect.split(',').map(s=>s.trim()).filter(Boolean);
+          const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
           Promise.all(ids.map(no =>
             fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
               .then(r => r.json())
               .then(p => ({
                 product_no:          p.product_no,
                 product_name:        p.product_name,
-                summary_description: p.summary_description||'',
+                summary_description: p.summary_description || '',
                 price:               p.price,
                 list_image:          p.list_image,
                 sale_price:          p.sale_price    || null,
                 benefit_price:       p.benefit_price || null,
-                benefit_percentage:  p.benefit_percentage||null,
+                benefit_percentage:  p.benefit_percentage || null,
               }))
           ))
           .then(products => renderProducts(ul, products, cols))
           .catch(err => console.error('DIRECT GRID ERROR', err));
-          return; 
+          return;
         }
 
-        // 1) 클릭 데이터 미리 얻기
+        // 더보기 버튼 컨테이너 생성
+        const loadMoreContainer = document.createElement('div');
+        loadMoreContainer.style.textAlign = 'center';
+        loadMoreContainer.style.margin = '16px 0';
+        ul.parentNode.insertBefore(loadMoreContainer, ul.nextSibling);
+
+        // 클릭 데이터 미리 수집
         fetch(`${API_BASE}/api/${mallId}/analytics/${pageId}/product-performance?category_no=${category}`)
           .then(r => r.json())
           .then(data => {
-            clickMap = data.reduce((m,c) => (m[c.productNo]=c.clicks, m), {});
-            loadBatch();  // 첫 배치 로드
+            clickMap = data.reduce((m, c) => (m[c.productNo] = c.clicks, m), {});
+            loadBatch();      // 첫 배치 로드
+            renderLoadMore(); // 더보기 버튼 표시
           })
           .catch(err => console.error('CLICK DATA ERROR', err));
 
@@ -180,23 +192,27 @@
           )
           .then(r => r.json())
           .then(raw => {
-            if (!raw.length) return;
+            if (!raw.length) {
+              loadMoreContainer.innerHTML = ''; // 더 이상 없으면 버튼 제거
+              return;
+            }
             const batch = raw.map(p => ({
               ...p,
-              summary_description: p.summary_description||'',
+              summary_description: p.summary_description || '',
               sale_price:          p.sale_price    || null,
               benefit_price:       p.benefit_price || null,
-              benefit_percentage:  p.benefit_percentage||null,
-              clicks:              clickMap[p.product_no]||0,
+              benefit_percentage:  p.benefit_percentage || null,
+              clicks:              clickMap[p.product_no] || 0,
             }));
             appendProducts(ul, batch, cols);
             offset += batchCount;
+            renderLoadMore();
           })
           .catch(err => console.error('BATCH LOAD ERROR', err))
           .finally(() => { isLoading = false; });
         }
 
-        // ul에 붙이기
+        // ul에 제품 붙이기
         function appendProducts(ul, products, cols) {
           if (offset === 0) {
             ul.style.display             = 'grid';
@@ -207,11 +223,11 @@
           }
           const html = products.map(p => {
             const orig    = p.price;
-            const sale    = p.sale_price!=null
+            const sale    = p.sale_price != null
                             ? `${p.sale_price.toLocaleString('ko-KR')}원`
                             : null;
             const percent = sale
-                            ? Math.round((orig-p.sale_price)/orig*100)
+                            ? Math.round((orig - p.sale_price) / orig * 100)
                             : null;
             return `
 <li style="list-style:none;">
@@ -266,16 +282,20 @@
           ul.insertAdjacentHTML('beforeend', html);
         }
 
-        // 스크롤 바닥 근처 감지
-        window.addEventListener('scroll', () => {
-          if (
-            window.innerHeight + window.scrollY >=
-            document.body.offsetHeight - 200
-          ) {
+        // 더보기 버튼 렌더링
+        function renderLoadMore() {
+          loadMoreContainer.innerHTML = '';
+          const btn = document.createElement('button');
+          btn.textContent = '더보기';
+          btn.style.padding = '8px 16px';
+          btn.style.cursor  = 'pointer';
+          btn.onclick = () => {
+            btn.disabled   = true;
+            btn.textContent = '로딩 중…';
             loadBatch();
-          }
-        });
-
+          };
+          loadMoreContainer.appendChild(btn);
+        }
       });
     })
     .catch(err => console.error('EVENT LOAD ERROR', err));
