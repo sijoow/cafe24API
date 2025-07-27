@@ -593,84 +593,72 @@ app.get('/api/:mallId/coupons', async (req, res) => {
 
 // in your app.js, after your other analytics endpoints:
 
-// ─── 쿠폰 통계 조회 ──────────────────────────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId } = req.params;
   const { coupon_no, start_date, end_date } = req.query;
   if (!coupon_no) {
     return res.status(400).json({ error: 'coupon_no is required' });
   }
+
   const shop_no = 1;
   const couponNos = coupon_no.split(',');
+  const now = new Date();
   const results = [];
 
-  for (const couponNo of couponNos) {
-    // 1) Coupon name
-    const couponRes = await apiRequest(
-      mallId,
-      'GET',
+  for (const no of couponNos) {
+    // 1) 단일 쿠폰명 조회
+    const couponInfo = await apiRequest(
+      mallId, 'GET',
       `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-      {},
-      { shop_no, coupon_no: couponNo, fields: 'coupon_no,coupon_name' }
+      {}, { shop_no, coupon_no: no, fields: 'coupon_no,coupon_name' }
     );
-    const coupon = (couponRes.coupons || [])[0] || {};
-    const couponName = coupon.coupon_name || '';
+    const coupon = (couponInfo.coupons || [])[0] || {};
+    const couponName = coupon.coupon_name || '(이름없음)';
 
-    // 2) Paginate through issues
-    let issuedCount = 0;
-    let usedCount = 0;
-    let unusedCount = 0;
-    let autoDeletedCount = 0;
-
+    // 2) 발급/사용/미사용/자동삭제 집계
+    let issued = 0, used = 0, unused = 0, autoDel = 0;
     const limit = 500;
-    let offset = 0;
-    while (true) {
-      const issuesRes = await apiRequest(
-        mallId,
-        'GET',
-        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${couponNo}/issues`,
-        {},
-        {
+    for (let offset = 0; ; offset += limit) {
+      const issueRes = await apiRequest(
+        mallId, 'GET',
+        `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issues`,
+        {}, {
           shop_no,
-          coupon_no: couponNo,
+          coupon_no: no,
           limit,
           offset,
           issued_start_date: start_date,
-          issued_end_date: end_date
+          issued_end_date:   end_date
         }
       );
-      const issues = issuesRes.issues || [];
+      const issues = issueRes.issues || [];
       if (!issues.length) break;
-      const now = new Date();
-      for (const issue of issues) {
-        issuedCount++;
-        if (issue.used_coupon === 'T') {
-          usedCount++;
+
+      for (const item of issues) {
+        issued++;
+        if (item.used_coupon === 'T') {
+          used++;
         } else {
-          // Not used
-          const exp = issue.expiration_date ? new Date(issue.expiration_date) : null;
-          if (exp && exp < now) {
-            autoDeletedCount++;
-          } else {
-            unusedCount++;
-          }
+          const exp = item.expiration_date ? new Date(item.expiration_date) : null;
+          if (exp && exp < now) autoDel++;
+          else unused++;
         }
       }
-      offset += issues.length;
     }
 
     results.push({
-      couponNo,
+      couponNo:         no,
       couponName,
-      issuedCount,
-      usedCount,
-      unusedCount,
-      autoDeletedCount
+      issuedCount:      issued,
+      usedCount:        used,
+      unusedCount:      unused,
+      autoDeletedCount: autoDel
     });
   }
 
-  res.json(results);
+  return res.json(results);
 });
+
 
 // (11) 카테고리별 상품 조회 + 다중 쿠폰 로직
 app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
