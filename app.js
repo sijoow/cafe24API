@@ -592,7 +592,6 @@ app.get('/api/:mallId/coupons', async (req, res) => {
 });
 
 
-
 // app.js
 
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
@@ -601,18 +600,17 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   if (!q) return res.status(400).json({ error: 'coupon_no 쿼리가 필요합니다.' });
 
   const couponNos = q.split(',');
-
   try {
     const url = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
     const params = {
       shop_no:   1,
-      coupon_no: couponNos.join(','),                                  // "A,B,C"
+      coupon_no: couponNos.join(','),
       fields: [
         'coupon_no',
         'coupon_name',
-        'download_count',                                               // 발급 수
-        'used_count',                                                   // 사용 수
-        'unused_count'                                                  // 미사용 수
+        'download_count',
+        'used_count',
+        'unused_count'
       ].join(',')
     };
 
@@ -622,16 +620,18 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     }
 
     const stats = coupons.map(c => {
-      const d = c.download_count;
-      const u = c.used_count;
-      const n = c.unused_count;
+      const issuedCount      = Number(c.download_count   ?? 0);
+      const usedCount        = Number(c.used_count       ?? 0);
+      const unusedCount      = Number(c.unused_count     ?? 0);
+      const autoDeletedCount = issuedCount - usedCount - unusedCount;
+
       return {
         couponNo:           c.coupon_no,
         couponName:         c.coupon_name,
-        issuedCount:        d,
-        usedCount:          u,
-        unusedCount:        n,
-        autoDeletedCount:   d - u - n   // 자동삭제된(사용불가) 쿠폰 수
+        issuedCount,        // 발급 수
+        usedCount,          // 사용(주문 완료) 수
+        unusedCount,        // 미사용 수
+        autoDeletedCount    // 자동삭제된 수
       };
     });
 
@@ -645,7 +645,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
-
 
 
 // (11) 카테고리별 상품 조회 + 다중 쿠폰 로직
