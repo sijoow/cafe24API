@@ -591,39 +591,50 @@ app.get('/api/:mallId/coupons', async (req, res) => {
   }
 });
 
-// (10‑1) 쿠폰 통계 조회: 발급수, 사용수, 미사용수
-app.get('/api/:mallId/coupons/:coupon_no/stats', async (req, res) => {
-  const { mallId, coupon_no } = req.params;
+
+
+// app.js (위치: (10) 쿠폰 전체 조회 바로 아래쯤)
+app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
+  const { mallId, pageId }    = req.params;
+  const { coupon_no: q }       = req.query;
+  if (!q) return res.status(400).json({ error: 'coupon_no 쿼리가 필요합니다.' });
+
+  // comma-separated 쿠폰번호를 배열로
+  const couponNos = q.split(',');
+
   try {
-    // Cafe24 API 호출: coupon_no 필터 + 필요한 필드만 요청
+    // Cafe24 API: coupons 엔드포인트에 coupon_no 파라미터로 리스트 전달
     const url = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
-    const { coupons } = await apiRequest(mallId, 'GET', url, {}, {
-      shop_no: 1,
-      coupon_no,
+    const params = {
+      shop_no:   1,
+      coupon_no: couponNos.join(','),                  // "A,B,C"
       fields: [
         'coupon_no',
+        'coupon_name',
         'download_count',
-        'used_count',
-        'unused_count'
+        'used_count'
       ].join(',')
-    });
+    };
+    const { coupons } = await apiRequest(mallId, 'GET', url, {}, params);
 
-    if (!coupons || coupons.length === 0) {
+    if (!Array.isArray(coupons) || coupons.length === 0) {
       return res.status(404).json({ error: '해당 쿠폰을 찾을 수 없습니다.' });
     }
 
-    const c = coupons[0];
-    // 필요한 형태로 다시 매핑해서 반환
-    return res.json({
-      couponNo:     c.coupon_no,
-      issuedCount:  c.download_count,  // 발급된 쿠폰 수
-      usedCount:    c.used_count,      // 사용된 쿠폰 수
-      unusedCount:  c.unused_count     // 아직 사용되지 않은 쿠폰 수
-    });
+    // 프론트에 맞게 필드명 변환
+    const stats = coupons.map(c => ({
+      couponNo:      c.coupon_no,
+      couponName:    c.coupon_name,
+      downloadCount: c.download_count,
+      orderCount:    c.used_count    // 주문 완료 수
+    }));
+
+    return res.json(stats);
+
   } catch (err) {
-    console.error('[COUPON STATS ERROR]', err);
+    console.error('[ANALYTICS COUPON-STATS ERROR]', err);
     return res.status(500).json({
-      error:   '쿠폰 통계 조회에 실패했습니다.',
+      error:   '쿠폰 통계 조회 실패',
       message: err.response?.data?.message || err.message
     });
   }
