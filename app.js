@@ -593,53 +593,58 @@ app.get('/api/:mallId/coupons', async (req, res) => {
 
 
 
-// app.js (위치: (10) 쿠폰 전체 조회 바로 아래쯤)
+// app.js
+
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
-  const { mallId, pageId }    = req.params;
-  const { coupon_no: q }       = req.query;
+  const { mallId, pageId } = req.params;
+  const { coupon_no: q }   = req.query;
   if (!q) return res.status(400).json({ error: 'coupon_no 쿼리가 필요합니다.' });
 
-  // comma-separated 쿠폰번호를 배열로
   const couponNos = q.split(',');
 
   try {
-    // Cafe24 API: coupons 엔드포인트에 coupon_no 파라미터로 리스트 전달
     const url = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
     const params = {
       shop_no:   1,
-      coupon_no: couponNos.join(','),                  // "A,B,C"
+      coupon_no: couponNos.join(','),                                  // "A,B,C"
       fields: [
         'coupon_no',
         'coupon_name',
-        'download_count',
-        'used_count'
+        'download_count',                                               // 발급 수
+        'used_count',                                                   // 사용 수
+        'unused_count'                                                  // 미사용 수
       ].join(',')
     };
-    const { coupons } = await apiRequest(mallId, 'GET', url, {}, params);
 
+    const { coupons } = await apiRequest(mallId, 'GET', url, {}, params);
     if (!Array.isArray(coupons) || coupons.length === 0) {
       return res.status(404).json({ error: '해당 쿠폰을 찾을 수 없습니다.' });
     }
 
-    // 프론트에 맞게 필드명 변환
-    const stats = coupons.map(c => ({
-      couponNo:      c.coupon_no,
-      couponName:    c.coupon_name,
-      downloadCount: c.download_count,
-      orderCount:    c.used_count    // 주문 완료 수
-    }));
+    const stats = coupons.map(c => {
+      const d = c.download_count;
+      const u = c.used_count;
+      const n = c.unused_count;
+      return {
+        couponNo:           c.coupon_no,
+        couponName:         c.coupon_name,
+        issuedCount:        d,
+        usedCount:          u,
+        unusedCount:        n,
+        autoDeletedCount:   d - u - n   // 자동삭제된(사용불가) 쿠폰 수
+      };
+    });
 
     return res.json(stats);
 
   } catch (err) {
-    console.error('[ANALYTICS COUPON-STATS ERROR]', err);
+    console.error('[COUPON-STATS ERROR]', err);
     return res.status(500).json({
       error:   '쿠폰 통계 조회 실패',
       message: err.response?.data?.message || err.message
     });
   }
 });
-
 
 
 
