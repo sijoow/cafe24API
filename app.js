@@ -1149,14 +1149,15 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 // app.js
-
 // ─── (XX) analytics: coupon-stats (이벤트에 등록된 쿠폰별 다운로드·사용·주문 집계)
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId, pageId } = req.params;
-  let couponNos = req.query.coupon_no
-    ? req.query.coupon_no.split(',').map(s => s.trim()).filter(Boolean)
-    : null;
+  const { coupon_no, start_date, end_date } = req.query;
 
+  // 1) 쿠폰 번호 배열 확보
+  let couponNos = coupon_no
+    ? coupon_no.split(',').map(s => s.trim()).filter(Boolean)
+    : null;
   if (!couponNos) {
     const ev = await db.collection('events').findOne(
       { _id: new ObjectId(pageId), mallId },
@@ -1164,34 +1165,44 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     );
     couponNos = ev?.classification?.additional_coupon_no || [];
   }
-  if (couponNos.length === 0) return res.json([]);
+  if (couponNos.length === 0) {
+    return res.json([]);
+  }
+
+  // 2) 날짜 파라미터 체크
+  if (!start_date || !end_date) {
+    return res.status(400).json({ error: 'start_date, end_date를 쿼리로 넘겨주세요.' });
+  }
 
   try {
     const stats = await Promise.all(couponNos.map(async no => {
-      // 1) 쿠폰 정보 조회 (발급/사용 수)
+      // 2-1) 쿠폰 기본 정보(발급/사용 수) 조회
       const detailRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-        {}, {
+        {},
+        {
           shop_no:   1,
           coupon_no: no,
           fields:    'coupon_no,coupon_name,issued_count,used_count'
         }
       );
-      const c = (detailRes.coupons||[])[0]||{};
-      const downloadCount = c.issued_count   || 0;
-      const usedCount     = c.used_count     || 0;
+      const c = (detailRes.coupons || [])[0] || {};
+      const downloadCount = c.issued_count || 0;
+      const usedCount     = c.used_count   || 0;
 
-      // 2) 주문 API 호출 → total_count로 완료 건수 집계
-      //    * search[coupon_no] 파라미터로 해당 쿠폰 사용 주문만 필터링
+      // 2-2) 주문 API 호출 → total_count로 해당 기간·쿠폰 사용 완료 주문 건수 집계
       const orderRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/orders`,
-        {}, {
-          shop_no:             1,
-          limit:               1,      // 실제 데이터는 total_count로만 봄
-          offset:              0,
-          'search[coupon_no]': no
+        {},
+        {
+          shop_no:                    1,
+          limit:                      1,  // 실제 데이터는 total_count만 사용
+          offset:                     0,
+          'search[coupon_no]':        no,
+          'search[created_at_from]':  `${start_date}T00:00:00+09:00`,
+          'search[created_at_to]':    `${end_date}T23:59:59.999+09:00`
         }
       );
       const orderCount = orderRes.total_count || 0;
