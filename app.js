@@ -590,6 +590,7 @@ app.get('/api/:mallId/coupons', async (req, res) => {
     res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
   }
 });
+
 // app.js
 
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
@@ -597,45 +598,46 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { coupon_no, start_date, end_date } = req.query;
   if (!coupon_no) return res.status(400).json({ error: 'coupon_no is required' });
 
-  const shop_no    = 1;
-  const couponNos  = coupon_no.split(',');
-  const now        = new Date();
-  const results    = [];
+  const shop_no   = 1;
+  const couponNos = coupon_no.split(',');
+  const now       = new Date();
 
-  // 1) 한 번에 모든 coupon_no 에 대해 이름을 받아오기 (limit: couponNos.length) :contentReference[oaicite:0]{index=0}
+  // 1) 한 번에 모든 coupon_no 이름 조회 (limit: couponNos.length)
   const listRes = await apiRequest(
     mallId, 'GET',
     `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-    {}, {
+    {},
+    {
       shop_no,
       coupon_no: couponNos.join(','),
       fields:    'coupon_no,coupon_name',
-      limit:     couponNos.length    // ← 요 부분이 핵심
+      limit:     couponNos.length   // ← 반드시 이만큼 늘려야 전부 받아옴
     }
   );
-  // coupon_no 순서 보장 안 되므로 map으로 재정렬
-  const nameMap = (listRes.coupons || []).reduce((acc, c) => {
-    acc[c.coupon_no] = c.coupon_name;
-    return acc;
+  const nameMap = (listRes.coupons || []).reduce((m, c) => {
+    m[c.coupon_no] = c.coupon_name;
+    return m;
   }, {});
 
-  // 2) 각각의 coupon_no 별로 issue 이력 순회하며 통계 집계
+  const results = [];
   for (const no of couponNos) {
-    let issued = 0, used = 0, unused = 0, autoDel = 0;
-    const limitPage = 500;
-    for (let offset = 0; ; offset += limitPage) {
-      const issueRes = await apiRequest(
+    // 2) issues 페이지네이션 돌면서 통계 집계
+    let issued=0, used=0, unused=0, autoDel=0;
+    const pageSize = 500;
+    for (let offset=0; ; offset += pageSize) {
+      const issuesRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issues`,
-        {}, {
+        {},
+        {
           shop_no,
-          limit:             limitPage,
+          limit:             pageSize,
           offset,
           issued_start_date: start_date,
           issued_end_date:   end_date
         }
       );
-      const issues = issueRes.issues || [];
+      const issues = issuesRes.issues || [];
       if (!issues.length) break;
       for (const item of issues) {
         issued++;
@@ -658,8 +660,9 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 
-  return res.json(results);
+  res.json(results);
 });
+
 
 
 // (11) 카테고리별 상품 조회 + 다중 쿠폰 로직
