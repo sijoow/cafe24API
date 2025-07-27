@@ -590,10 +590,9 @@ app.get('/api/:mallId/coupons', async (req, res) => {
     res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
   }
 });
-
 // app.js
 
-// ───  쿠폰 통계 조회 (발급·사용·미사용·자동삭제) ─────────────────────────
+// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 이름 보강) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId } = req.params;
   const { coupon_no, start_date, end_date } = req.query;
@@ -606,30 +605,53 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const now       = new Date();
 
   try {
-    // 1) 모든 coupon_no의 이름을 한 번에 조회 (limit = couponNos.length)
-    const listRes = await apiRequest(
+    // 1) bulk 조회: couponNos 전체 이름 가져오기 (coupon_status=ALL 포함)  
+    const bulkRes = await apiRequest(
       mallId, 'GET',
       `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
       {},
       {
         shop_no,
-        coupon_no: couponNos.join(','),
-        fields:    'coupon_no,coupon_name',
-        limit:     couponNos.length
+        coupon_no:    couponNos.join(','),
+        coupon_status:'ALL',                       // ← 모든 상태 포함
+        fields:       'coupon_no,coupon_name',
+        limit:        couponNos.length
       }
     );
-    const nameMap = (listRes.coupons || []).reduce((map, c) => {
-      map[c.coupon_no] = c.coupon_name;
-      return map;
+    const nameMap = (bulkRes.coupons || []).reduce((m, c) => {
+      m[c.coupon_no] = c.coupon_name;
+      return m;
     }, {});
 
     const results = [];
 
-    // 2) 각 쿠폰별 issue 이력 페이지네이션 돌며 통계 집계
+    // 2) 각 쿠폰별 issue 이력 집계 + 이름 보강
     for (const no of couponNos) {
+      // (1) 이름이 bulkRes에 없으면 개별 조회
+      let couponName = nameMap[no];
+      if (!couponName) {
+        try {
+          const singleRes = await apiRequest(
+            mallId, 'GET',
+            `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
+            {},
+            {
+              shop_no,
+              coupon_no: no,
+              coupon_status:'ALL',
+              fields:    'coupon_no,coupon_name',
+              limit:     1
+            }
+          );
+          couponName = singleRes.coupons?.[0]?.coupon_name || '(이름없음)';
+        } catch {
+          couponName = '(이름없음)';
+        }
+      }
+
+      // (2) issue 이력 페이지네이션
       let issued = 0, used = 0, unused = 0, autoDel = 0;
       const pageSize = 500;
-
       for (let offset = 0; ; offset += pageSize) {
         const issuesRes = await apiRequest(
           mallId, 'GET',
@@ -643,9 +665,8 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
             issued_end_date:   end_date
           }
         );
-
         const issues = issuesRes.issues || [];
-        if (issues.length === 0) break;
+        if (!issues.length) break;
 
         for (const item of issues) {
           issued++;
@@ -653,18 +674,15 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
             used++;
           } else {
             const exp = item.expiration_date ? new Date(item.expiration_date) : null;
-            if (exp && exp < now) {
-              autoDel++;
-            } else {
-              unused++;
-            }
+            if (exp && exp < now) autoDel++;
+            else unused++;
           }
         }
       }
 
       results.push({
         couponNo:         no,
-        couponName:       nameMap[no] || '(이름없음)',
+        couponName,                      // ← 보강된 이름
         issuedCount:      issued,
         usedCount:        used,
         unusedCount:      unused,
@@ -673,6 +691,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     }
 
     return res.json(results);
+
   } catch (err) {
     console.error('[COUPON-STATS ERROR]', err);
     return res.status(500).json({
@@ -681,7 +700,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
-
 
 // (11) 카테고리별 상품 조회 + 다중 쿠폰 로직
 app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
