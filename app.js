@@ -590,42 +590,46 @@ app.get('/api/:mallId/coupons', async (req, res) => {
     res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
   }
 });
-
-// in your app.js, after your other analytics endpoints:
+// app.js
 
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId } = req.params;
   const { coupon_no, start_date, end_date } = req.query;
-  if (!coupon_no) {
-    return res.status(400).json({ error: 'coupon_no is required' });
-  }
+  if (!coupon_no) return res.status(400).json({ error: 'coupon_no is required' });
 
-  const shop_no = 1;
-  const couponNos = coupon_no.split(',');
-  const now = new Date();
-  const results = [];
+  const shop_no    = 1;
+  const couponNos  = coupon_no.split(',');
+  const now        = new Date();
+  const results    = [];
 
+  // 1) 한 번에 모든 coupon_no 에 대해 이름을 받아오기 (limit: couponNos.length) :contentReference[oaicite:0]{index=0}
+  const listRes = await apiRequest(
+    mallId, 'GET',
+    `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
+    {}, {
+      shop_no,
+      coupon_no: couponNos.join(','),
+      fields:    'coupon_no,coupon_name',
+      limit:     couponNos.length    // ← 요 부분이 핵심
+    }
+  );
+  // coupon_no 순서 보장 안 되므로 map으로 재정렬
+  const nameMap = (listRes.coupons || []).reduce((acc, c) => {
+    acc[c.coupon_no] = c.coupon_name;
+    return acc;
+  }, {});
+
+  // 2) 각각의 coupon_no 별로 issue 이력 순회하며 통계 집계
   for (const no of couponNos) {
-    // 1) 단일 쿠폰명 조회
-    const couponInfo = await apiRequest(
-      mallId, 'GET',
-      `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-      {}, { shop_no, coupon_no: no, fields: 'coupon_no,coupon_name' }
-    );
-    const coupon = (couponInfo.coupons || [])[0] || {};
-    const couponName = coupon.coupon_name || '(이름없음)';
-
-    // 2) 발급/사용/미사용/자동삭제 집계
     let issued = 0, used = 0, unused = 0, autoDel = 0;
-    const limit = 500;
-    for (let offset = 0; ; offset += limit) {
+    const limitPage = 500;
+    for (let offset = 0; ; offset += limitPage) {
       const issueRes = await apiRequest(
         mallId, 'GET',
         `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}/issues`,
         {}, {
           shop_no,
-          coupon_no: no,
-          limit,
+          limit:             limitPage,
           offset,
           issued_start_date: start_date,
           issued_end_date:   end_date
@@ -633,12 +637,10 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       );
       const issues = issueRes.issues || [];
       if (!issues.length) break;
-
       for (const item of issues) {
         issued++;
-        if (item.used_coupon === 'T') {
-          used++;
-        } else {
+        if (item.used_coupon === 'T') used++;
+        else {
           const exp = item.expiration_date ? new Date(item.expiration_date) : null;
           if (exp && exp < now) autoDel++;
           else unused++;
@@ -648,7 +650,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
     results.push({
       couponNo:         no,
-      couponName,
+      couponName:       nameMap[no] || '(이름없음)',
       issuedCount:      issued,
       usedCount:        used,
       unusedCount:      unused,
