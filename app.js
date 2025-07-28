@@ -591,10 +591,8 @@ app.get('/api/:mallId/coupons', async (req, res) => {
   }
 });
 
-
 // app.js
 
-// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 이름 보강) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId }          = req.params;
   const { coupon_no, start_date, end_date } = req.query;
@@ -616,7 +614,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       {
         shop_no,
         coupon_no:     couponNos.join(','),
-        coupon_status: 'ALL',              // 모든 상태 포함
+        coupon_status: 'ALL',
         fields:        'coupon_no,coupon_name',
         limit:         couponNos.length
       }
@@ -627,7 +625,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     }, {});
 
     for (const no of couponNos) {
-      // 1) bulkRes에 없던 쿠폰명은 '리스트 조회'로 무조건 다시 가져오기
+      // 1) bulkRes에 빠진 이름은 singular 리스트 조회로 보강
       let couponName = nameMap[no] || '(이름없음)';
       if (!nameMap[no]) {
         try {
@@ -645,11 +643,11 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
           );
           couponName = listRes.coupons?.[0]?.coupon_name || couponName;
         } catch {
-          // 그대로 '(이름없음)' 유지
+          // fallback 그대로 '(이름없음)'
         }
       }
 
-      // 2) issue 이력 집계
+      // 2) issue 이력 통계 집계
       let issued = 0, used = 0, unused = 0, autoDel = 0;
       const pageSize = 500;
       for (let offset = 0; ; offset += pageSize) {
@@ -679,8 +677,9 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
         }
       }
 
+      // ← 여기에서 couponNo: no 로 수정
       results.push({
-        couponNo,
+        couponNo:         no,
         couponName,
         issuedCount:      issued,
         usedCount:        used,
@@ -690,6 +689,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     }
 
     return res.json(results);
+
   } catch (err) {
     console.error('[COUPON-STATS ERROR]', err);
     return res.status(500).json({
