@@ -357,7 +357,7 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
     res.status(500).json({ error: '이벤트 수정에 실패했습니다.' });
   }
 });
-// ─── 삭제 (cascade delete) ───────────────────────────────
+// ─── 삭제 (cascade delete) //──────────────────────────────
 app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   if (!ObjectId.isValid(id)) {
@@ -591,8 +591,6 @@ app.get('/api/:mallId/coupons', async (req, res) => {
   }
 });
 
-// app.js
-
 // ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 이름 보강) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId } = req.params;
@@ -606,17 +604,16 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const now       = new Date();
 
   try {
-    // 1) bulk 조회: 모든 상태 포함, 이름만 뽑아오기
+    // 1) bulk 조회: 모든 상태 상관없이 이름만 뽑아오기
     const bulkRes = await apiRequest(
       mallId, 'GET',
       `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
       {},
       {
         shop_no,
-        coupon_no:     couponNos.join(','),
-        coupon_status: 'ALL',
-        fields:        'coupon_no,coupon_name',
-        limit:         couponNos.length
+        coupon_no: couponNos.join(','),
+        fields:    'coupon_no,coupon_name',
+        limit:     couponNos.length
       }
     );
     const nameMap = (bulkRes.coupons || []).reduce((m, c) => {
@@ -627,7 +624,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     const results = [];
 
     for (const no of couponNos) {
-      // 2) 이름이 bulkRes에 없으면, fields 없이 전부 가져와서 이름만 보강
+      // 2) bulkRes에 이름이 없으면, 개별 조회로 보강
       let couponName = nameMap[no];
       if (!couponName) {
         try {
@@ -637,22 +634,20 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
             {},
             {
               shop_no,
-              coupon_no:     no,
-              coupon_status: 'ALL',
-              limit:         1
-              // fields를 빼면 디폴트 전체 필드 중 coupon_name이 반드시 나옵니다
+              coupon_no: no,
+              fields:    'coupon_no,coupon_name',
+              limit:     1
             }
           );
-          couponName = singleRes.coupons?.[0]?.coupon_name || '(이름없음)';
+          couponName = singleRes.coupons?.[0]?.coupon_name || '(제목없음)';
         } catch {
-          couponName = '(이름없음)';
+          couponName = '(제목없음)';
         }
       }
 
       // 3) issue 이력 페이지네이션 돌며 통계 집계
       let issued = 0, used = 0, unused = 0, autoDel = 0;
       const pageSize = 500;
-
       for (let offset = 0; ; offset += pageSize) {
         const issuesRes = await apiRequest(
           mallId, 'GET',
@@ -667,7 +662,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
           }
         );
         const issues = issuesRes.issues || [];
-        if (!issues.length) break;
+        if (issues.length === 0) break;
 
         for (const item of issues) {
           issued++;
@@ -682,8 +677,8 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       }
 
       results.push({
-        couponNo:         no,
-        couponName,                     
+        couponNo, 
+        couponName,
         issuedCount:      issued,
         usedCount:        used,
         unusedCount:      unused,
@@ -700,6 +695,8 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
+
+
 
 // (11) 카테고리별 상품 조회 + 다중 쿠폰 로직
 app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
