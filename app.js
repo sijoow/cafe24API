@@ -590,11 +590,11 @@ app.get('/api/:mallId/coupons', async (req, res) => {
     res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
   }
 });
-
 // app.js
 
+// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 절대 이름 확보) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
-  const { mallId }          = req.params;
+  const { mallId } = req.params;
   const { coupon_no, start_date, end_date } = req.query;
   if (!coupon_no) {
     return res.status(400).json({ error: 'coupon_no is required' });
@@ -606,48 +606,28 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const results   = [];
 
   try {
-    // bulk 조회로 가능한 쿠폰명 미리 가져오기
-    const bulkRes = await apiRequest(
-      mallId, 'GET',
-      `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-      {},
-      {
-        shop_no,
-        coupon_no:     couponNos.join(','),
-        coupon_status: 'ALL',
-        fields:        'coupon_no,coupon_name',
-        limit:         couponNos.length
-      }
-    );
-    const nameMap = (bulkRes.coupons || []).reduce((m, c) => {
-      m[c.coupon_no] = c.coupon_name;
-      return m;
-    }, {});
-
     for (const no of couponNos) {
-      // 1) bulkRes에 빠진 이름은 singular 리스트 조회로 보강
-      let couponName = nameMap[no] || '(이름없음)';
-      if (!nameMap[no]) {
-        try {
-          const listRes = await apiRequest(
-            mallId, 'GET',
-            `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
-            {},
-            {
-              shop_no,
-              coupon_no:     no,
-              coupon_status: 'ALL',
-              fields:        'coupon_no,coupon_name',
-              limit:         1
-            }
-          );
-          couponName = listRes.coupons?.[0]?.coupon_name || couponName;
-        } catch {
-          // fallback 그대로 '(이름없음)'
-        }
+      // 1) 무조건 singular 리스트 API로 쿠폰명 조회
+      let couponName = '(이름없음1)';
+      try {
+        const nameRes = await apiRequest(
+          mallId, 'GET',
+          `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
+          {},
+          {
+            shop_no,
+            coupon_no:     no,
+            coupon_status: 'ALL',              // 모든 상태 포함
+            fields:        'coupon_no,coupon_name',
+            limit:         1
+          }
+        );
+        couponName = nameRes.coupons?.[0]?.coupon_name || couponName;
+      } catch {
+        // fallback 그대로 '(이름없음)'
       }
 
-      // 2) issue 이력 통계 집계
+      // 2) issue 이력 페이지네이션 돌며 발급/사용/미사용/자동삭제 집계
       let issued = 0, used = 0, unused = 0, autoDel = 0;
       const pageSize = 500;
       for (let offset = 0; ; offset += pageSize) {
@@ -664,7 +644,8 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
           }
         );
         const issues = issuesRes.issues || [];
-        if (!issues.length) break;
+        if (issues.length === 0) break;
+
         for (const item of issues) {
           issued++;
           if (item.used_coupon === 'T') {
@@ -677,7 +658,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
         }
       }
 
-      // ← 여기에서 couponNo: no 로 수정
       results.push({
         couponNo:         no,
         couponName,
@@ -689,7 +669,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     }
 
     return res.json(results);
-
   } catch (err) {
     console.error('[COUPON-STATS ERROR]', err);
     return res.status(500).json({
@@ -698,6 +677,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
+
 
 
 // (11) 카테고리별 상품 조회 + 다중 쿠폰 로직
