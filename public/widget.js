@@ -1,4 +1,11 @@
 ;(function(){
+  // ─── 0.1) API 도메인에 대한 preconnect ───────────────────────────────────
+  const preconnect = document.createElement('link');
+  preconnect.rel = 'preconnect';
+  preconnect.href = document.currentScript.dataset.apiBase;
+  preconnect.crossOrigin = 'anonymous';
+  document.head.appendChild(preconnect);
+
   // ─── 0) 스크립트 엘리먼트 찾기 & 설정값 가져오기 ─────────────────────────
   let script = document.currentScript;
   if (!script || !script.dataset.pageId) {
@@ -105,7 +112,7 @@
     const cacheKey = ulDirect ? `direct_${ulDirect}` : (category ? `cat_${category}` : null);
     const storageKey = cacheKey ? storagePrefix + cacheKey : null;
 
-    // 1) 로컬스토리지 캐시가 있으면 즉시 렌더
+    // 로컬스토리지 캐시가 있으면 즉시 렌더
     if (storageKey) {
       const stored = localStorage.getItem(storageKey);
       if (stored) {
@@ -119,19 +126,19 @@
       }
     }
 
-    // 2) 스피너 표시
+    // 스피너 표시
     const spinner = document.createElement('div');
     spinner.className = 'grid-spinner';
     ul.parentNode.insertBefore(spinner, ul);
 
-    // 3) 인-메모리 캐시 확인
+    // 메모리 캐시 확인
     if (cacheKey && productsCache[cacheKey]) {
       renderProducts(ul, productsCache[cacheKey], cols);
       spinner.remove();
       return;
     }
 
-    // 4) API 호출
+    // 에러 처리 및 재시도 버튼
     const showError = err => {
       console.error(err);
       spinner.remove();
@@ -213,7 +220,7 @@
   fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
     .then(res => res.json())
     .then(ev => {
-      // 1-1) 이미지 영역 치환
+      // 이미지 매핑
       const imagesHtml = ev.images.map((img, idx) => {
         const regs = (img.regions || []).map(r => {
           const l = (r.xRatio * 100).toFixed(2),
@@ -243,11 +250,9 @@
       }).join('\n');
 
       const imagesContainer = document.getElementById('evt-images');
-      if (imagesContainer) {
-        imagesContainer.innerHTML = imagesHtml;
-      }
+      if (imagesContainer) imagesContainer.innerHTML = imagesHtml;
 
-      // 1-2) 그리드 패널별 로드
+      // 그리드 패널별 로드
       document.querySelectorAll(`ul.main_Grid_${pageId}`)
         .forEach(ul => loadPanel(ul));
     })
@@ -315,8 +320,7 @@
           </div>
           ${couponText
             ? `<div class="coupon_wrapper" style="margin-top:4px;display:flex;align-items:center;">
-                 <span class="prd_coupon_percent" style="color:#ff4d4f;font-weight:500;margin-right:4px;">
-                   ${p.benefit_percentage}%</span>
+                 <span class="prd_coupon_percent" style="color:#ff4d4f;font-weight:500;margin-right:4px;">${p.benefit_percentage}%</span>
                  <span class="prd_coupon" style="font-weight:500;">${couponText}</span>
                </div>`
             : ``}
@@ -352,14 +356,13 @@
     text-overflow: ellipsis;
   }
   .product_list_widget{padding:20px 0;}
-    .tabs_${pageId} {
+  .tabs_${pageId} {
     display: grid;
     gap: 8px;
     max-width: 800px;
     margin: 16px auto;
     grid-template-columns: repeat(${tabCount},1fr);
   }
-
   .tabs_${pageId} button {
     padding: 8px;
     font-size: 14px;
@@ -369,12 +372,10 @@
     cursor: pointer;
     border-radius: 4px;
 
-    /* single‑line ellipsis */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
   .tabs_${pageId} button.active {
     background-color:${activeColor}; color:#fff;
   }
