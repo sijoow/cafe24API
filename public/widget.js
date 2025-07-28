@@ -110,178 +110,100 @@
   
     track(payload);
   });
+// ─── 1-2) 상품 그리드 (lazy load) ───────────────────────────────
+fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
+  .then(res => res.json())
+  .then(ev => {
+    // … 1-1 이미지 렌더링 생략 …
 
-  // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────
-  fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
-    .then(res => res.json())
-    .then(ev => {
-      // 1-1) 이미지 영역 치환
-      const imagesHtml = ev.images.map((img, idx) => {
-        const regs = (img.regions || []).map(r => {
-          const l = (r.xRatio * 100).toFixed(2),
-                t = (r.yRatio * 100).toFixed(2),
-                w = (r.wRatio * 100).toFixed(2),
-                h = (r.hRatio * 100).toFixed(2);
-          if (r.coupon) {
-            // 쿠폰 클릭 트래킹
-            return `<button
-              data-track-click="coupon"
-              style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;border:none;cursor:pointer;opacity:0"
-              onclick="downloadCoupon('${r.coupon}')"></button>`;
-          } else {
-            const href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
-            // URL 클릭 트래킹
-            return `<a
-              data-track-click="url"
-              style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
-              href="${href}" target="_blank" rel="noreferrer"></a>`;
-          }
-        }).join('');
-        return `
-          <div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
-            <img src="${img.src}"
-                 style="max-width:100%;height:auto;display:block;margin:0 auto;"
-                 data-img-index="${idx}" />
-            ${regs}
-          </div>`;
-      }).join('\n');
+    // 1-2) 상품 그리드: UL 리스트와 탭 버튼을 함께 가져오기
+    const uls     = Array.from(document.querySelectorAll(`ul.main_Grid_${pageId}`));
+    const buttons = Array.from(document.querySelectorAll(`.tabs_${pageId} button`));
 
-      // 1-1) 이미지 영역 치환 (전체 body가 아니라, placeholder 요소만)
-      const imagesContainer = document.getElementById('evt-images');
-      if (imagesContainer) {
-        imagesContainer.innerHTML = imagesHtml;
+    // (A) 상품 로드 함수: 기존 fetch → renderProducts 로직 통째로 옮김
+    function loadProducts(ul) {
+      const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
+      const limit    = ul.dataset.count || 300;
+      const category = ul.dataset.cate;
+      const ulDirect = ul.dataset.directNos || directNos;
+
+      if (ulDirect) {
+        // 직접 등록 모드
+        const ids = ulDirect.split(',').map(s=>s.trim()).filter(Boolean);
+        Promise.all(ids.map(no =>
+          fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
+            .then(r => r.json())
+            .then(p => ({
+              product_no:          p.product_no,
+              product_name:        p.product_name,
+              summary_description: p.summary_description || '',
+              price:               p.price,
+              list_image:          p.list_image,
+              sale_price:          p.sale_price    || null,
+              benefit_price:       p.benefit_price || null,
+              benefit_percentage:  p.benefit_percentage || null,
+            }))
+        ))
+        .then(products => renderProducts(ul, products, cols))
+        .catch(err => console.error('DIRECT GRID ERROR', err));
+
       } else {
-        console.warn('⚠️ widget-images-container가 없습니다.');
+        // 카테고리 모드
+        const prodPromise = fetch(
+          `${API_BASE}/api/${mallId}/categories/${category}/products`
+          + `?limit=${limit}${couponQSAppend}`
+        ).then(r => r.json());
+
+        const clickPromise = fetch(
+          `${API_BASE}/api/${mallId}/analytics/${pageId}/product-performance`
+          + `?category_no=${category}`
+        ).then(r => r.json());
+
+        Promise.all([prodPromise, clickPromise])
+          .then(([rawProducts, clicksData]) => {
+            const clickMap = clicksData.reduce((m, c) => {
+              m[c.productNo] = c.clicks;
+              return m;
+            }, {});
+
+            const products = rawProducts.map(p => ({
+              product_no:         p.product_no,
+              product_name:       p.product_name,
+              summary_description: p.summary_description || '',
+              price:              p.price,
+              list_image:         p.list_image,
+              sale_price:         p.sale_price    || null,
+              benefit_price:      p.benefit_price || null,
+              benefit_percentage: p.benefit_percentage || null,
+              clicks:             clickMap[p.product_no] || 0,
+            }));
+
+            renderProducts(ul, products, cols);
+          })
+          .catch(err => console.error('PRODUCT GRID ERROR', err));
       }
-      // 1-2) 상품 그리드
-      document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
-        const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
-        const limit    = ul.dataset.count || 300;
-        const category = ul.dataset.cate;
-        const ulDirect = ul.dataset.directNos || directNos;
-
-        if (ulDirect) {
-          const ids = ulDirect.split(',').map(s=>s.trim()).filter(Boolean);
-          Promise.all(ids.map(no =>
-            fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
-              .then(r => r.json())
-              .then(p => ({
-                product_no:          p.product_no,
-                product_name:        p.product_name,
-                summary_description: p.summary_description || '',
-                price:               p.price,
-                list_image:          p.list_image,
-                sale_price:          p.sale_price    || null,
-                benefit_price:       p.benefit_price || null,
-                benefit_percentage:  p.benefit_percentage || null,
-              }))
-          ))
-          .then(products => renderProducts(ul, products, cols))
-          .catch(err => console.error('DIRECT GRID ERROR', err));
-        } else {
-          // 1) 카테고리 상품 리스트
-          const prodPromise = fetch(
-            `${API_BASE}/api/${mallId}/categories/${category}/products`
-            + `?limit=${limit}${couponQSAppend}`
-          ).then(r => r.json());
-      
-          // 2) 같은 카테고리 상품별 클릭수
-          const clickPromise = fetch(
-            `${API_BASE}/api/${mallId}/analytics/${pageId}/product-performance`
-            + `?category_no=${category}`
-          ).then(r => r.json());
-      
-          // 둘 다 받은 뒤에…
-          Promise.all([prodPromise, clickPromise])
-            .then(([rawProducts, clicksData]) => {
-              // 클릭수를 매핑
-              const clickMap = clicksData.reduce((m, c) => {
-                m[c.productNo] = c.clicks;
-                return m;
-              }, {});
-      
-              // renderProducts 가 기대하는 형태로 맞추기
-              const products = rawProducts.map(p => ({
-                product_no:         p.product_no,
-                product_name:       p.product_name,
-                summary_description: p.summary_description || '',
-                price:              p.price,
-                list_image:         p.list_image,
-                sale_price:         p.sale_price    || null,
-                benefit_price:      p.benefit_price || null,
-                benefit_percentage: p.benefit_percentage || null,
-                clicks:             clickMap[p.product_no] || 0    // 여기!
-              }));
-      
-              renderProducts(ul, products, cols);
-            })
-            .catch(err => console.error('PRODUCT GRID ERROR', err));
-        }
-      });
-    })
-    .catch(err => console.error('EVENT LOAD ERROR', err));
-
-  // ─── 제품 목록 렌더링 헬퍼 ───────────────────────────────────────
-  function renderProducts(ul, products, cols) {
-    ul.style.display = 'grid';
-    ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
-    ul.style.gap = '20px';
-    ul.style.maxWidth = '800px';
-    ul.style.margin = '0 auto';
-
-    function formatKRW(val) {
-      if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
-      if (typeof val === 'string') {
-        const t = val.trim();
-        if (t.endsWith('원')) return t;
-        const num = parseFloat(t.replace(/,/g,'')) || 0;
-        return `${num.toLocaleString('ko-KR')}원`;
-      }
-      return '-';
     }
 
-    const items = products.map(p => {
-      const origPrice   = p.price;
-      const priceText   = formatKRW(origPrice);
-      const saleText    = p.sale_price    != null ? formatKRW(p.sale_price)    : null;
-      const couponText  = p.benefit_price != null ? formatKRW(p.benefit_price) : null;
-      const salePercent = saleText
-        ? Math.round((origPrice - p.sale_price) / origPrice * 100)
-        : null;
+    // 1) 첫 번째 탭만 즉시 로드
+    if (uls[0]) {
+      loadProducts(uls[0]);
+      uls[0].dataset.loaded = '1';
+    }
 
-      return `
-        <li style="list-style:none;">
-          <a href="/product/detail.html?product_no=${p.product_no}" class="prd_link" style="text-decoration:none;color:inherit;" 
-           data-track-click="product" data-product-no="${p.product_no}"  target="_blank" rel="noopener noreferrer" >
-            <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
-            <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;">${p.summary_description||''}</div>
-            <div class="prd_name" style="font-weight:500;padding-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;">
-              ${p.product_name}
-            </div>
-          </a>
-          <div class="prd_price"${couponText ? ' style="display:none;"' : ''} style="font-size:16px;font-weight:500;">
-            ${saleText
-              ? `<span class="sale_price">${saleText}</span>
-                 ${salePercent>0?`<div class="sale_wrapper" style="display:inline-block;margin-right:4px;">
-                                    <span class="sale_percent" style="color:#ff4d4f;">
-                                      ${salePercent}%</span>
-                                  </div>`:''}`
-              : `<span>${priceText}</span>`}
-          </div>
-          ${couponText?`
-            <div class="coupon_wrapper" style="margin-top:4px;">
-              <span class="prd_coupon_percent" style="color:#ff4d4f;font-weight:500;margin-right:4px;">
-                ${p.benefit_percentage}%</span>
-              <span class="prd_coupon" style="font-weight:500;">
-                ${couponText}</span>
-            </div>`:''}
-
-            
-        </li>`;
-    }).join('');
-
-    ul.innerHTML = items;
-  }
+    // 2) 나머지 탭은 버튼 클릭 시 한 번만 로드
+    buttons.forEach((btn, idx) => {
+      btn.addEventListener('click', () => {
+        const ul = uls[idx];
+        if (ul && ul.dataset.loaded !== '1') {
+          loadProducts(ul);
+          ul.dataset.loaded = '1';
+        }
+        // 기존 탭 전환 함수도 호출
+        window.showTab(ul.id, btn);
+      });
+    });
+  })
+  .catch(err => console.error('EVENT LOAD ERROR', err));
 
   // ─── 2) CSS 동적 주입 ─────────────────────────────────────────
   const style = document.createElement('style');
