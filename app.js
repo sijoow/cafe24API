@@ -639,9 +639,9 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
               limit:     1
             }
           );
-          couponName = singleRes.coupons?.[0]?.coupon_name || '이벤트 기간민료 사용불가 상품';
+          couponName = singleRes.coupons?.[0]?.coupon_name || '사용불가 쿠폰';
         } catch {
-          couponName = '이벤트 기간민료 사용불가 상품';
+          couponName = '(제목없음)';
         }
       }
 
@@ -1242,7 +1242,7 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     const performance = clicks
       .map(c => ({
         productNo:   c._id,
-        productName: detailMap[c._id] || '(이름없음)',
+        productName: detailMap[c._id] || '이름없음',
         clicks:      c.clicks,
         // clickRate 제거하셨으니 생략
       }))
