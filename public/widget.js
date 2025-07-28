@@ -397,7 +397,7 @@
   .main_Grid_${pageId} .sale_price,
   .main_Grid_${pageId} .prd_coupon { font-weight:500; }
   @media (max-width: 400px) {
-    .tabs_${pageId}{ width:95%; margin:0 auto; font-weight:bold; }
+    .tabs_${pageId}{ width:95%; margin:0 auto;margin-top:20px; font-weight:bold; }
     .tabs_${pageId} button{ font-size:14px; }
     .main_Grid_${pageId}{ width:95%; margin:0 auto; row-gap:30px!important; }
     .main_Grid_${pageId} .prd_desc{ font-size:12px; padding-bottom:5px; }
