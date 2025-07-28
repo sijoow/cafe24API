@@ -352,23 +352,29 @@
     text-overflow: ellipsis;
   }
   .product_list_widget{padding:20px 0;}
-  .tabs_${pageId} {
+    .tabs_${pageId} {
     display: grid;
     gap: 8px;
     max-width: 800px;
     margin: 16px auto;
     grid-template-columns: repeat(${tabCount},1fr);
   }
+
   .tabs_${pageId} button {
-    padding:8px; font-size:16px;
-    border:none; background:#f5f5f5;
-    color:#333; cursor:pointer;
-    border-radius:4px;
-    display:-webkit-box;
-    -webkit-line-clamp:2;
-    -webkit-box-orient:vertical;
-    overflow:hidden; text-overflow:ellipsis;
+    padding: 8px;
+    font-size: 16px;
+    border: none;
+    background: #f5f5f5;
+    color: #333;
+    cursor: pointer;
+    border-radius: 4px;
+
+    /* single‑line ellipsis */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
+
   .tabs_${pageId} button.active {
     background-color:${activeColor}; color:#fff;
   }
