@@ -257,7 +257,7 @@
   function renderProducts(ul, products, cols) {
     ul.style.display = 'grid';
     ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
-    ul.style.gap = '20px';
+    ul.style.gap = '10px';
     ul.style.maxWidth = '800px';
     ul.style.margin = '0 auto';
 
@@ -343,7 +343,7 @@
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
   }
-  .main_Grid_${pageId}{margin-top:10px}
+  .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px}
   .main_Grid_${pageId} .prd_name {
     display: -webkit-box;
     -webkit-line-clamp: 2;
