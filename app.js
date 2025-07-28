@@ -593,8 +593,6 @@ app.get('/api/:mallId/coupons', async (req, res) => {
 
 
 // app.js
-
-// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 이름 보강) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId } = req.params;
   const { coupon_no, start_date, end_date } = req.query;
@@ -607,7 +605,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const now       = new Date();
 
   try {
-    // 1) bulk 조회: 모든 상태 상관없이 이름만 뽑아오기
+    // 1) bulk 조회: 이름 가능한 것들만 한 번에
     const bulkRes = await apiRequest(
       mallId, 'GET',
       `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
@@ -627,28 +625,25 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     const results = [];
 
     for (const no of couponNos) {
-      // 2) bulkRes에 이름이 없으면, 개별 조회로 보강
+      // 2) 리스트에 이름이 빠진 쿠폰은 '단일 조회' 엔드포인트로 보강!
       let couponName = nameMap[no];
       if (!couponName) {
         try {
+          // v2 singular coupon endpoint
           const singleRes = await apiRequest(
             mallId, 'GET',
-            `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
+            `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}`,
             {},
-            {
-              shop_no,
-              coupon_no: no,
-              fields:    'coupon_no,coupon_name',
-              limit:     1
-            }
+            { shop_no }
           );
-          couponName = singleRes.coupons?.[0]?.coupon_name || '(이름없음)';
+          // response: { coupon: { coupon_no, coupon_name, ... } }
+          couponName = singleRes.coupon?.coupon_name || '(이름없음)';
         } catch {
           couponName = '(이름없음)';
         }
       }
 
-      // 3) issue 이력 페이지네이션 돌며 통계 집계
+      // 3) 이후 issue 이력 집계 로직 그대로…
       let issued = 0, used = 0, unused = 0, autoDel = 0;
       const pageSize = 500;
       for (let offset = 0; ; offset += pageSize) {
@@ -665,13 +660,12 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
           }
         );
         const issues = issuesRes.issues || [];
-        if (issues.length === 0) break;
+        if (!issues.length) break;
 
         for (const item of issues) {
           issued++;
-          if (item.used_coupon === 'T') {
-            used++;
-          } else {
+          if (item.used_coupon === 'T') used++;
+          else {
             const exp = item.expiration_date ? new Date(item.expiration_date) : null;
             if (exp && exp < now) autoDel++;
             else unused++;
@@ -680,8 +674,8 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       }
 
       results.push({
-        couponNo:         no,            // ← variable 'no'을 couponNo에 명시적으로 할당
-        couponName,
+        couponNo:         no,
+        couponName,       // ← singular endpoint로 보강된 이름
         issuedCount:      issued,
         usedCount:        used,
         unusedCount:      unused,
@@ -698,8 +692,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
-
-
 
 
 
