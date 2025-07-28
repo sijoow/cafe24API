@@ -150,14 +150,20 @@
         console.warn('⚠️ evt-images가 없습니다.');
       }
 
-      // 1-2) 상품 그리드 패널별 로드
+      // 1-2) 상품 그리드 패널별 로드 + 스피너 표시
       document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
+        // 스피너 엘리먼트 생성·표시
+        const spinner = document.createElement('div');
+        spinner.className = 'grid-spinner';
+        ul.parentNode.insertBefore(spinner, ul);
+
         const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
         const limit    = ul.dataset.count || 300;
         const category = ul.dataset.cate;
         const ulDirect = ul.dataset.directNos || directNos;
 
-        // directNos 가 있으면 '직접등록' 모드
+        const hideSpinner = () => spinner.remove();
+
         if (ulDirect) {
           const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
           Promise.all(ids.map(no =>
@@ -175,25 +181,22 @@
               }))
           ))
           .then(products => renderProducts(ul, products, cols))
-          .catch(err => console.error('DIRECT GRID ERROR', err));
+          .catch(err => console.error('DIRECT GRID ERROR', err))
+          .finally(hideSpinner);
 
-        // category 가 정의되어 있을 때만 호출
         } else if (category) {
-          // ① 상품 리스트
           const prodPromise = fetch(
             `${API_BASE}/api/${mallId}/categories/${category}/products`
             + `?limit=${limit}${couponQSAppend}`
           ).then(r => r.json())
            .then(json => Array.isArray(json) ? json : (json.products || []));
 
-          // ② 클릭 통계
           const clickPromise = fetch(
             `${API_BASE}/api/${mallId}/analytics/${pageId}/product-performance`
             + `?category_no=${category}`
           ).then(r => r.json())
            .then(json => Array.isArray(json) ? json : (json.data || []));
 
-          // 둘 다 로딩 후 렌더
           Promise.all([prodPromise, clickPromise])
             .then(([rawProducts, clicksData]) => {
               const clickMap = clicksData.reduce((m, c) => {
@@ -213,11 +216,12 @@
               }));
               renderProducts(ul, products, cols);
             })
-            .catch(err => console.error('PRODUCT GRID ERROR', err));
+            .catch(err => console.error('PRODUCT GRID ERROR', err))
+            .finally(hideSpinner);
 
-        // 아무 키도 없으면 스킵
         } else {
           console.warn(`⚠️ ul.main_Grid_${pageId}에 data-cate/data-direct-nos가 없습니다. 호출을 건너뜁니다.`);
+          hideSpinner();
         }
       });
     })
@@ -303,8 +307,23 @@
   // ─── 2) CSS 동적 주입 ─────────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
+  /* 그리드 스피너 */
+  .grid-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid ${activeColor};
+    border-radius: 50%;
+    animation: spin_${pageId} 1s linear infinite;
+    margin: 20px auto;
+  }
+  @keyframes spin_${pageId} {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
   .main_Grid_${pageId}{margin-top:10px}
-  .main_Grid_${pageId} .prd_name { /* 2줄 클램프 */
+  .main_Grid_${pageId} .prd_name {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
