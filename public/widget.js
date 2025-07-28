@@ -110,8 +110,111 @@
     track(payload);
   });
 
-  // ─── 캐시 객체 ─────────────────────────────────────────────────────
-  const productsCache = {};  // 키: direct_... 또는 cat_...
+  // ─── 캐시 & 재시도 헬퍼 ─────────────────────────────────────────
+  const productsCache = {}; // 캐시 객체
+
+  function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
+    return fetch(url, opts).then(res => {
+      if (res.status === 429 && retries > 0) {
+        return new Promise(r => setTimeout(r, backoff))
+          .then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
+      }
+      if (!res.ok) throw res;
+      return res;
+    });
+  }
+
+  function loadPanel(ul) {
+    // 스피너 표시
+    const spinner = document.createElement('div');
+    spinner.className = 'grid-spinner';
+    ul.parentNode.insertBefore(spinner, ul);
+
+    const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
+    const limit    = ul.dataset.count || 300;
+    const category = ul.dataset.cate;
+    const ulDirect = ul.dataset.directNos || directNos;
+    const cacheKey = ulDirect ? `direct_${ulDirect}` : (category ? `cat_${category}` : null);
+
+    // 캐시 사용
+    if (cacheKey && productsCache[cacheKey]) {
+      renderProducts(ul, productsCache[cacheKey], cols);
+      spinner.remove();
+      return;
+    }
+
+    // 에러 처리 및 재시도 버튼
+    const showError = err => {
+      console.error(err);
+      spinner.remove();
+      const errDiv = document.createElement('div');
+      errDiv.style.textAlign = 'center';
+      errDiv.innerHTML = `
+        <p style="color:#f00;">상품 로드에 실패했습니다.</p>
+        <button style="padding:6px 12px;cursor:pointer;">다시 시도</button>
+      `;
+      const btn = errDiv.querySelector('button');
+      btn.onclick = () => {
+        errDiv.remove();
+        loadPanel(ul);
+      };
+      ul.parentNode.insertBefore(errDiv, ul);
+    };
+
+    if (ulDirect) {
+      const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
+      Promise.all(ids.map(no =>
+        fetchWithRetry(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
+          .then(r => r.json())
+      ))
+      .then(raw => raw.map(p => ({
+        product_no:          p.product_no,
+        product_name:        p.product_name,
+        summary_description: p.summary_description||'',
+        price:               p.price,
+        list_image:          p.list_image,
+        sale_price:          p.sale_price||null,
+        benefit_price:       p.benefit_price||null,
+        benefit_percentage:  p.benefit_percentage||null
+      })))
+      .then(products => {
+        if (cacheKey) productsCache[cacheKey] = products;
+        renderProducts(ul, products, cols);
+        spinner.remove();
+      })
+      .catch(showError);
+
+    } else if (category) {
+      const prodUrl = `${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`;
+      const perfUrl = `${API_BASE}/api/${mallId}/analytics/${pageId}/product-performance?category_no=${category}`;
+
+      Promise.all([
+        fetchWithRetry(prodUrl).then(r=>r.json()).then(json=> Array.isArray(json)?json:(json.products||[])),
+        fetchWithRetry(perfUrl).then(r=>r.json()).then(json=> Array.isArray(json)?json:(json.data||[]))
+      ])
+      .then(([rawProducts, clicksData]) => {
+        const clickMap = clicksData.reduce((m,c)=>{ m[c.productNo]=c.clicks; return m }, {});
+        const products = rawProducts.map(p=>({
+          product_no:         p.product_no,
+          product_name:       p.product_name,
+          summary_description: p.summary_description||'',
+          price:              p.price,
+          list_image:         p.list_image,
+          sale_price:         p.sale_price||null,
+          benefit_price:      p.benefit_price||null,
+          benefit_percentage: p.benefit_percentage||null,
+          clicks:             clickMap[p.product_no]||0
+        }));
+        if (cacheKey) productsCache[cacheKey] = products;
+        renderProducts(ul, products, cols);
+        spinner.remove();
+      })
+      .catch(showError);
+
+    } else {
+      spinner.remove();
+    }
+  }
 
   // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────
   fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
@@ -153,91 +256,9 @@
         console.warn('⚠️ evt-images가 없습니다.');
       }
 
-      // 1-2) 상품 그리드 패널별 로드 + 스피너 표시 + 캐시
-      document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
-        const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
-        const limit    = ul.dataset.count || 300;
-        const category = ul.dataset.cate;
-        const ulDirect = ul.dataset.directNos || directNos;
-
-        // 스피너 표시
-        const spinner = document.createElement('div');
-        spinner.className = 'grid-spinner';
-        ul.parentNode.insertBefore(spinner, ul);
-
-        const hideSpinner = () => spinner.remove();
-
-        // 캐시 키 생성
-        let cacheKey = null;
-        if (ulDirect) cacheKey = `direct_${ulDirect}`;
-        else if (category) cacheKey = `cat_${category}`;
-
-        // 캐시 있으면 바로 렌더링
-        if (cacheKey && productsCache[cacheKey]) {
-          renderProducts(ul, productsCache[cacheKey], cols);
-          hideSpinner();
-          return;
-        }
-
-        if (ulDirect) {
-          const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
-          Promise.all(ids.map(no =>
-            fetch(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`)
-              .then(r => r.json())
-          ))
-          .then(raws => raws.map(p => ({
-            product_no: p.product_no,
-            product_name: p.product_name,
-            summary_description: p.summary_description||'',
-            price: p.price,
-            list_image: p.list_image,
-            sale_price: p.sale_price||null,
-            benefit_price: p.benefit_price||null,
-            benefit_percentage: p.benefit_percentage||null
-          })))
-          .then(products => {
-            if (cacheKey) productsCache[cacheKey] = products;
-            renderProducts(ul, products, cols);
-          })
-          .catch(err => console.error('DIRECT GRID ERROR', err))
-          .finally(hideSpinner);
-
-        } else if (category) {
-          const prodPromise = fetch(
-            `${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`
-          ).then(r => r.json())
-           .then(json => Array.isArray(json) ? json : (json.products || []));
-
-          const clickPromise = fetch(
-            `${API_BASE}/api/${mallId}/analytics/${pageId}/product-performance?category_no=${category}`
-          ).then(r => r.json())
-           .then(json => Array.isArray(json) ? json : (json.data || []));
-
-          Promise.all([prodPromise, clickPromise])
-            .then(([rawProducts, clicksData]) => {
-              const clickMap = clicksData.reduce((m, c) => { m[c.productNo] = c.clicks; return m; }, {});
-              const products = rawProducts.map(p => ({
-                product_no: p.product_no,
-                product_name: p.product_name,
-                summary_description: p.summary_description||'',
-                price: p.price,
-                list_image: p.list_image,
-                sale_price: p.sale_price||null,
-                benefit_price: p.benefit_price||null,
-                benefit_percentage: p.benefit_percentage||null,
-                clicks: clickMap[p.product_no]||0
-              }));
-              if (cacheKey) productsCache[cacheKey] = products;
-              renderProducts(ul, products, cols);
-            })
-            .catch(err => console.error('PRODUCT GRID ERROR', err))
-            .finally(hideSpinner);
-
-        } else {
-          console.warn(`⚠️ ul.main_Grid_${pageId}에 data-cate/data-direct-nos가 없습니다. 호출을 건너뜁니다.`);
-          hideSpinner();
-        }
-      });
+      // 1-2) 그리드 패널별 로드
+      document.querySelectorAll(`ul.main_Grid_${pageId}`)
+        .forEach(ul => loadPanel(ul));
     })
     .catch(err => console.error('EVENT LOAD ERROR', err));
 
@@ -249,7 +270,7 @@
     ul.style.maxWidth = '800px';
     ul.style.margin = '0 auto';
 
-    const formatKRW = val => {
+    function formatKRW(val) {
       if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
       if (typeof val === 'string') {
         const t = val.trim();
@@ -258,9 +279,9 @@
         return `${num.toLocaleString('ko-KR')}원`;
       }
       return '-';
-    };
+    }
 
-    ul.innerHTML = products.map(p => {
+    const items = products.map(p => {
       const origPrice   = p.price;
       const priceText   = formatKRW(origPrice);
       const saleText    = p.sale_price    != null ? formatKRW(p.sale_price)    : null;
@@ -297,7 +318,8 @@
               ? `<span class="sale_price">${saleText}</span>
                  ${salePercent>0
                     ? `<div class="sale_wrapper" style="display:inline-block;margin-right:4px;">
-                         <span class="sale_percent" style="color:#ff4d4f;">${salePercent}%</span>
+                         <span class="sale_percent" style="color:#ff4d4f;">
+                           ${salePercent}%</span>
                        </div>`
                     : ``}`
               : `<span>${priceText}</span>`}
@@ -313,12 +335,14 @@
             : ``}
         </li>`;
     }).join('');
+
+    ul.innerHTML = items;
   }
 
   // ─── 2) CSS 동적 주입 ─────────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
-  /* 그리드 로딩 스피너 */
+  /* 그리드 스피너 */
   .grid-spinner {
     width: 40px;
     height: 40px;
@@ -332,8 +356,7 @@
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
   }
-
-  .main_Grid_${pageId}{margin-top:10px;}
+  .main_Grid_${pageId}{margin-top:10px}
   .main_Grid_${pageId} .prd_name {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -352,10 +375,12 @@
   .tabs_${pageId} button {
     padding:8px; font-size:16px;
     border:none; background:#f5f5f5;
-    color:#333; cursor:pointer; border-radius:4px;
-    display:-webkit-box; -webkit-line-clamp:2;
-    -webkit-box-orient:vertical; overflow:hidden;
-    text-overflow:ellipsis;
+    color:#333; cursor:pointer;
+    border-radius:4px;
+    display:-webkit-box;
+    -webkit-line-clamp:2;
+    -webkit-box-orient:vertical;
+    overflow:hidden; text-overflow:ellipsis;
   }
   .tabs_${pageId} button.active {
     background-color:${activeColor}; color:#fff;
@@ -401,9 +426,9 @@
   window.downloadCoupon = coupons => {
     const list = Array.isArray(coupons) ? coupons : [coupons];
     list.forEach(cpn => {
+      const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${cpn}`;
       window.open(
-        `/exec/front/newcoupon/IssueDownload?coupon_no=${cpn}` +
-        `&opener_url=${encodeURIComponent(location.href)}`,
+        url + `&opener_url=${encodeURIComponent(location.href)}`,
         '_blank'
       );
     });
