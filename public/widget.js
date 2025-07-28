@@ -307,19 +307,28 @@
   `;
   document.head.appendChild(style);
 
-  // ─── 탭 전환 & 쿠폰 다운로드 헬퍼 ─────────────────────────────────
   window.showTab = (id, btn) => {
-    document.querySelectorAll(`.tab-content_${pageId}`).forEach(el=>el.style.display='none');
-    document.querySelectorAll(`.tabs_${pageId} button`).forEach(b=>b.classList.remove('active'));
-    document.getElementById(id).style.display='block';
+    // 1) 모든 탭 내용 숨기기
+    document
+      .querySelectorAll(`.tab-content_${pageId}`)
+      .forEach(el => el.style.display = 'none');
+    
+    // 2) 모든 버튼 active 클래스 제거
+    document
+      .querySelectorAll(`.tabs_${pageId} button`)
+      .forEach(b => b.classList.remove('active'));
+  
+    // 3) 실제 패널 찾아서 표시
+    const panel = document.getElementById(id);
+    if (!panel) {
+      console.error(`⚠ 탭 패널[id="${id}"]를 찾을 수 없습니다.`);
+      return;
+    }
+    panel.style.display = 'block';
+  
+    // 4) 버튼에 active 추가
     btn.classList.add('active');
   };
-  window.downloadCoupon = coupons => {
-    const list = Array.isArray(coupons)?coupons:[coupons];
-    list.forEach(cpn=>{
-      const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${cpn}`;
-      window.open(url+`&opener_url=${encodeURIComponent(location.href)}`, '_blank');
-    });
-  };
+  
 
 })();
