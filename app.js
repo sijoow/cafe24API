@@ -590,9 +590,9 @@ app.get('/api/:mallId/coupons', async (req, res) => {
     res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
   }
 });
+
 // app.js
 
-// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 이름 보강) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId } = req.params;
   const { coupon_no, start_date, end_date } = req.query;
@@ -605,7 +605,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const now       = new Date();
 
   try {
-    // 1) bulk 조회: 이름 가능한 것들만 한 번에
+    // bulk 조회로 가능한 이름은 미리 가져오기
     const bulkRes = await apiRequest(
       mallId, 'GET',
       `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
@@ -625,25 +625,24 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     const results = [];
 
     for (const no of couponNos) {
-      // 2) 리스트에 이름이 빠진 쿠폰은 '단일 조회' 엔드포인트로 보강!
+      // 1) bulkRes에 빠진 이름은 singular endpoint로 보강
       let couponName = nameMap[no];
       if (!couponName) {
         try {
-          // v2 singular coupon endpoint
           const singleRes = await apiRequest(
             mallId, 'GET',
             `https://${mallId}.cafe24api.com/api/v2/admin/coupons/${no}`,
             {},
             { shop_no }
           );
-          // response: { coupon: { coupon_no, coupon_name, ... } }
+          // 수정된 부분: singleRes.coupon 에서 꺼냅니다
           couponName = singleRes.coupon?.coupon_name || '(이름없음)';
         } catch {
           couponName = '(이름없음)';
         }
       }
 
-      // 3) 이후 issue 이력 집계 로직 그대로…
+      // 2) issue 이력 통계 집계
       let issued = 0, used = 0, unused = 0, autoDel = 0;
       const pageSize = 500;
       for (let offset = 0; ; offset += pageSize) {
@@ -675,7 +674,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
       results.push({
         couponNo:         no,
-        couponName,       // ← singular endpoint로 보강된 이름
+        couponName,       // 이제 정상적으로 채워집니다
         issuedCount:      issued,
         usedCount:        used,
         unusedCount:      unused,
@@ -692,6 +691,8 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
+
+
 
 
 
