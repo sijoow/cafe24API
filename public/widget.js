@@ -362,7 +362,7 @@
 
   .tabs_${pageId} button {
     padding: 8px;
-    font-size: 16px;
+    font-size: 14px;
     border: none;
     background: #f5f5f5;
     color: #333;
