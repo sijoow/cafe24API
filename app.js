@@ -636,9 +636,9 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
             { shop_no }
           );
           // 수정된 부분: singleRes.coupon 에서 꺼냅니다
-          couponName = singleRes.coupon?.coupon_name || '(이름없음)';
+          couponName = singleRes.coupon?.coupon_name || '(이름없음1)';
         } catch {
-          couponName = '(이름없음)';
+          couponName = '(이름없음1)';
         }
       }
 
