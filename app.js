@@ -591,6 +591,9 @@ app.get('/api/:mallId/coupons', async (req, res) => {
   }
 });
 
+
+// app.js
+
 // ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 이름 보강) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId } = req.params;
@@ -639,9 +642,9 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
               limit:     1
             }
           );
-          couponName = singleRes.coupons?.[0]?.coupon_name || '(제목없음)';
+          couponName = singleRes.coupons?.[0]?.coupon_name || '(이름없음)';
         } catch {
-          couponName = '(제목없음)';
+          couponName = '(이름없음)';
         }
       }
 
@@ -677,7 +680,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       }
 
       results.push({
-        couponNo, 
+        couponNo:         no,            // ← variable 'no'을 couponNo에 명시적으로 할당
         couponName,
         issuedCount:      issued,
         usedCount:        used,
@@ -695,6 +698,8 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
+
+
 
 
 
