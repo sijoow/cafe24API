@@ -592,7 +592,36 @@ app.get('/api/:mallId/coupons', async (req, res) => {
 });
 // app.js
 
-// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 절대 이름 확보) ─────────────────────────
+// ─── 쿠폰 전체 조회 (filter & fields 지원) ─────────────────────────
+app.get('/api/:mallId/coupons', async (req, res) => {
+  const { mallId } = req.params;
+  const {
+    coupon_no,
+    fields    = 'coupon_no,coupon_name,coupon_status',
+    limit     = 100,
+    offset    = 0
+  } = req.query;
+
+  const params = {
+    shop_no: 1,
+    limit:   parseInt(limit,  10),
+    offset:  parseInt(offset, 10)
+  };
+  if (coupon_no) params.coupon_no = coupon_no;
+  if (fields)    params.fields    = fields;
+
+  try {
+    const url = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
+    const { coupons } = await apiRequest(mallId, 'GET', url, {}, params);
+    res.json({ coupons });
+  } catch (err) {
+    console.error('[COUPONS ERROR]', err);
+    res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
+  }
+});
+
+
+// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 이름·상태 보강) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId } = req.params;
   const { coupon_no, start_date, end_date } = req.query;
@@ -607,27 +636,33 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
 
   try {
     for (const no of couponNos) {
-      // 1) 무조건 singular 리스트 API로 쿠폰명 조회
-      let couponName = '(이름없음1)';
+      // ── 1) 쿠폰 마스터에서 반드시 이름·상태 조회
+      let couponName   = '(이름없음)';
+      let couponStatus = 'UNKNOWN';
       try {
-        const nameRes = await apiRequest(
+        // singular list 조회로 무조건 가져오기
+        const masterRes = await apiRequest(
           mallId, 'GET',
           `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
           {},
           {
             shop_no,
             coupon_no:     no,
-            coupon_status: 'ALL',              // 모든 상태 포함
-            fields:        'coupon_no,coupon_name',
+            coupon_status: 'ALL',
+            fields:        'coupon_no,coupon_name,coupon_status',
             limit:         1
           }
         );
-        couponName = nameRes.coupons?.[0]?.coupon_name || couponName;
+        const m = masterRes.coupons?.[0];
+        if (m) {
+          couponName   = m.coupon_name   || couponName;
+          couponStatus = m.coupon_status || couponStatus;
+        }
       } catch {
-        // fallback 그대로 '(이름없음)'
+        // fallback 그대로
       }
 
-      // 2) issue 이력 페이지네이션 돌며 발급/사용/미사용/자동삭제 집계
+      // ── 2) issue 이력 페이지네이션 돌며 통계 집계
       let issued = 0, used = 0, unused = 0, autoDel = 0;
       const pageSize = 500;
       for (let offset = 0; ; offset += pageSize) {
@@ -659,8 +694,9 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       }
 
       results.push({
-        couponNo:         no,
+        couponNo, 
         couponName,
+        couponStatus,
         issuedCount:      issued,
         usedCount:        used,
         unusedCount:      unused,
@@ -669,6 +705,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     }
 
     return res.json(results);
+
   } catch (err) {
     console.error('[COUPON-STATS ERROR]', err);
     return res.status(500).json({
@@ -677,6 +714,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
+
 
 
 
