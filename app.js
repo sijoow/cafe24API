@@ -592,10 +592,9 @@ app.get('/api/:mallId/coupons', async (req, res) => {
 });
 
 
-
 // app.js
 
-// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 모든 상태의 이름 확보) ─────────────────────────
+// ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 이름 보강) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const { mallId }          = req.params;
   const { coupon_no, start_date, end_date } = req.query;
@@ -609,7 +608,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
   const results   = [];
 
   try {
-    // 1) bulk 조회: 모든 상태 포함(ALL)하여 coupon_name 확보
+    // bulk 조회로 가능한 쿠폰명 미리 가져오기
     const bulkRes = await apiRequest(
       mallId, 'GET',
       `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
@@ -617,7 +616,7 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
       {
         shop_no,
         coupon_no:     couponNos.join(','),
-        coupon_status: 'ALL',             // ← 이 파라미터가 반드시 있어야 비활성 쿠폰도 내려옵니다
+        coupon_status: 'ALL',              // 모든 상태 포함
         fields:        'coupon_no,coupon_name',
         limit:         couponNos.length
       }
@@ -628,29 +627,29 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     }, {});
 
     for (const no of couponNos) {
-      // 2) bulkRes에 빠진 쿠폰명은 singular 조회로 보강
+      // 1) bulkRes에 없던 쿠폰명은 '리스트 조회'로 무조건 다시 가져오기
       let couponName = nameMap[no] || '(이름없음)';
       if (!nameMap[no]) {
         try {
-          const singleRes = await apiRequest(
+          const listRes = await apiRequest(
             mallId, 'GET',
             `https://${mallId}.cafe24api.com/api/v2/admin/coupons`,
             {},
             {
               shop_no,
               coupon_no:     no,
-              coupon_status: 'ALL',    // ← 여기도 ALL
+              coupon_status: 'ALL',
               fields:        'coupon_no,coupon_name',
               limit:         1
             }
           );
-          couponName = singleRes.coupons?.[0]?.coupon_name || couponName;
+          couponName = listRes.coupons?.[0]?.coupon_name || couponName;
         } catch {
-          // fallback 그대로 '(이름없음)'
+          // 그대로 '(이름없음)' 유지
         }
       }
 
-      // 3) issue 이력 페이지네이션 돌며 발급/사용/미사용/자동삭제 집계
+      // 2) issue 이력 집계
       let issued = 0, used = 0, unused = 0, autoDel = 0;
       const pageSize = 500;
       for (let offset = 0; ; offset += pageSize) {
@@ -699,8 +698,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
-
-
 
 
 // (11) 카테고리별 상품 조회 + 다중 쿠폰 로직
