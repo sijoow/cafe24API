@@ -273,6 +273,7 @@ app.post('/api/:mallId/events', async (req, res) => {
       gridSize: payload.gridSize || null,
       layoutType: payload.layoutType || 'none',
       classification: payload.classification || {},
+       designBlockId:   blockNo,
       createdAt: now,
       updatedAt: now,
     };
@@ -284,6 +285,23 @@ app.post('/api/:mallId/events', async (req, res) => {
     res.status(500).json({ error: '이벤트 생성에 실패했습니다.' });
   }
 });
+app.get('/api/:mallId/designblocks/:blockId', async (req, res) => {
+  const { mallId, blockId } = req.params;
+  try {
+    // apiRequest 헬퍼를 써서, 저장된 access token 으로 Admin API 호출
+    const data = await apiRequest(
+      mallId,
+      'GET',
+      `https://${mallId}.cafe24api.com/api/v2/admin/designblocks/${blockId}`
+    );
+    // data.designblock.block 에 HTML 스니펫이 들어있습니다.
+    res.json({ html: data.designblock.block });
+  } catch (err) {
+    console.error('[GET DESIGNBLOCK ERROR]', err);
+    res.status(500).json({ error: '디자인블럭 조회에 실패했습니다.' });
+  }
+});
+
 
 // ─── 목록 조회
 app.get('/api/:mallId/events', async (req, res) => {
