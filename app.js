@@ -248,11 +248,10 @@ app.get('/api/:mallId/ping', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-
 // ─── 생성
 app.post('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
-  const payload = req.body;
+  const payload    = req.body;
 
   // 필수: 제목
   if (!payload.title || typeof payload.title !== 'string') {
@@ -264,18 +263,32 @@ app.post('/api/:mallId/events', async (req, res) => {
   }
 
   try {
+    // ─── ① 디자인블럭 생성 (초기 block은 빈 문자열) ─────────────────
+    const designRes = await apiRequest(
+      mallId,
+      'POST',
+      `https://${mallId}.cafe24api.com/api/v2/admin/designblocks`,
+      {
+        shop_no: 1,
+        title:   payload.title.trim(),
+        block:   ''
+      }
+    );
+    const blockNo = designRes.designblock.block_no;
+
+    // ─── ② 이벤트 문서에 designBlockId 포함하여 MongoDB에 저장 ─────────
     const now = new Date();
     const doc = {
       mallId,
-      title: payload.title.trim(),
-      content: payload.content || '',            // content는 optional
-      images: payload.images,                    // regions 포함된 배열
-      gridSize: payload.gridSize || null,
-      layoutType: payload.layoutType || 'none',
+      title:          payload.title.trim(),
+      content:        payload.content || '',
+      images:         payload.images,
+      gridSize:       payload.gridSize    || null,
+      layoutType:     payload.layoutType  || 'none',
       classification: payload.classification || {},
-       designBlockId:   blockNo,
-      createdAt: now,
-      updatedAt: now,
+      designBlockId:  blockNo,            // ← 생성된 블럭 번호 저장
+      createdAt:      now,
+      updatedAt:      now,
     };
 
     const result = await db.collection('events').insertOne(doc);
@@ -285,10 +298,11 @@ app.post('/api/:mallId/events', async (req, res) => {
     res.status(500).json({ error: '이벤트 생성에 실패했습니다.' });
   }
 });
+
+// ─── 프록시: 디자인블럭 HTML 가져오기 ─────────────────────────────
 app.get('/api/:mallId/designblocks/:blockId', async (req, res) => {
   const { mallId, blockId } = req.params;
   try {
-    // apiRequest 헬퍼를 써서, 저장된 access token 으로 Admin API 호출
     const data = await apiRequest(
       mallId,
       'GET',
@@ -302,6 +316,51 @@ app.get('/api/:mallId/designblocks/:blockId', async (req, res) => {
   }
 });
 
+// ─── 생성
+app.post('/api/:mallId/events', async (req, res) => {
+  const { mallId } = req.params;
+  const payload    = req.body;
+
+  // 필수 유효성 검사 생략…
+
+  try {
+    // ─── ① 디자인블럭 생성 ───────────────────────────────────────
+    const designRes = await apiRequest(
+      mallId,
+      'POST',
+      `https://${mallId}.cafe24api.com/api/v2/admin/designblocks`,
+      {
+        shop_no: 1,
+        title:   payload.title.trim(),
+        block:   ''   // 초기 HTML은 빈 문자열
+      }
+    );
+    // 반드시 이 시점에 blockNo를 정의합니다!
+    const blockNo = designRes.designblock.block_no;
+
+    // ─── ② MongoDB에 저장할 이벤트 문서에 designBlockId 포함 ──────
+    const now = new Date();
+    const doc = {
+      mallId,
+      title:          payload.title.trim(),
+      content:        payload.content || '',
+      images:         payload.images,
+      gridSize:       payload.gridSize    || null,
+      layoutType:     payload.layoutType  || 'none',
+      classification: payload.classification || {},
+      designBlockId:  blockNo,           // ← 여기!
+      createdAt:      now,
+      updatedAt:      now,
+    };
+
+    const result = await db.collection('events').insertOne(doc);
+    res.json({ _id: result.insertedId, ...doc });
+
+  } catch (err) {
+    console.error('[CREATE EVENT ERROR]', err);
+    res.status(500).json({ error: '이벤트 생성에 실패했습니다.' });
+  }
+});
 
 // ─── 목록 조회
 app.get('/api/:mallId/events', async (req, res) => {
