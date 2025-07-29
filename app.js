@@ -389,7 +389,6 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
   }
 });
 
-
 // ─── 삭제 (cascade delete + 이미지 삭제) ──────────────────────────────
 const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
@@ -400,34 +399,44 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
   }
 
   try {
+    // 1. 이벤트 문서 조회
     const eventDoc = await db.collection('events').findOne({ _id: new ObjectId(id), mallId });
     if (!eventDoc) return res.status(404).json({ error: '이벤트 없음' });
 
+    // 2. R2 이미지 Key 추출 함수
     const extractR2Key = (urlStr) => {
       try {
         const url = new URL(urlStr);
         const key = url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname;
-        return decodeURIComponent(key);
-      } catch {
+        return decodeURIComponent(key);  // '/uploads/yogibo/xxx.webp' → 'uploads/yogibo/xxx.webp'
+      } catch (err) {
+        console.warn('[URL PARSE ERROR]', urlStr, err.message);
         return null;
       }
     };
 
+    // 3. 이미지 Key 목록 추출
     const imageKeys = (eventDoc.images || [])
-      .map(img => extractR2Key(img.src || img.url))
+      .map(img => extractR2Key(img.src || img.url))  // ✅ img.src 기준
       .filter(Boolean);
 
-    await Promise.all(
-      imageKeys.map(key =>
-        s3Client.send(new DeleteObjectCommand({
-          Bucket: R2_BUCKET_NAME,
-          Key: key,
-        })).catch(err => {
-          console.warn(`[R2 DELETE ERROR] ${key}`, err.message);
-        })
-      )
-    );
+    console.log('🧹 삭제 대상 이미지 Key:', imageKeys);  // 로그 확인용
 
+    // 4. R2에서 이미지 삭제
+    if (imageKeys.length > 0) {
+      await Promise.all(
+        imageKeys.map(key =>
+          s3Client.send(new DeleteObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: key,
+          })).catch(err => {
+            console.warn(`[R2 DELETE ERROR] ${key}:`, err.message);
+          })
+        )
+      );
+    }
+
+    // 5. 이벤트 문서 삭제
     await db.collection('events').deleteOne({ _id: new ObjectId(id), mallId });
 
     res.json({ success: true });
@@ -437,8 +446,6 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
     res.status(500).json({ error: '삭제 중 오류 발생' });
   }
 });
-
-
 
 // (8) 트래킹 저장중
 app.post('/api/:mallId/track', async (req, res) => {
