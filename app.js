@@ -14,7 +14,9 @@ const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const tz = require('dayjs/plugin/timezone');
 const { MongoClient, ObjectId } = require('mongodb');
+const sharp = require('sharp'); 
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+
 
 dayjs.extend(utc);
 dayjs.extend(tz);
@@ -59,7 +61,17 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename:    (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
 });
-const upload = multer({ storage });
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(file.mimetype)) {
+      return cb(new Error('jpg, png, gif, webp만 업로드 가능합니다.'));
+    }
+    cb(null, true);
+  }
+});
 
 // ─── R2 (AWS S3 호환) 클라이언트 ─────────────────────────────────
 const s3Client = new S3Client({
@@ -94,36 +106,55 @@ app.get('/install/:mallId', (req, res) => {
 
 
 // ─── 이미지 업로드 (Multer + R2/S3) ─────────────────────────────────
+const crypto = require('crypto');
+
+// POST /api/:mallId/uploads/image
 app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
   try {
-    // 업로드된 파일 정보
     const { mallId } = req.params;
-    const { filename, path: localPath, mimetype } = req.file;
+    const { path: localPath, originalname, mimetype } = req.file;
 
-    // S3(R2)에 저장할 키(파일명) 결정
-    const key = `uploads/${mallId}/${filename}`;
+    let buffer;
+    let ext;
+    let contentType;
 
-    // S3에 업로드
+    if (mimetype === 'image/gif') {
+      // ⛔ sharp로 변환하지 않고 원본 그대로 사용
+      buffer = fs.readFileSync(localPath);
+      ext = '.gif';
+      contentType = 'image/gif';
+    } else {
+      // ✅ WebP 변환
+      buffer = await sharp(localPath)
+        .resize({ width: 1600, withoutEnlargement: true })
+        .toFormat('webp', { quality: 80 })
+        .toBuffer();
+      ext = '.webp';
+      contentType = 'image/webp';
+    }
+
+    const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+    const key = `uploads/${mallId}/${hash}${ext}`;
+
     await s3Client.send(new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
-      Key:    key,
-      Body:   fs.createReadStream(localPath),
-      ContentType: mimetype,
-      ACL:    'public-read'
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+      ACL: 'public-read',
     }));
 
-    // 업로드한 후 로컬 임시파일은 지워도 좋습니다.
-    fs.unlink(localPath, () => {});
+    fs.unlink(localPath, () => {}); // 임시 파일 삭제
 
-    // 퍼블릭 URL 조립
     const url = `${R2_PUBLIC_BASE}/${key}`;
-
     res.json({ url });
+
   } catch (err) {
     console.error('[IMAGE UPLOAD ERROR]', err);
     res.status(500).json({ error: '이미지 업로드 실패' });
   }
 });
+
 
 // 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → onimon.shop 으로 리다이렉트 연결되게 설정ㅎ
 app.get('/auth/callback', async (req, res) => {
@@ -357,27 +388,55 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
     res.status(500).json({ error: '이벤트 수정에 실패했습니다.' });
   }
 });
-// ─── 삭제 (cascade delete) //──────────────────────────────
+// ─── 삭제 (cascade delete + 이미지 삭제) ──────────────────────────────
 app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
   }
+
   const eventId = new ObjectId(id);
   const visitsColl = `visits_${mallId}`;
   const clicksColl = `clicks_${mallId}`;
 
   try {
-    // 1) 이벤트 문서 삭제
-    const { deletedCount } = await db.collection('events').deleteOne({
-      _id: eventId,
-      mallId
-    });
-    if (!deletedCount) {
+    // 0) 삭제 전 이미지 경로 확인용 이벤트 문서 조회
+    const eventDoc = await db.collection('events').findOne({ _id: eventId, mallId });
+    if (!eventDoc) {
       return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
     }
 
-    // 2) 연관된 트래킹 로그들도 삭제
+    // 1) 이미지 삭제 (R2)
+    const images = eventDoc.images || [];
+    const imageKeys = images.map(img => {
+      try {
+        const url = new URL(img.url); // img.url 기준
+        return decodeURIComponent(url.pathname.replace(/^\/+/, '')); // key 추출
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+
+    if (imageKeys.length > 0) {
+      await Promise.all(
+        imageKeys.map(key =>
+          s3Client.send(new DeleteObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: key
+          })).catch(err => {
+            console.warn(`[R2 IMAGE DELETE ERROR] ${key}`, err.message);
+          })
+        )
+      );
+    }
+
+    // 2) 이벤트 문서 삭제
+    const { deletedCount } = await db.collection('events').deleteOne({ _id: eventId, mallId });
+    if (!deletedCount) {
+      return res.status(404).json({ error: '이벤트 삭제 실패' });
+    }
+
+    // 3) 트래킹 로그 삭제
     await Promise.all([
       db.collection(visitsColl).deleteMany({ pageId: id }),
       db.collection(clicksColl).deleteMany({ pageId: id })
@@ -386,9 +445,10 @@ app.delete('/api/:mallId/events/:id', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[DELETE EVENT ERROR]', err);
-    res.status(500).json({ error: '이벤트 삭제에 실패했습니다.' });
+    res.status(500).json({ error: '이벤트 삭제 중 오류 발생' });
   }
 });
+
 
 
 // (8) 트래킹 저장중
