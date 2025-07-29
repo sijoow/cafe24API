@@ -390,7 +390,6 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
 });
 
 // ─── 삭제 (cascade delete + 이미지 삭제) ──────────────────────────────
-const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
 app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
