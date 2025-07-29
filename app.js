@@ -388,64 +388,53 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
     res.status(500).json({ error: '이벤트 수정에 실패했습니다.' });
   }
 });
+
+
 // ─── 삭제 (cascade delete + 이미지 삭제) ──────────────────────────────
+const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
+
 app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
   }
 
-  const eventId = new ObjectId(id);
-  const visitsColl = `visits_${mallId}`;
-  const clicksColl = `clicks_${mallId}`;
-
   try {
-    // 0) 삭제 전 이미지 경로 확인용 이벤트 문서 조회
-    const eventDoc = await db.collection('events').findOne({ _id: eventId, mallId });
-    if (!eventDoc) {
-      return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
-    }
+    const eventDoc = await db.collection('events').findOne({ _id: new ObjectId(id), mallId });
+    if (!eventDoc) return res.status(404).json({ error: '이벤트 없음' });
 
-    // 1) 이미지 삭제 (R2)
-    const images = eventDoc.images || [];
-    const imageKeys = images.map(img => {
+    const extractR2Key = (urlStr) => {
       try {
-        const url = new URL(img.url); // img.url 기준
-        return decodeURIComponent(url.pathname.replace(/^\/+/, '')); // key 추출
+        const url = new URL(urlStr);
+        const key = url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname;
+        return decodeURIComponent(key);
       } catch {
         return null;
       }
-    }).filter(Boolean);
+    };
 
-    if (imageKeys.length > 0) {
-      await Promise.all(
-        imageKeys.map(key =>
-          s3Client.send(new DeleteObjectCommand({
-            Bucket: R2_BUCKET_NAME,
-            Key: key
-          })).catch(err => {
-            console.warn(`[R2 IMAGE DELETE ERROR] ${key}`, err.message);
-          })
-        )
-      );
-    }
+    const imageKeys = (eventDoc.images || [])
+      .map(img => extractR2Key(img.src || img.url))
+      .filter(Boolean);
 
-    // 2) 이벤트 문서 삭제
-    const { deletedCount } = await db.collection('events').deleteOne({ _id: eventId, mallId });
-    if (!deletedCount) {
-      return res.status(404).json({ error: '이벤트 삭제 실패' });
-    }
+    await Promise.all(
+      imageKeys.map(key =>
+        s3Client.send(new DeleteObjectCommand({
+          Bucket: R2_BUCKET_NAME,
+          Key: key,
+        })).catch(err => {
+          console.warn(`[R2 DELETE ERROR] ${key}`, err.message);
+        })
+      )
+    );
 
-    // 3) 트래킹 로그 삭제
-    await Promise.all([
-      db.collection(visitsColl).deleteMany({ pageId: id }),
-      db.collection(clicksColl).deleteMany({ pageId: id })
-    ]);
+    await db.collection('events').deleteOne({ _id: new ObjectId(id), mallId });
 
     res.json({ success: true });
+
   } catch (err) {
     console.error('[DELETE EVENT ERROR]', err);
-    res.status(500).json({ error: '이벤트 삭제 중 오류 발생' });
+    res.status(500).json({ error: '삭제 중 오류 발생' });
   }
 });
 
