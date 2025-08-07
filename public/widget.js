@@ -396,7 +396,7 @@
     color:#ff4d4f; font-weight:500; margin-right:4px;
   }
 
-   .main_Grid_${pageId} .sale_price{float:left;}
+   .main_Grid_${pageId} .sale_price{float:right;}
   .main_Grid_${pageId} .sale_price,
   .main_Grid_${pageId} .prd_coupon { font-weight:500; }
   @media (max-width: 400px) {
