@@ -385,15 +385,18 @@
   .main_Grid_${pageId} .prd_desc {
     padding-bottom:3px; font-size:14px; color:#666;
   }
-  .main_Grid_${pageId} .prd_price { font-size:16px; }
+  .main_Grid_${pageId} .prd_price { font-size:16px;float:left;}
+
   .main_Grid_${pageId} .coupon_wrapper,
   .main_Grid_${pageId} .sale_wrapper {
-    margin-top:4px; display:flex; align-items:center;
+    display:flex; align-items:center;
   }
   .main_Grid_${pageId} .prd_coupon_percent,
   .main_Grid_${pageId} .sale_percent {
     color:#ff4d4f; font-weight:500; margin-right:4px;
   }
+
+   .main_Grid_${pageId} .sale_price{float:left;}
   .main_Grid_${pageId} .sale_price,
   .main_Grid_${pageId} .prd_coupon { font-weight:500; }
   @media (max-width: 400px) {
