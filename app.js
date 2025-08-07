@@ -98,7 +98,7 @@ app.get('/install/:mallId', (req, res) => {
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
-    scope:         'mall.read_category,mall.read_product,mall.read_analytics',
+    scope:         'mall.read_application,mall.write_application,mall.read_category,mall.read_product,mall.write_product,mall.read_order,mall.read_promotion,mall.read_salesreport,mall.read_analytics',
     state:         mallId,
   });
   res.redirect(`https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`);
