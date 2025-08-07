@@ -279,11 +279,30 @@ app.get('/api/:mallId/ping', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
+//게시판 생성 갯수 
+const MAX_BOARDS_PER_MALL = 10;  // 최대 10개까지만 생성 허용
 
 // ─── 생성
 app.post('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
   const payload = req.body;
+//게시판 생성제한
+try {
+    const existingCount = await db
+      .collection('events')
+      .countDocuments({ mallId });
+    if (existingCount >= MAX_BOARDS_PER_MALL) {
+      return res
+        .status(400)
+        .json({ error: `최대 ${MAX_BOARDS_PER_MALL}개의 게시물만 등록할 수 있습니다.` });
+    }
+  } catch (err) {
+    console.error('[COUNT CHECK ERROR]', err);
+    return res
+      .status(500)
+      .json({ error: '생성 가능 개수 확인 중 오류가 발생했습니다.' });
+  }
+
 
   // 필수: 제목
   if (!payload.title || typeof payload.title !== 'string') {
