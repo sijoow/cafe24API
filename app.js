@@ -133,7 +133,7 @@ app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) =
       contentType = 'image/webp';
     }
 
-    const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+    const randomId = Date.now().toString() + '_' + crypto.randomBytes(8).toString('hex');
     const key = `uploads/${mallId}/${hash}${ext}`;
 
     await s3Client.send(new PutObjectCommand({
