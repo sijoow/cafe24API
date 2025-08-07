@@ -134,7 +134,7 @@ app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) =
     }
 
     const randomId = Date.now().toString() + '_' + crypto.randomBytes(8).toString('hex');
-    const key = `uploads/${mallId}/${hash}${ext}`;
+    const key      = `uploads/${mallId}/${randomId}${ext}`;
 
     await s3Client.send(new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
