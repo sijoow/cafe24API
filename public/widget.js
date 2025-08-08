@@ -1,11 +1,4 @@
 ;(function(){
-  // ─── 0.1) API 도메인에 대한 preconnect ───────────────────────────────────
-  const preconnect = document.createElement('link');
-  preconnect.rel = 'preconnect';
-  preconnect.href = document.currentScript.dataset.apiBase;
-  preconnect.crossOrigin = 'anonymous';
-  document.head.appendChild(preconnect);
-
   // ─── 0) 스크립트 엘리먼트 찾기 & 설정값 가져오기 ─────────────────────────
   let script = document.currentScript;
   if (!script || !script.dataset.pageId) {
@@ -17,22 +10,33 @@
     console.warn('⚠️ Widget 스크립트를 찾을 수 없거나 mallId/pageId가 누락되었습니다.');
     return;
   }
-  const API_BASE      = script.dataset.apiBase;
-  const pageId        = script.dataset.pageId;
-  const mallId        = script.dataset.mallId;
-  const tabCount      = parseInt(script.dataset.tabCount, 10) || 0;
-  const activeColor   = script.dataset.activeColor || '#1890ff';
-  const couponNos     = script.dataset.couponNos || '';
-  const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
-  const couponQSAppend= couponNos ? `&coupon_no=${couponNos}` : '';
-  const directNos     = script.dataset.directNos || '';
+
+  const API_BASE       = script.dataset.apiBase;
+  const pageId         = script.dataset.pageId;
+  const mallId         = script.dataset.mallId;
+  const tabCount       = parseInt(script.dataset.tabCount, 10) || 0;
+  const activeColor    = script.dataset.activeColor || '#1890ff';
+  const couponNos      = script.dataset.couponNos || '';
+  const couponQSStart  = couponNos ? `?coupon_no=${couponNos}` : '';
+  const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
+  const directNos      = script.dataset.directNos || '';
+  const inlineBlocksId = script.dataset.inlineBlocks || ''; // NEW: 인라인 blocks JSON id
+
+  // ─── 0.1) API 도메인 preconnect ───────────────────────────────────
+  if (API_BASE) {
+    const preconnect = document.createElement('link');
+    preconnect.rel = 'preconnect';
+    preconnect.href = API_BASE;
+    preconnect.crossOrigin = 'anonymous';
+    document.head.appendChild(preconnect);
+  }
 
   // ─── visitorId 관리 ───────────────────────────────────────────────
   const visitorId = (() => {
     const key = 'appVisitorId';
     let id = localStorage.getItem(key);
     if (!id) {
-      id = crypto.randomUUID();
+      id = (self.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2);
       localStorage.setItem(key, id);
     }
     return id;
@@ -216,47 +220,93 @@
     }
   }
 
-  // ─── 1) 이벤트 데이터 로드 & 이미지/상품 그리드 생성 ────────────────
-  fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
-    .then(res => res.json())
-    .then(ev => {
-      // 이미지 매핑
-      const imagesHtml = ev.images.map((img, idx) => {
-        const regs = (img.regions || []).map(r => {
-          const l = (r.xRatio * 100).toFixed(2),
-                t = (r.yRatio * 100).toFixed(2),
-                w = (r.wRatio * 100).toFixed(2),
-                h = (r.hRatio * 100).toFixed(2);
-          if (r.coupon) {
-            return `<button
-              data-track-click="coupon"
-              style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;border:none;cursor:pointer;opacity:0"
-              onclick="downloadCoupon('${r.coupon}')"></button>`;
-          } else {
-            const href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
-            return `<a
-              data-track-click="url"
-              style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
-              href="${href}" target="_blank" rel="noreferrer"></a>`;
-          }
-        }).join('');
+  // ─── 1) blocks 렌더링 (인라인 JSON 우선) + 상품 그리드 생성 ─────────────
+  (function bootstrapMedia(){
+    let usedInline = false;
+    if (inlineBlocksId) {
+      const holder = document.getElementById(inlineBlocksId);
+      if (holder && holder.textContent) {
+        try {
+          const blocks = JSON.parse(holder.textContent);
+          renderBlocks(blocks);
+          usedInline = true;
+        } catch (e) {
+          console.warn('Inline blocks JSON 파싱 실패', e);
+        }
+      }
+    }
+
+    if (usedInline) {
+      document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
+      return;
+    }
+
+    // 인라인이 없으면 API에서 이벤트 조회
+    fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
+      .then(res => res.json())
+      .then(ev => {
+        const blocks = Array.isArray(ev?.content?.blocks)
+          ? ev.content.blocks
+          : (ev.images || []).map(img => ({
+              id: img._id || img.id, type: 'image', src: img.src, regions: img.regions || []
+            }));
+        renderBlocks(blocks);
+        document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
+      })
+      .catch(err => console.error('EVENT LOAD ERROR', err));
+  })();
+
+  // ─── blocks(이미지/영상) 렌더링 ───────────────────────────────────
+  function renderBlocks(blocks){
+    const wrap = document.getElementById('evt-images');
+    if (!wrap) return;
+
+    const html = (blocks || []).map(b => {
+      if (b.type === 'video' && b.youtubeId) {
+        const w = (b.ratio && b.ratio.w) ? b.ratio.w : 16;
+        const h = (b.ratio && b.ratio.h) ? b.ratio.h : 9;
         return `
-          <div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
-            <img src="${img.src}"
-                 style="max-width:100%;height:auto;display:block;margin:0 auto;"
-                 data-img-index="${idx}" />
-            ${regs}
-          </div>`;
-      }).join('\n');
+<div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
+  <div style="position:relative;width:100%;aspect-ratio:${w} / ${h};">
+    <iframe
+      src="https://www.youtube.com/embed/${b.youtubeId}"
+      title="YouTube video"
+      style="position:absolute;inset:0;width:100%;height:100%;border:0;"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+      referrerpolicy="strict-origin-when-cross-origin"
+      allowfullscreen
+    ></iframe>
+  </div>
+</div>`;
+      }
+      // image + 매핑
+      const overlays = (b.regions||[]).map(r => {
+        const l=(r.xRatio*100).toFixed(2), t=(r.yRatio*100).toFixed(2),
+              w=(r.wRatio*100).toFixed(2), h=(r.hRatio*100).toFixed(2);
+        if (r.coupon) {
+          return `<button
+            data-track-click="coupon"
+            style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%;border:none;cursor:pointer;opacity:0"
+            onclick="downloadCoupon('${r.coupon}')"></button>`;
+        } else {
+          const href = /^https?:\/\//.test(r.href||'') ? r.href : ('https://' + (r.href||''));
+          return `<a
+            data-track-click="url"
+            style="position:absolute;left:${l}%;top:${t}%;width:${w}%;height:${h}%"
+            href="${href}" target="_blank" rel="noreferrer"></a>`;
+        }
+      }).join('');
+      return `
+<div style="position:relative;margin:0 auto;width:100%;max-width:800px;">
+  <img src="${b.src}"
+       style="max-width:100%;height:auto;display:block;margin:0 auto;"
+       alt="">
+  ${overlays}
+</div>`;
+    }).join('\n');
 
-      const imagesContainer = document.getElementById('evt-images');
-      if (imagesContainer) imagesContainer.innerHTML = imagesHtml;
-
-      // 그리드 패널별 로드
-      document.querySelectorAll(`ul.main_Grid_${pageId}`)
-        .forEach(ul => loadPanel(ul));
-    })
-    .catch(err => console.error('EVENT LOAD ERROR', err));
+    wrap.innerHTML = html;
+  }
 
   // ─── 제품 목록 렌더링 헬퍼 ───────────────────────────────────────
   function renderProducts(ul, products, cols) {
@@ -396,7 +446,7 @@
     color:#ff4d4f; font-weight:500; margin-right:4px;
   }
 
-   .main_Grid_${pageId} .sale_price{float:right;}
+  .main_Grid_${pageId} .sale_price{float:right;}
   .main_Grid_${pageId} .sale_price,
   .main_Grid_${pageId} .prd_coupon { font-weight:500; }
   @media (max-width: 400px) {
