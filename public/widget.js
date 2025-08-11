@@ -383,6 +383,7 @@
   // ─── 2) CSS 동적 주입 ─────────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
+  #evt-images img{width:100%}
   /* 그리드 스피너 */
   .grid-spinner {
     width: 40px;
