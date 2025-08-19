@@ -1,4 +1,4 @@
-// app.js - full file (paste & run)
+// app.js - full file (붙여넣기 해서 사용)
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
 
@@ -167,26 +167,24 @@ function verifyCafe24Hmac(query) {
   const keys = Object.keys(q).sort();
   const candidates = [];
 
-  // candidate: key=val joined (unencoded)
+  // candidate variations
   candidates.push(keys.map(k => `${k}=${q[k]}`).join('&'));
-  // candidate: key=encodeURIComponent(val)
   candidates.push(keys.map(k => `${k}=${encodeURIComponent(String(q[k]))}`).join('&'));
-  // candidate: key=decodeURIComponent(val) (if encoded)
   candidates.push(keys.map(k => {
     try { return `${k}=${decodeURIComponent(String(q[k]))}`; } catch (e) { return `${k}=${q[k]}`; }
   }).join('&'));
-  // candidate: key=trim(val)
   candidates.push(keys.map(k => `${k}=${String(q[k]).trim()}`).join('&'));
 
+  // debug log optionally (not in prod)
   for (let i = 0; i < candidates.length; i++) {
     const msg = candidates[i];
-    const digest = computeHmacBase64(msg);
-    if (safeBufferCompare(digest, providedRaw)) {
-      return { ok: true, method: `candidate_${i}`, message: msg, digest };
+    const digestBase64 = computeHmacBase64(msg);
+    const digestUrlSafe = digestBase64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    if (String(DEBUG_HMAC) === 'true') {
+      console.log(`[HMAC DEBUG] candidate ${i}`, { msg, digestBase64, digestUrlSafe, providedRaw });
     }
-    const urlsafe = digest.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    if (safeBufferCompare(urlsafe, providedRaw)) {
-      return { ok: true, method: `candidate_${i}_urlsafe`, message: msg, digest };
+    if (safeBufferCompare(digestBase64, providedRaw) || safeBufferCompare(digestUrlSafe, providedRaw)) {
+      return { ok: true, method: `candidate_${i}`, message: msg, digest: digestBase64 };
     }
   }
 
@@ -230,7 +228,7 @@ async function ensureInstalled(req, res, next) {
 }
 
 // ===================================================================
-// DEBUG HMAC endpoint (development)
+// DEBUG HMAC endpoint (development only)
 // ===================================================================
 if (String(DEBUG_HMAC) === 'true') {
   app.post('/debug/hmac', express.json(), (req, res) => {
@@ -267,7 +265,6 @@ app.get('/', async (req, res) => {
       return res.redirect(`/install/${mallId}`);
     }
 
-    // already installed -> forward to frontend with mall_id
     return res.redirect(`${APP_URL}/?mall_id=${encodeURIComponent(mallId)}&installed=1`);
   } catch (err) {
     console.error('[ENTRY ERROR]', err);
@@ -368,6 +365,8 @@ app.get('/auth/callback', async (req, res) => {
   const { code, state: returnedState } = req.query;
   const cookieState = req.cookies['oauth_state'];
 
+  console.log('[AUTH CALLBACK] query:', req.query);
+
   if (!code || !returnedState) return res.status(400).send('code 또는 state가 없습니다.');
 
   if (!cookieState || cookieState !== returnedState) {
@@ -463,6 +462,7 @@ async function apiRequest(mallId, method, url, data = {}, params = {}) {
     const err = new Error(`토큰 정보 없음: mallId=${mallId}`);
     err.code = 'NO_TOKEN';
     err.status = 401;
+    console.warn('[API REQUEST] No token for', mallId, 'url:', url);
     throw err;
   }
 
@@ -743,10 +743,19 @@ app.get('/api/:mallId/categories/all', async (req, res) => {
   }
 });
 
-// (10) coupons all
+// (10) coupons all (토큰 없으면 친절 응답)
 app.get('/api/:mallId/coupons', async (req, res) => {
   const { mallId } = req.params;
   try {
+    const tokenDoc = await db.collection('token').findOne({ mallId });
+    if (!tokenDoc) {
+      return res.status(401).json({
+        error: 'APP_NOT_INSTALLED',
+        message: `앱이 ${mallId}에 설치되어 있지 않습니다.`,
+        install_url: `${APP_URL}/install/${mallId}`
+      });
+    }
+
     const all = [];
     let offset = 0, limit = 100;
     while (true) {
@@ -759,7 +768,10 @@ app.get('/api/:mallId/coupons', async (req, res) => {
     res.json(all);
   } catch (err) {
     console.error('[COUPONS ERROR]', err);
-    res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
+    if (err.code === 'NO_TOKEN' || err.status === 401) {
+      return res.status(401).json({ error: 'APP_NOT_INSTALLED', message: '앱 설치 또는 토큰 갱신 필요', install_url: `${APP_URL}/install/${req.params.mallId}` });
+    }
+    res.status(err.response?.status || 500).json({ message: '쿠폰 조회 실패', error: err.message });
   }
 });
 
@@ -840,7 +852,7 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
 
     const urlCats = `https://${mallId}.cafe24api.com/api/v2/admin/categories/${category_no}/products`;
     const catRes = await apiRequest(mallId, 'GET', urlCats, {}, { shop_no, display_group, limit, offset });
-    const sorted = (catRes.products||[]).slice().sort((a,b) => a.sequence_no - b.sequence_no);
+    const sorted = (catRes.products || []).slice().sort((a,b) => a.sequence_no - b.sequence_no);
     const productNos = sorted.map(p => p.product_no);
     if (!productNos.length) return res.json([]);
 
@@ -1228,6 +1240,22 @@ async function registerWebhooksForMall(mallId) {
     console.warn('[WEBHOOK REGISTER ERROR]', err.response?.data || err.message || err);
   }
 }
+
+// ===================================================================
+// global error handler (friendly response for missing token etc.)
+// ===================================================================
+app.use((err, req, res, next) => {
+  console.error('[UNHANDLED ERROR]', err);
+  if (err && (err.code === 'NO_TOKEN' || err.status === 401)) {
+    const mallId = req.params?.mallId || req.query?.mall_id || null;
+    return res.status(401).json({
+      error: 'APP_NOT_INSTALLED',
+      message: '앱 설치 또는 토큰이 필요합니다.',
+      install_url: mallId ? `${APP_URL}/install/${mallId}` : APP_URL
+    });
+  }
+  res.status(err.status || 500).json({ error: err.message || 'Server error' });
+});
 
 // ===================================================================
 // start server
