@@ -273,6 +273,30 @@ app.get('/api/:mallId/ping', (req, res) => {
 });
 
 
+app.get('/install-debug/:mallId', async (req, res) => {
+  try {
+    const { mallId } = req.params;
+    const redirectUri = `${APP_URL}/auth/callback`;
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id:     CAFE24_CLIENT_ID,
+      redirect_uri:  redirectUri,
+      scope:         'mall.read_product,mall.read_category', // 테스트용 적당한 scope
+      state:         mallId // 간단 테스트: state에 mallId 집어넣음
+    });
+    const authorizeUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
+
+    // 1) 콘솔에 찍힘
+    console.log('[INSTALL-DEBUG] constructed authorizeUrl ->', authorizeUrl);
+
+    // 2) JSON로 반환 (브라우저에서 직접 클릭해도 되고, curl로 확인 가능)
+    return res.json({ authorizeUrl, redirectUri, clientId: CAFE24_CLIENT_ID ? 'SET' : 'MISSING', APP_URL });
+  } catch (err) {
+    console.error('[INSTALL-DEBUG ERROR]', err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // ─── 생성
 app.post('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
