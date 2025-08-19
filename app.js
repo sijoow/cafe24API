@@ -124,7 +124,13 @@ function verifyStateToken(state) {
   if (parts.length !== 2) return null;
   const [encoded, sig] = parts;
   const expected = crypto.createHmac('sha256', CAFE24_CLIENT_SECRET).update(encoded).digest('hex');
-  if (!crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(sig, 'hex'))) {
+  try {
+    // timingSafeEqual requires buffers same length
+    const a = Buffer.from(expected, 'hex');
+    const b = Buffer.from(sig, 'hex');
+    if (a.length !== b.length) return null;
+    if (!crypto.timingSafeEqual(a, b)) return null;
+  } catch (err) {
     return null;
   }
   try {
@@ -133,6 +139,47 @@ function verifyStateToken(state) {
     return payload;
   } catch (err) {
     return null;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Helper: mallId resolution & ensureInstalled middleware
+// ──────────────────────────────────────────────────────────────────
+function resolveMallIdFromReq(req) {
+  const params = req.query || {};
+  if (params.mall_id) return params.mall_id;
+  if (params.mallId)  return params.mallId;
+  if (req.params && req.params.mallId) return req.params.mallId;
+  if (req.headers['x-mall-id']) return req.headers['x-mall-id'];
+  // try origin/referrer parsing (if contains {mallId}.cafe24api.com)
+  const ref = req.get('referer') || req.get('origin') || '';
+  try {
+    const u = new URL(ref);
+    const host = u.hostname || '';
+    const match = host.match(/^([^.]+)\.cafe24api\.com$/);
+    if (match) return match[1];
+  } catch (e) {}
+  return null;
+}
+
+async function ensureInstalled(req, res, next) {
+  try {
+    const mallId = resolveMallIdFromReq(req);
+    if (!mallId) {
+      return res.status(400).send('mallId required (query param or header).');
+    }
+
+    const tokenDoc = await db.collection('token').findOne({ mallId });
+    if (!tokenDoc || !tokenDoc.accessToken) {
+      return res.redirect(`/install/${mallId}`);
+    }
+
+    req.mallId = mallId;
+    req.mallTokenDoc = tokenDoc;
+    return next();
+  } catch (err) {
+    console.error('[ENSURE INSTALLED ERROR]', err);
+    return res.status(500).send('Server error checking installation.');
   }
 }
 
@@ -190,7 +237,6 @@ app.get('/install/:mallId', (req, res) => {
   return res.redirect(`https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`);
 });
 
-
 // ─── 이미지 업로드 (Multer + R2/S3) ─────────────────────────────────
 // POST /api/:mallId/uploads/image
 app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
@@ -239,7 +285,6 @@ app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) =
   }
 });
 
-
 // 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → onimon.shop 으로 리다이렉트
 app.get('/auth/callback', async (req, res) => {
   const { code, state: returnedState } = req.query;
@@ -284,6 +329,15 @@ app.get('/auth/callback', async (req, res) => {
       }
     });
 
+    // ==== 추가: 설치 시점에 상점(Shop) 정보 조회하여 token 문서에 저장 ====
+    let shopInfo = null;
+    try {
+      const shopRes = await apiRequest(mallId, 'GET', `https://${mallId}.cafe24api.com/api/v2/admin/shops`, {}, { shop_no: 1 });
+      shopInfo = shopRes.shop || shopRes.shops?.[0] || null;
+    } catch (err) {
+      console.warn('[SHOP INFO FETCH WARN]', err.message || err);
+    }
+
     await db.collection('token').updateOne(
       { mallId },
       {
@@ -292,7 +346,10 @@ app.get('/auth/callback', async (req, res) => {
           accessToken:  data.access_token,
           refreshToken: data.refresh_token,
           obtainedAt:   new Date(),
-          expiresIn:    data.expires_in
+          expiresIn:    data.expires_in,
+          installedAt:  new Date(),
+          shopInfo,
+          active: true
         }
       },
       { upsert: true }
@@ -301,10 +358,17 @@ app.get('/auth/callback', async (req, res) => {
     // clear oauth_state cookie
     res.clearCookie('oauth_state');
 
+    // ==== (옵션) 설치 직후에 웹훅 등록 ====
+    try {
+      await registerWebhooksForMall(mallId);
+    } catch (err) {
+      console.warn('[WEBHOOK REGISTER WARN]', err.message || err);
+    }
+
     console.log(`[AUTH CALLBACK] App installed for mallId: ${mallId}`);
 
     // redirect to frontend/onboarding page
-    return res.redirect('https://onimon.shop');
+    return res.redirect(`${APP_URL}/dashboard?mall_id=${encodeURIComponent(mallId)}&installed=1`);
   } catch (err) {
     console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
     return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
@@ -379,8 +443,13 @@ async function apiRequest(mallId, method, url, data = {}, params = {}) {
 
 // ===================================================================
 // ③ mallId-aware 전용 엔드포인트 모음
-// (기존 구현 내용 — 변경 없음, 그대로 유지)
 // ===================================================================
+
+// (Launch) 앱 진입점: 설치 확인 후 대시보드로 이동
+app.get('/app/launch', ensureInstalled, (req, res) => {
+  const mallId = req.mallId;
+  return res.redirect(`${APP_URL}/dashboard?mall_id=${encodeURIComponent(mallId)}`);
+});
 
 // (0) 기본 Ping
 app.get('/api/:mallId/ping', (req, res) => {
@@ -516,7 +585,6 @@ app.put('/api/:mallId/events/:id', async (req, res) => {
 });
 
 // ─── 삭제 (cascade delete + 이미지 삭제) ──────────────────────────────
-
 app.delete('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   if (!ObjectId.isValid(id)) {
@@ -1408,6 +1476,38 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
+// ===================================================================
+// 웹훅 등록 헬퍼 (선택) - 설치 직후 호출
+// - 실제 이벤트명/엔드포인트/페이로드는 Cafe24 문서에 맞춰 조정하세요.
+// ===================================================================
+async function registerWebhooksForMall(mallId) {
+  // 중복 등록 확인 (간단 체크)
+  const exist = await db.collection('webhooks').findOne({ mallId, service: 'order_created' });
+  if (exist) return;
+
+  // 예시 페이로드: Cafe24 웹훅 등록 API에 맞춰 조정해야 함
+  const webhookPayload = {
+    // 실제 Cafe24 webhook 스펙에 맞게 구성 필요
+    webhook: {
+      topic: 'order.created',
+      address: `${APP_URL}/webhook/order`,
+      format: 'json',
+      active: true
+    }
+  };
+
+  try {
+    // Cafe24 웹훅 등록 엔드포인트(문서 확인 필요)
+    const url = `https://${mallId}.cafe24api.com/api/v2/admin/webhooks`;
+    const res = await apiRequest(mallId, 'POST', url, webhookPayload);
+    // 저장
+    await db.collection('webhooks').insertOne({ mallId, service: 'order_created', createdAt: new Date(), meta: res });
+    console.log('[WEBHOOK REGISTERED]', mallId);
+  } catch (err) {
+    console.warn('[WEBHOOK REGISTER ERROR]', err.response?.data || err.message || err);
+    // 실패시 로깅만, 설치 실패로 처리하지 않음
+  }
+}
 
 // ===================================================================
 // 서버 시작
