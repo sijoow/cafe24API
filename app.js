@@ -110,6 +110,33 @@ app.get('/install/:mallId', (req, res) => {
     </html>
   `);
 });
+
+// debug callback - 들어오는 전체 쿼리/헤더/원본 URL을 브라우저로 표시
+app.get('/auth/callback', async (req, res) => {
+  console.log('[AUTH CALLBACK] arrived. req.query =', req.query);
+  console.log('[AUTH CALLBACK] originalUrl =', req.originalUrl);
+  console.log('[AUTH CALLBACK] headers.host =', req.headers.host);
+
+  // 브라우저에 디버그 정보 출력 (토큰 교환 전 단계 디버깅용)
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<html><body>
+    <h2>Auth Callback Debug</h2>
+    <h3>req.query</h3>
+    <pre>${JSON.stringify(req.query, null, 2)}</pre>
+    <h3>originalUrl</h3>
+    <pre>${req.originalUrl}</pre>
+    <h3>headers</h3>
+    <pre>${JSON.stringify({
+      host: req.headers.host,
+      referer: req.headers.referer,
+      'user-agent': req.headers['user-agent']
+    }, null, 2)}</pre>
+    <p>Expected redirect_uri: <b>${APP_URL_NORMALIZED}/auth/callback</b></p>
+    <p>If code or state is missing, the authorize step did not return them — check authorize URL's redirect_uri and the Cafe24 flow.</p>
+  </body></html>`);
+});
+
+
 // ─── 이미지 업로드 (Multer + R2/S3) ─────────────────────────────────
 app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
   try {
