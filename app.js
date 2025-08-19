@@ -127,33 +127,19 @@ app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) =
 
 // 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → onimon.shop 으로 리다이렉트 연결되게 설정ㅎ
 // 기존 /auth/callback 핸들러 대신 (임시 디버그용)
+// 안전한 auth callback (서버에 붙여넣기 — static 보다 위에 위치)
 app.get('/auth/callback', async (req, res) => {
   console.log('[AUTH CALLBACK REQ]', new Date().toISOString(), req.query);
-  const { code, state, error, error_description } = req.query;
-
-  // 바로 브라우저에 디버그 정보 출력
-  const out = { received_query: req.query };
+  const { code, state: mallId, error, error_description } = req.query;
 
   if (error) {
-    out.oauth_error = { error, error_description };
-    console.error('[AUTH CALLBACK] oauth error', error, error_description);
-    return res.status(400).json(out);
+    console.error('[AUTH CALLBACK OAUTH ERROR]', error, error_description);
+    return res.status(400).send(`<h3>OAuth error: ${error}</h3><pre>${error_description || ''}</pre>`);
+  }
+  if (!code || !mallId) {
+    return res.status(400).send('<h3>Missing code or state (mallId)</h3>');
   }
 
-  if (!code || !state) {
-    out.msg = 'code 또는 state 가 없습니다.';
-    return res.status(400).json(out);
-  }
-
-  // 상태->mallId 매핑(DB) 확인
-  const st = await db.collection('install_states').findOne({ state });
-  out.state_db = st || null;
-
-  // 만약 state가 mallId 직접값(legacy)라면 그대로 사용
-  const mallId = (st && st.mallId) ? st.mallId : state;
-  out.resolved_mallId = mallId;
-
-  // 토큰 교환 시도 (그리고 결과을 그대로 보여줌)
   try {
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
     const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
@@ -164,36 +150,62 @@ app.get('/auth/callback', async (req, res) => {
     }).toString();
 
     const resp = await axios.post(tokenUrl, body, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${creds}` },
-      validateStatus: null
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${creds}`
+      },
+      validateStatus: status => true
     });
 
-    out.token_exchange = { status: resp.status, data: resp.data };
-    // 성공이면 DB 저장 (임시: 저장 후 목록 보여주기)
-    if (resp.status === 200 && resp.data.access_token) {
-      await db.collection('token').updateOne(
-        { mallId },
-        { $set: {
-            mallId,
-            accessToken: resp.data.access_token,
-            refreshToken: resp.data.refresh_token,
-            obtainedAt: new Date(),
-            expiresIn: resp.data.expires_in,
-            raw: resp.data
-          }
-        },
-        { upsert: true }
+    console.log('[TOKEN EXCHANGE]', resp.status, resp.data);
+
+    if (resp.status !== 200 || !resp.data.access_token) {
+      // 에러 응답을 브라우저에 보여주기 (디버깅용)
+      return res.status(500).send(
+        `<h3>Token exchange failed</h3><pre>${JSON.stringify(resp.data, null, 2)}</pre>`
       );
-      out.stored = true;
-    } else {
-      out.stored = false;
     }
 
-    return res.status(200).json(out);
+    // 저장
+    await db.collection('token').updateOne(
+      { mallId },
+      {
+        $set: {
+          mallId,
+          accessToken: resp.data.access_token,
+          refreshToken: resp.data.refresh_token,
+          obtainedAt: new Date(),
+          expiresIn: resp.data.expires_in,
+          raw: resp.data
+        }
+      },
+      { upsert: true }
+    );
+
+    console.log(`[AUTH CALLBACK] stored tokens for ${mallId}`);
+
+    // 무한 리다이렉트 방지: 간단한 성공 페이지 제공 (프론트가 캐치하면 그쪽에서 처리)
+    return res.send(`
+      <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;line-height:1.4">
+          <h2>앱 설치가 완료되었습니다 ✅</h2>
+          <p>쇼핑몰: <strong>${mallId}</strong></p>
+          <p><a href="${APP_URL}">대시보드로 이동</a></p>
+          <script>
+            // 팝업으로 열렸다면 자동으로 닫게 하거나 부모창 리로드(선택)
+            try {
+              if (window.opener) {
+                window.opener.location.reload();
+                setTimeout(()=>window.close(), 800);
+              }
+            } catch(e){}
+          </script>
+        </body>
+      </html>
+    `);
   } catch (err) {
-    console.error('[AUTH CALLBACK DEBUG ERROR]', err.response?.data || err.message || err);
-    out.exception = err.response?.data || err.message || String(err);
-    return res.status(500).json(out);
+    console.error('[AUTH CALLBACK EXCEPTION]', err.response?.data || err.message || err);
+    return res.status(500).send(`<h3>Server error</h3><pre>${String(err.response?.data || err.message || err)}</pre>`);
   }
 });
 
