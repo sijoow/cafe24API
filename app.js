@@ -78,164 +78,20 @@ const s3Client = new S3Client({
 // ① 설치 → 권한요청 → 콜백 (code → 토큰) → DB 저장
 // ===================================================================
 
-// install debug 버전 (app.js 에 기존 /install/:mallId 대신 붙여넣기)
+// 설치 시작: mallId 기반 OAuth 권한 요청
 app.get('/install/:mallId', (req, res) => {
   const { mallId } = req.params;
-  const redirectUri = `${APP_URL_NORMALIZED}/auth/callback`;
+  const redirectUri = `${APP_URL}/auth/callback`;
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
-    scope:         'mall.read_promotion,mall.read_category,mall.read_product,mall.read_analytics',
-    state:         mallId
+    scope:         'mall.read_promotion,mall.write_promotion,mall.read_category,mall.write_category,mall.read_product,mall.write_product,mall.read_collection,mall.read_application,mall.write_application,mall.read_analytics,mall.read_salesreport,mall.read_store',
+    state:         mallId,
   });
-  const authUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
-
-  // 1) 서버 로그
-  console.log('[INSTALL DEBUG] mallId:', mallId);
-  console.log('[INSTALL DEBUG] authUrl:', authUrl);
-
-  // 2) 간단한 디버그 HTML 반환 — 클릭해서 설치 테스트 가능
-  res.send(`
-    <html>
-      <head><meta charset="utf-8"><title>Install Debug</title></head>
-      <body>
-        <h2>Install Debug for mall: ${mallId}</h2>
-        <p>Constructed authorize URL:</p>
-        <p><a id="auth" href="${authUrl}" target="_blank">${authUrl}</a></p>
-        <p>1) 클릭해서 Cafe24 인증 페이지로 이동하세요.<br/>
-           2) 로그인/허용 후 콜백이 호출되는지 서버 로그에서 확인하세요.</p>
-        <pre id="log">Server console will contain logs (check server).</pre>
-      </body>
-    </html>
-  `);
+  res.redirect(`https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`);
 });
 
-// debug callback - 들어오는 전체 쿼리/헤더/원본 URL을 브라우저로 표시
-app.get('/auth/callback', async (req, res) => {
-  console.log('[AUTH CALLBACK] arrived. req.query =', req.query);
-  console.log('[AUTH CALLBACK] originalUrl =', req.originalUrl);
-  console.log('[AUTH CALLBACK] headers.host =', req.headers.host);
-
-  // 브라우저에 디버그 정보 출력 (토큰 교환 전 단계 디버깅용)
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(`<html><body>
-    <h2>Auth Callback Debug</h2>
-    <h3>req.query</h3>
-    <pre>${JSON.stringify(req.query, null, 2)}</pre>
-    <h3>originalUrl</h3>
-    <pre>${req.originalUrl}</pre>
-    <h3>headers</h3>
-    <pre>${JSON.stringify({
-      host: req.headers.host,
-      referer: req.headers.referer,
-      'user-agent': req.headers['user-agent']
-    }, null, 2)}</pre>
-    <p>Expected redirect_uri: <b>${APP_URL_NORMALIZED}/auth/callback</b></p>
-    <p>If code or state is missing, the authorize step did not return them — check authorize URL's redirect_uri and the Cafe24 flow.</p>
-  </body></html>`);
-});
-// ====== Cafe24 iframe/signature 진입 처리용 (붙여넣기) ======
-// 목적: Cafe24가 앱을 iframe으로 열 때(또는 signature 파라미터로 호출할 때) 최상위 창으로 OAuth authorize 페이지를 열어 설치 흐름을 정상화합니다.
-// 사용법: Cafe24 개발자센터의 "앱 시작 URL" 또는 앱 등록 시 Start URL을 `https://<your-app>/app-init` 로 설정하세요.
-
-app.get('/app-init', (req, res) => {
-  // 서버에서 클라이언트로 환경값을 전달 (보안상 민감한 값 제외)
-  const clientId = CAFE24_CLIENT_ID || '';
-  const redirectUri = `${APP_URL_NORMALIZED}/auth/callback`;
-  // 원래 쓰던 scope와 동일하게 설정
-  const scope = encodeURIComponent('mall.read_promotion,mall.write_promotion,mall.read_category,mall.write_category,mall.read_product,mall.write_product,mall.read_collection,mall.read_application,mall.write_application,mall.read_analytics,mall.read_salesreport,mall.read_store');
-
-  // HTML + JS 반환: referrer(또는 URL)에서 mallId 추출 -> top.location.replace(authUrl)
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(`
-    <!doctype html>
-    <html>
-      <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-      <body>
-        <h3>앱 설치(자동 리디렉트 중)</h3>
-        <p>잠시만 기다려주세요. 자동으로 설치 화면으로 이동합니다.</p>
-        <p>If not redirected, click the button below.</p>
-        <button id="openBtn" style="padding:.6rem 1rem;">Open install page</button>
-
-        <script>
-        (function(){
-          try {
-            const CLIENT_ID = '${clientId}';
-            const REDIRECT_URI = encodeURIComponent('${redirectUri}');
-            const SCOPE = '${scope}';
-            // 1) 가능한 mallId 추출 경로: document.referrer (관리자에서 호출하면 referrer가 shop domain인 경우가 많음)
-            const ref = document.referrer || '';
-            let mallId = null;
-            // ref 예시: https://yogibo.cafe24.com/...
-            const m = ref.match(/^https?:\\/\\/([^.]+)\\.cafe24\\.com/i);
-            if (m && m[1]) mallId = m[1];
-
-            // 2) 만약 mallId가 없다면, URL 파라미터(예: ?mallId=xxx) 시도
-            if (!mallId) {
-              const params = new URLSearchParams(window.location.search);
-              if (params.get('mallId')) mallId = params.get('mallId');
-            }
-
-            // 3) fallback: prompt (테스트 전용)
-            if (!mallId) {
-              // 프롬프트 대신 사용자 버튼으로 처리 (자동안되면 수동입력)
-              console.warn('mallId not found from referrer or query. please input mallId manually.');
-            }
-
-            function buildAuthUrl(mid) {
-              return 'https://' + mid + '.cafe24api.com/api/v2/oauth/authorize?response_type=code&client_id='
-                     + encodeURIComponent(CLIENT_ID)
-                     + '&redirect_uri=' + REDIRECT_URI
-                     + '&scope=' + SCOPE
-                     + '&state=' + encodeURIComponent(mid);
-            }
-
-            const openAuth = (mid) => {
-              if (!mid) {
-                // 수동입력
-                const manual = prompt('mallId를 입력하세요 (예: yogibo)');
-                if (!manual) return;
-                window.location.href = buildAuthUrl(manual.trim());
-                return;
-              }
-              // iframe 내에서 열려있다면 최상위 창으로 리다이렉트 시도
-              try {
-                if (window.top && window.top !== window.self) {
-                  window.top.location.replace(buildAuthUrl(mid));
-                } else {
-                  window.location.replace(buildAuthUrl(mid));
-                }
-              } catch (e) {
-                // 교차 도메인 등으로 접근이 막히면 현재 창으로 이동
-                console.warn('top replace failed, falling back to self.location', e);
-                window.location.href = buildAuthUrl(mid);
-              }
-            };
-
-            // 자동 시도
-            if (mallId) {
-              openAuth(mallId);
-            }
-
-            // 버튼 수동 처리
-            document.getElementById('openBtn').addEventListener('click', function(){
-              if (mallId) openAuth(mallId);
-              else {
-                const manual = prompt('mallId를 입력하세요 (예: yogibo)');
-                if (manual) openAuth(manual.trim());
-              }
-            });
-          } catch (err) {
-            console.error('app-init script error', err);
-            document.getElementById('openBtn').style.display = 'inline-block';
-          }
-        })();
-        </script>
-      </body>
-    </html>
-  `);
-});
 
 // ─── 이미지 업로드 (Multer + R2/S3) ─────────────────────────────────
 app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
