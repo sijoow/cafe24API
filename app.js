@@ -16,7 +16,8 @@ const tz = require('dayjs/plugin/timezone');
 const { MongoClient, ObjectId } = require('mongodb');
 const sharp = require('sharp'); 
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-
+const cookieParser = require('cookie-parser');
+const crypto = require('crypto');
 
 dayjs.extend(utc);
 dayjs.extend(tz);
@@ -37,11 +38,19 @@ const {
   R2_PUBLIC_BASE,
 } = process.env;
 
+if (!CAFE24_CLIENT_ID || !CAFE24_CLIENT_SECRET) {
+  console.warn('⚠️ CAFE24_CLIENT_ID or CAFE24_CLIENT_SECRET is missing. OAuth will fail without them.');
+}
+if (!APP_URL) {
+  console.warn('⚠️ APP_URL is not set. redirect_uri must match the registered value in Cafe24 developers.');
+}
+
 const app = express();
 app.use(cors());
 app.use(compression());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── MongoDB 연결 ───────────────────────────────────────────────
@@ -62,7 +71,7 @@ const storage = multer.diskStorage({
   filename:    (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
 });
 const upload = multer({
-  dest: 'uploads/',
+  storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -84,7 +93,48 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
+// ──────────────────────────────────────────────────────────────────
+// Helper: base64url encode/decode & state create/verify (HMAC signed)
+// ──────────────────────────────────────────────────────────────────
+function base64urlEncode(str) {
+  return Buffer.from(str, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function base64urlDecode(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return Buffer.from(s, 'base64').toString('utf8');
+}
 
+function createStateToken(mallId) {
+  if (!CAFE24_CLIENT_SECRET) throw new Error('CAFE24_CLIENT_SECRET required to create state token');
+  const payload = {
+    mallId,
+    nonce: crypto.randomBytes(12).toString('hex'),
+    exp: Date.now() + 10 * 60 * 1000 // 10 minutes
+  };
+  const encoded = base64urlEncode(JSON.stringify(payload));
+  const sig = crypto.createHmac('sha256', CAFE24_CLIENT_SECRET).update(encoded).digest('hex');
+  return `${encoded}.${sig}`;
+}
+
+function verifyStateToken(state) {
+  if (!state) return null;
+  if (!CAFE24_CLIENT_SECRET) throw new Error('CAFE24_CLIENT_SECRET required to verify state token');
+  const parts = String(state).split('.');
+  if (parts.length !== 2) return null;
+  const [encoded, sig] = parts;
+  const expected = crypto.createHmac('sha256', CAFE24_CLIENT_SECRET).update(encoded).digest('hex');
+  if (!crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(sig, 'hex'))) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(base64urlDecode(encoded));
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch (err) {
+    return null;
+  }
+}
 
 // ===================================================================
 // ① 설치 → 권한요청 → 콜백 (code → 토큰) → DB 저장
@@ -93,21 +143,55 @@ const s3Client = new S3Client({
 // 설치 시작: mallId 기반 OAuth 권한 요청
 app.get('/install/:mallId', (req, res) => {
   const { mallId } = req.params;
+  if (!mallId) return res.status(400).send('mallId required');
+
+  // redirect_uri must exactly match the value registered in Cafe24 dev console
   const redirectUri = `${APP_URL}/auth/callback`;
+
+  // scope should be space-separated (not comma)
+  const scope = [
+    'mall.read_application',
+    'mall.write_application',
+    'mall.read_category',
+    'mall.read_product',
+    'mall.write_product',
+    'mall.read_order',
+    'mall.read_promotion',
+    'mall.read_salesreport',
+    'mall.read_analytics'
+  ].join(' ');
+
+  // create signed state token (contains mallId + nonce + expiry)
+  let state;
+  try {
+    state = createStateToken(mallId);
+  } catch (err) {
+    console.error('[STATE CREATE ERROR]', err);
+    return res.status(500).send('Server misconfiguration: cannot create state token');
+  }
+
+  // store state in HttpOnly cookie (bind browser) — expires short
+  const secureFlag = APP_URL && APP_URL.startsWith('https');
+  res.cookie('oauth_state', state, {
+    httpOnly: true,
+    secure: secureFlag,
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000
+  });
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
-    scope:         'mall.read_application,mall.write_application,mall.read_category,mall.read_product,mall.write_product,mall.read_order,mall.read_promotion,mall.read_salesreport,mall.read_analytics',
-    state:         mallId,
+    scope,
+    state
   });
-  res.redirect(`https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`);
+
+  return res.redirect(`https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`);
 });
 
 
 // ─── 이미지 업로드 (Multer + R2/S3) ─────────────────────────────────
-const crypto = require('crypto');
-
 // POST /api/:mallId/uploads/image
 app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
   try {
@@ -156,12 +240,33 @@ app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) =
 });
 
 
-// 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → onimon.shop 으로 리다이렉트 연결되게 설정ㅎ
+// 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → onimon.shop 으로 리다이렉트
 app.get('/auth/callback', async (req, res) => {
-  const { code, state: mallId } = req.query;
-  if (!code || !mallId) {
-    return res.status(400).send('code 또는 mallId가 없습니다.');
+  const { code, state: returnedState } = req.query;
+  const cookieState = req.cookies['oauth_state'];
+
+  if (!code || !returnedState) {
+    return res.status(400).send('code 또는 state가 없습니다.');
   }
+
+  // 1) cookie 존재 및 일치 확인 (bind to browser/session)
+  if (!cookieState || cookieState !== returnedState) {
+    console.warn('[AUTH CALLBACK] state cookie mismatch or missing');
+    return res.status(400).send('Invalid OAuth state (cookie mismatch).');
+  }
+
+  // 2) verify signature + expiry and extract mallId
+  let payload;
+  try {
+    payload = verifyStateToken(returnedState);
+  } catch (err) {
+    console.error('[STATE VERIFY ERROR]', err);
+    return res.status(400).send('Invalid OAuth state (verification failed).');
+  }
+  if (!payload || !payload.mallId) {
+    return res.status(400).send('Invalid or expired state token.');
+  }
+  const mallId = payload.mallId;
 
   try {
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
@@ -193,13 +298,15 @@ app.get('/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    // 앱 설치 완료 로그
+    // clear oauth_state cookie
+    res.clearCookie('oauth_state');
+
     console.log(`[AUTH CALLBACK] App installed for mallId: ${mallId}`);
 
-    // onimon.shop 으로 즉시 리다이렉트
+    // redirect to frontend/onboarding page
     return res.redirect('https://onimon.shop');
   } catch (err) {
-    console.error('[AUTH CALLBACK ERROR]', err.response?.data || err);
+    console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
     return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
 });
@@ -272,6 +379,7 @@ async function apiRequest(mallId, method, url, data = {}, params = {}) {
 
 // ===================================================================
 // ③ mallId-aware 전용 엔드포인트 모음
+// (기존 구현 내용 — 변경 없음, 그대로 유지)
 // ===================================================================
 
 // (0) 기본 Ping
@@ -286,8 +394,8 @@ const MAX_BOARDS_PER_MALL = 10;  // 최대 10개까지만 생성 허용
 app.post('/api/:mallId/events', async (req, res) => {
   const { mallId } = req.params;
   const payload = req.body;
-//게시판 생성제한
-try {
+  //게시판 생성제한
+  try {
     const existingCount = await db
       .collection('events')
       .countDocuments({ mallId });
@@ -302,7 +410,6 @@ try {
       .status(500)
       .json({ error: '생성 가능 개수 확인 중 오류가 발생했습니다.' });
   }
-
 
   // 필수: 제목
   if (!payload.title || typeof payload.title !== 'string') {
@@ -538,12 +645,31 @@ app.post('/api/:mallId/track', async (req, res) => {
       return res.sendStatus(204);
     }
 
-  // 6) 기타 클릭 (URL, 쿠폰 등): clicks_{mallId} 컬렉션에 insert
-  if (type === 'click') {
-    // 6-1) 쿠폰 클릭: productNo가 배열일 수 있으므로 배열/단일 처리
-    if (element === 'coupon') {
-      const coupons = Array.isArray(productNo) ? productNo : [productNo];
-      await Promise.all(coupons.map(cpn => {
+    // 6) 기타 클릭 (URL, 쿠폰 등): clicks_{mallId} 컬렉션에 insert
+    if (type === 'click') {
+      // 6-1) 쿠폰 클릭: productNo가 배열일 수 있으므로 배열/단일 처리
+      if (element === 'coupon') {
+        const coupons = Array.isArray(productNo) ? productNo : [productNo];
+        await Promise.all(coupons.map(cpn => {
+          const clickDoc = {
+            pageId,
+            visitorId,
+            dateKey,
+            pageUrl:   pathOnly,
+            referrer:  referrer || null,
+            device:    device   || null,
+            type,
+            element,
+            timestamp: kstTs,
+            couponNo:  cpn
+          };
+          return db.collection(`clicks_${mallId}`).insertOne(clickDoc);
+        }));
+        return res.sendStatus(204);
+      }
+
+      // 6-2) URL 클릭 전용 처리
+      if (element === 'url') {
         const clickDoc = {
           pageId,
           visitorId,
@@ -552,17 +678,14 @@ app.post('/api/:mallId/track', async (req, res) => {
           referrer:  referrer || null,
           device:    device   || null,
           type,
-          element,
-          timestamp: kstTs,
-          couponNo:  cpn
+          element,    // 'url'
+          timestamp: kstTs
         };
-        return db.collection(`clicks_${mallId}`).insertOne(clickDoc);
-      }));
-      return res.sendStatus(204);
-    }
+        await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
+        return res.sendStatus(204);
+      }
 
-    // 6-2) URL 클릭 전용 처리
-    if (element === 'url') {
+      // 6-3) 그 외 기타 클릭
       const clickDoc = {
         pageId,
         visitorId,
@@ -571,28 +694,12 @@ app.post('/api/:mallId/track', async (req, res) => {
         referrer:  referrer || null,
         device:    device   || null,
         type,
-        element,    // 'url'
+        element,
         timestamp: kstTs
       };
       await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
       return res.sendStatus(204);
     }
-
-    // 6-3) 그 외 기타 클릭
-    const clickDoc = {
-      pageId,
-      visitorId,
-      dateKey,
-      pageUrl:   pathOnly,
-      referrer:  referrer || null,
-      device:    device   || null,
-      type,
-      element,
-      timestamp: kstTs
-    };
-    await db.collection(`clicks_${mallId}`).insertOne(clickDoc);
-    return res.sendStatus(204);
-  }
 
     // ─────────────────────────────────────────────────────────────
     // 7) view/revisit: visits_{mallId} 컬렉션에 upsert
@@ -602,7 +709,7 @@ app.post('/api/:mallId/track', async (req, res) => {
         lastVisit: kstTs,
         pageUrl:   pathOnly,
         referrer:  referrer || null,
-        device:    device   || null
+        device:    device || null
       },
       $setOnInsert: { firstVisit: kstTs },
       $inc: {}
@@ -620,10 +727,6 @@ app.post('/api/:mallId/track', async (req, res) => {
     return res.status(500).json({ error: '트래킹 실패' });
   }
 });
-
-
-
-
 
 // (9) 카테고리 전체 조회
 app.get('/api/:mallId/categories/all', async (req, res) => {
@@ -664,7 +767,6 @@ app.get('/api/:mallId/coupons', async (req, res) => {
     res.status(500).json({ message: '쿠폰 조회 실패', error: err.message });
   }
 });
-// app.js
 
 // ─── 쿠폰 통계 조회 (발급·사용·미사용·자동삭제 + 절대 이름 확보) ─────────────────────────
 app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
@@ -751,7 +853,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     });
   }
 });
-
 
 // (11) 카테고리별 상품 조회 + 다중 쿠폰 로직
 app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
@@ -1093,7 +1194,6 @@ app.get('/api/:mallId/analytics/:pageId/clicks-by-date', async (req, res) => {
   }
 });
 
-
 // (16) analytics: url-clicks count
 app.get('/api/:mallId/analytics/:pageId/url-clicks', async (req, res) => {
   const { mallId, pageId } = req.params;
@@ -1136,7 +1236,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-clicks', async (req, res) => {
   }
 });
 
-
 // (18) analytics: distinct urls
 app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
   const { mallId, pageId } = req.params;
@@ -1163,7 +1262,6 @@ app.get('/api/:mallId/analytics/:pageId/coupons-distinct', async (req, res) => {
     res.status(500).json({ error: '쿠폰 목록 조회 실패' });
   }
 });
-
 
 // (19) analytics: devices distribution
 app.get('/api/:mallId/analytics/:pageId/devices', async (req, res) => {
@@ -1224,7 +1322,6 @@ app.get('/api/:mallId/analytics/:pageId/devices-by-date', async (req, res) => {
     res.status(500).json({ error: '날짜별 고유 디바이스 집계 실패' });
   }
 });
-
 
 // ─── analytics: product-clicks (게시판별 상품 클릭 랭킹)
 app.get('/api/:mallId/analytics/:pageId/product-clicks', async (req, res) => {
@@ -1310,8 +1407,6 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
     res.status(500).json({ error: '상품 퍼포먼스 집계 실패' });
   }
 });
-
-
 
 
 // ===================================================================
