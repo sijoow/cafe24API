@@ -112,13 +112,16 @@ app.get('/install/:mallId', (req, res) => {
 });
 
 // (보통 카페24가 /auth/callback 으로 redirect) 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → 프론트로 리다이렉트
+// 기존 auth/callback 부분 대체
 app.get('/auth/callback', async (req, res) => {
   const { code, state: mallId, error, error_description } = req.query;
+
   if (error) {
     console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, error_description);
-    // 프론트로 에러 전달 (프론트에서 처리하도록)
-    return res.redirect(`${APP_URL}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
+    // 에러일 때도 프론트의 /redirect 로 포워딩(프론트가 표시/로그를 하게)
+    return res.redirect(`${APP_URL}/redirect?mall_id=${encodeURIComponent(mallId||'')}&auth_error=${encodeURIComponent(error)}`);
   }
+
   if (!code || !mallId) {
     return res.status(400).send('code 또는 mallId가 없습니다.');
   }
@@ -139,7 +142,6 @@ app.get('/auth/callback', async (req, res) => {
       }
     });
 
-    // DB에 토큰 저장 (plus 획득시점/만료)
     await db.collection('token').updateOne(
       { mallId },
       {
@@ -155,13 +157,14 @@ app.get('/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    console.log(`[AUTH CALLBACK] App installed for mallId: ${mallId}`);
+    console.log(`[AUTH CALLBACK] 토큰 저장 완료: mallId=${mallId}`);
 
-    // 설치 후 프론트로 보내기 (프론트 Redirect.jsx가 mall_id 쿼리로 처리할 수 있게)
-    return res.redirect(`${APP_URL}/?mall_id=${encodeURIComponent(mallId)}`);
+    // **중요**: 프론트의 Redirect 컴포넌트가 있는 경로로 보냄
+    return res.redirect(`${APP_URL}/redirect?mall_id=${encodeURIComponent(mallId)}&installed=1`);
   } catch (err) {
     console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
-    return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
+    // 실패하면 에러 정보와 함께 프론트로 포워딩
+    return res.redirect(`${APP_URL}/redirect?mall_id=${encodeURIComponent(mallId)}&auth_error=${encodeURIComponent(err.response?.data?.error_description||err.message||'token_error')}`);
   }
 });
 
