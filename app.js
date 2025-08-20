@@ -211,6 +211,77 @@ app.get('/redirect', (req, res) => {
   console.log('[REDIRECT FORWARD] ->', target);
   return res.redirect(target);
 });
+// --- 디버그용 auth callback (임시로 기존 /auth/callback 대신 사용하세요)
+app.get('/auth/callback', async (req, res) => {
+  console.log('[DEBUG AUTH CALLBACK] raw query:', req.query);
+  const { error, error_description, code, state: mallId } = req.query;
+
+  if (error) {
+    console.warn('[DEBUG AUTH CALLBACK] provider error:', error, error_description);
+    return res.status(400).json({ ok: false, stage: 'provider_error', error, error_description });
+  }
+
+  if (!code || !mallId) {
+    console.error('[DEBUG AUTH CALLBACK] missing code or mallId', { code, mallId });
+    return res.status(400).json({ ok: false, stage: 'missing_params', code, mallId });
+  }
+
+  try {
+    const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: `${APP_URL.replace(/\/$/, '')}/auth/callback`
+    }).toString();
+
+    console.log('[DEBUG] requesting token from', tokenUrl);
+    const tokenResp = await axios.post(tokenUrl, body, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`
+      },
+      validateStatus: status => true, // 모든 상태코드 수신해서 로그 확인
+      timeout: 15000
+    });
+
+    console.log('[DEBUG] token response status:', tokenResp.status);
+    console.log('[DEBUG] token response data:', tokenResp.data);
+
+    if (tokenResp.status !== 200) {
+      // 응답 실패면 그대로 돌려줌 (카페24가 준 에러 메시지 확인용)
+      return res.status(502).json({ ok: false, stage: 'token_exchange_failed', status: tokenResp.status, data: tokenResp.data });
+    }
+
+    const data = tokenResp.data;
+    const doc = {
+      mallId,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      obtainedAt: new Date(),
+      expiresIn: data.expires_in || null,
+      raw: data
+    };
+
+    console.log('[DEBUG] about to upsert token doc into DB:', { mallId, hasAccessToken: !!doc.accessToken, hasRefreshToken: !!doc.refreshToken });
+
+    const upsertResult = await db.collection('token').updateOne(
+      { mallId },
+      { $set: doc },
+      { upsert: true }
+    );
+
+    console.log('[DEBUG] DB upsert result:', upsertResult);
+
+    // 개발용: DB 상태와 토큰 응답을 JSON으로 반환
+    const savedDoc = await db.collection('token').findOne({ mallId });
+    return res.json({ ok: true, stage: 'token_saved', tokenResponse: data, dbUpsert: upsertResult, savedDoc });
+
+  } catch (err) {
+    console.error('[DEBUG AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
+    return res.status(500).json({ ok: false, stage: 'exception', error: err.response?.data || err.message });
+  }
+});
 
 // ===================================================================
 // ② mallId-aware API 요청 헬퍼 (토큰조회, refresh 포함)
