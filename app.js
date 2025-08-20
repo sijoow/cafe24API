@@ -123,88 +123,104 @@ app.get('/install/:mallId', (req, res) => {
   res.redirect(url);
 });
 
-// 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → 프론트로 리다이렉트
+// 기존 app.js에서 /auth/callback 부분을 이 블록으로 교체하세요.
 app.get('/auth/callback', async (req, res) => {
+  // 디버깅용: 콜백으로 돌아오는 모든 쿼리 로그
+  console.log('[AUTH CALLBACK ARRIVED] query=', req.query);
+
   const { error, error_description, code, state: mallId } = req.query;
 
-  // 1) 카페24에서 error 쿼리로 돌아온 경우 -> 토큰 교환 시도 금지, 사용자에게 안내 및 재시도 링크 제공
   if (error) {
-    console.warn(`[AUTH CALLBACK ERROR PARAM] mallId=${mallId} error=${error} desc=${error_description}`);
-    const decodedDesc = decodeURIComponent(error_description || '');
+    console.error('[AUTH CALLBACK] provider returned error:', error, error_description);
+    // 사용자에게 명확히 보여주고 재설치 링크를 제공
+    const redirectUri = `${APP_URL}/auth/callback`;
+    const installParams = new URLSearchParams({
+      response_type: 'code',
+      client_id: CAFE24_CLIENT_ID,
+      redirect_uri: redirectUri,
+      scope: CAFE24_SCOPES || '',
+      state: mallId || ''
+    }).toString();
+    const installUrl = mallId ? `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${installParams}` : '#';
     return res.status(400).send(`
-      <html>
-        <body style="font-family:Arial,Helvetica,sans-serif;line-height:1.6">
-          <h2>OAuth 오류가 발생했습니다</h2>
-          <p><strong>error:</strong> ${error}</p>
-          <p><strong>description:</strong> ${decodedDesc}</p>
-          <p>원인(가능성): 개발자센터에 등록된 권한(scope)이 현재 요청과 일치하지 않거나 잘못된 Redirect URI가 등록되어 있습니다.</p>
-          <p>해결 방법:
-            <ol>
-              <li>카페24 개발자센터 → 앱 설정 → 권한(Scopes)을 확인하세요.</li>
-              <li>요청 중인 scope 문자열과 정확히 일치하도록 수정하세요 (공백/쉼표/철자 주의).</li>
-              <li>Redirect URI가 정확히 일치하는지 확인하세요 (예: <code>${APP_URL}/auth/callback</code>).</li>
-            </ol>
-          </p>
-          <p>
-            <a href="/install/${mallId}">앱 설치 재시도 (install URL)</a><br/>
-            <a href="${APP_URL}">대시보드로 돌아가기</a>
-          </p>
-        </body>
-      </html>
+      <html><body style="font-family:Arial,Helvetica,sans-serif">
+        <h2>인증 에러가 발생했습니다</h2>
+        <p><strong>error:</strong> ${error}</p>
+        <p><strong>description:</strong> ${error_description || ''}</p>
+        <p>가능한 원인: scope가 개발자센터에 등록된 값과 일치하지 않거나 Redirect URI가 다릅니다.</p>
+        <p><a href="${installUrl}">앱 설치 재시도</a></p>
+        <p><a href="${APP_URL}">대시보드로 돌아가기</a></p>
+      </body></html>
     `);
   }
 
-  // 2) 정상적으로 code 와 state 가 있는 경우에만 토큰 교환 시도
   if (!code || !mallId) {
-    return res.status(400).send('code 또는 mallId가 없습니다.');
+    console.warn('[AUTH CALLBACK] missing code or state:', { code, mallId });
+    return res.status(400).send('code 또는 mallId(state)가 없습니다.');
   }
 
   try {
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const body     = new URLSearchParams({
-      grant_type:   'authorization_code',
+    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
       code,
       redirect_uri: `${APP_URL}/auth/callback`
     }).toString();
 
-    console.log(`[AUTH CALLBACK] Exchanging token for mallId=${mallId} ...`);
-
+    console.log(`[AUTH CALLBACK] exchanging token for mallId=${mallId} ...`);
     const { data } = await axios.post(tokenUrl, body, {
       headers: {
-        'Content-Type':  'application/x-www-form-urlencoded',
+        'Content-Type': 'application/x-www-form-urlencoded',
         'Authorization': `Basic ${creds}`
       }
     });
 
+    // DB에 저장 (upsert)
     await db.collection('token').updateOne(
       { mallId },
-      {
-        $set: {
+      { $set: {
           mallId,
-          accessToken:  data.access_token,
+          accessToken: data.access_token,
           refreshToken: data.refresh_token,
-          obtainedAt:   new Date(),
-          expiresIn:    data.expires_in,
+          obtainedAt: new Date(),
+          expiresIn: data.expires_in,
           raw: data
-        }
-      },
+      }},
       { upsert: true }
     );
 
-    // 확인용 로그: DB에 실제로 저장되었는지 바로 읽어서 출력
+    console.log('[AUTH CALLBACK] 토큰 교환 성공 & DB 저장 완료 for', mallId);
+
+    // 저장 확인용 즉시 읽기 로그 (옵션)
     try {
       const saved = await db.collection('token').findOne({ mallId });
-      console.log('[AUTH CALLBACK] saved token doc:', saved ? { mallId: saved.mallId, obtainedAt: saved.obtainedAt } : 'not found');
+      console.log('[AUTH CALLBACK] token readback:', !!saved, saved ? { mallId: saved.mallId, obtainedAt: saved.obtainedAt } : null);
     } catch (readErr) {
-      console.warn('[AUTH CALLBACK] token saved but failed to read back:', readErr);
+      console.warn('[AUTH CALLBACK] token saved but readback failed:', readErr);
     }
 
-    console.log(`[AUTH CALLBACK] App installed for mallId: ${mallId}`);
-    return res.redirect(APP_URL);
+    // **중요**: 바로 APP_URL로 리다이렉트시키면 프론트가 /api/:mallId/mall을 즉시 호출하여
+    // 프론트/서버 간 폴링 루프를 만들 수 있습니다. (특히 저장이 실패하면 무한 루프)
+    // 그래서 사용자가 클릭해서 대시보드로 돌아가게 하는 간단한 성공 페이지를 보여줍니다.
+    return res.send(`
+      <html><body style="font-family:Arial,Helvetica,sans-serif">
+        <h2>앱 설치가 완료되었습니다</h2>
+        <p>상점 ID: <strong>${mallId}</strong></p>
+        <p>이 창을 닫고 대시보드로 돌아가거나 아래 버튼을 눌러주세요.</p>
+        <p><a href="${APP_URL}">대시보드로 이동</a></p>
+      </body></html>
+    `);
   } catch (err) {
-    console.error('[AUTH CALLBACK ERROR]', err.response?.data || err);
-    return res.status(500).send('토큰 교환 중 오류가 발생했습니다. 서버 로그를 확인하세요.');
+    console.error('[AUTH CALLBACK ERROR] token exchange or DB save failed:', err.response?.data || err.message || err);
+    return res.status(500).send(`
+      <html><body style="font-family:Arial,Helvetica,sans-serif">
+        <h2>토큰 교환에 실패했습니다</h2>
+        <pre>${JSON.stringify(err.response?.data || err.message || err, null, 2)}</pre>
+        <p>개발자 도구(서버 로그)를 확인하세요.</p>
+        <p><a href="${APP_URL}">대시보드로 돌아가기</a></p>
+      </body></html>
+    `);
   }
 });
 
