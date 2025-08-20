@@ -115,39 +115,25 @@ app.get('/install/:mallId', (req, res) => {
   res.redirect(url);
 });
 
-// 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → 프론트로 리다이렉트
+
+// auth/callback (replace existing handler)
 app.get('/auth/callback', async (req, res) => {
   const { error, error_description, code, state: mallId } = req.query;
 
-  // 1) 카페24에서 error 쿼리로 돌아온 경우 -> 사용자에게 안내 및 재시도 링크 제공
+  // 카페24에서 에러를 돌려준 경우 -> 프론트로 에러 전달
   if (error) {
-    console.warn(`[AUTH CALLBACK ERROR PARAM] mallId=${mallId} error=${error} desc=${error_description}`);
-    const decodedDesc = decodeURIComponent(error_description || '');
-    return res.status(400).send(`
-      <html>
-        <body style="font-family:Arial,Helvetica,sans-serif;line-height:1.6">
-          <h2>OAuth 오류가 발생했습니다</h2>
-          <p><strong>error:</strong> ${error}</p>
-          <p><strong>description:</strong> ${decodedDesc}</p>
-          <p>원인(가능성): 개발자센터에 등록된 권한(scope)이 현재 요청과 일치하지 않거나 잘못된 Redirect URI가 등록되어 있습니다.</p>
-          <p>해결 방법:
-            <ol>
-              <li>카페24 개발자센터 → 앱 설정 → 권한(Scopes)을 확인하세요.</li>
-              <li>요청 중인 scope 문자열과 정확히 일치하도록 수정하세요 (공백/쉼표/철자 주의).</li>
-              <li>Redirect URI가 정확히 일치하는지 확인하세요 (예: <code>${APP_URL.replace(/\/$/, '')}/auth/callback</code>).</li>
-            </ol>
-          </p>
-          <p>
-            <a href="/install/${mallId}">앱 설치 재시도 (install URL)</a><br/>
-            <a href="${APP_URL}">대시보드로 돌아가기</a>
-          </p>
-        </body>
-      </html>
-    `);
+    console.warn(`[AUTH CALLBACK] provider error for mall=${mallId} :`, error, error_description);
+    const q = new URLSearchParams({
+      mall_id: mallId || '',
+      auth_error: error,
+      auth_error_description: error_description || ''
+    }).toString();
+    return res.redirect(`${APP_URL.replace(/\/$/, '')}/redirect?${q}`);
   }
 
-  // 2) 정상적으로 code 와 state 가 있는 경우에만 토큰 교환 시도
   if (!code || !mallId) {
+    // 잘못된 콜백
+    console.error('[AUTH CALLBACK] missing code or state', req.query);
     return res.status(400).send('code 또는 mallId가 없습니다.');
   }
 
@@ -160,13 +146,16 @@ app.get('/auth/callback', async (req, res) => {
       redirect_uri: `${APP_URL.replace(/\/$/, '')}/auth/callback`
     }).toString();
 
-    const { data } = await axios.post(tokenUrl, body, {
+    const resp = await axios.post(tokenUrl, body, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Authorization': `Basic ${creds}`
-      }
+      },
+      timeout: 10000
     });
 
+    const data = resp.data;
+    // DB 저장 (upsert)
     await db.collection('token').updateOne(
       { mallId },
       {
@@ -182,13 +171,24 @@ app.get('/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    console.log(`[AUTH CALLBACK] App installed for mallId: ${mallId}`);
-    return res.redirect(`${APP_URL.replace(/\/$/, '')}`);
+    console.log(`[AUTH CALLBACK] token saved for mall=${mallId}`);
+
+    // 성공하면 프론트의 /redirect 라우트로 installed=1 표기해서 보냄
+    const q = new URLSearchParams({ mall_id: mallId, installed: '1' }).toString();
+    return res.redirect(`${APP_URL.replace(/\/$/, '')}/redirect?${q}`);
   } catch (err) {
-    console.error('[AUTH CALLBACK ERROR]', err.response?.data || err);
-    return res.status(500).send('토큰 교환 중 오류가 발생했습니다. 서버 로그를 확인하세요.');
+    console.error('[AUTH CALLBACK ERROR] token exchange or DB upsert failed', err.response?.data || err.message || err);
+    const msg = err.response?.data?.error_description || err.message || 'token_error';
+    const q = new URLSearchParams({
+      mall_id: mallId,
+      auth_error: 'token_exchange_failed',
+      auth_error_description: msg
+    }).toString();
+    return res.redirect(`${APP_URL.replace(/\/$/, '')}/redirect?${q}`);
   }
 });
+
+
 
 // ===================================================================
 // ② mallId-aware API 요청 헬퍼
