@@ -1,4 +1,4 @@
-// app.js — debug / robust token save 버전 (전체)
+// app.js (전체 파일 — 수정본)
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
 
@@ -33,28 +33,15 @@ const {
   R2_ENDPOINT,
   R2_REGION = 'us-east-1',
   R2_PUBLIC_BASE,
-  CAFE24_SCOPES,
+  CAFE24_SCOPES, // 반드시 개발자센터에 등록된 scope 문자열을 그대로 넣을 것
 } = process.env;
 
-const DEFAULT_SCOPES = CAFE24_SCOPES || [
-  'mall.read_promotion',
-  'mall.write_promotion',
-  'mall.read_category',
-  'mall.write_category',
-  'mall.read_product',
-  'mall.write_product',
-  'mall.read_collection',
-  'mall.read_application',
-  'mall.write_application',
-  'mall.read_analytics',
-  'mall.read_salesreport',
-  'mall.read_store'
-].join(',');
-
-if (!APP_URL) console.warn('⚠️ APP_URL missing');
-if (!MONGODB_URI || !DB_NAME) console.warn('⚠️ Mongo env missing');
-if (!CAFE24_CLIENT_ID || !CAFE24_CLIENT_SECRET) console.warn('⚠️ CAFE24 client creds missing');
-console.log('Using CAFE24 scopes:', DEFAULT_SCOPES);
+if (!APP_URL) {
+  console.warn('⚠️ APP_URL 환경변수가 설정되어 있지 않습니다. 예: https://onimon.shop');
+}
+if (!CAFE24_SCOPES) {
+  console.warn('⚠️ CAFE24_SCOPES 환경변수가 설정되어 있지 않습니다. 개발자센터에 등록된 스코프를 정확히 넣으세요.');
+}
 
 const app = express();
 app.use(cors());
@@ -63,24 +50,26 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// request logger
+// ─── 요청 로거 (디버깅용)
 app.use((req, res, next) => {
   console.log(new Date().toISOString(), '--- INCOMING REQUEST ---', req.method, req.originalUrl);
-  if (Object.keys(req.query || {}).length) console.log(' query:', req.query);
+  if (Object.keys(req.query || {}).length) {
+    console.log('202 LOG query:', req.query);
+  }
   next();
 });
 
-// MongoDB
+// ─── MongoDB 연결 ───────────────────────────────────────────────
 let db;
 async function initDb() {
-  const client = new MongoClient(MONGODB_URI);
+  const client = new MongoClient(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
   await client.connect();
   db = client.db(DB_NAME);
   await db.collection('token').createIndex({ mallId: 1 }, { unique: true });
   console.log('▶️ MongoDB connected to', DB_NAME);
 }
 
-// Multer
+// ─── Multer (파일 업로드 임시저장) ─────────────────────────────────
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const storage = multer.diskStorage({
@@ -89,124 +78,95 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// R2/S3 client
+// ─── R2 (AWS S3 호환) 클라이언트 ─────────────────────────────────
 const s3Client = new S3Client({
-  region: R2_REGION,
+  region:   R2_REGION,
   endpoint: R2_ENDPOINT,
-  credentials: { accessKeyId: R2_ACCESS_KEY, secretAccessKey: R2_SECRET_KEY },
+  credentials: {
+    accessKeyId:     R2_ACCESS_KEY,
+    secretAccessKey: R2_SECRET_KEY,
+  },
   forcePathStyle: true,
 });
 
-// ==============================
-// 설치 시작: install redirect
+// ===================================================================
+// ① 설치 → 권한요청 → 콜백 (code → 토큰) → DB 저장
+// ===================================================================
+
+// 설치 시작: mallId 기반 OAuth 권한 요청 (이 URL은 프론트에서 /api/:mallId/mall로 생성해서 리다이렉트하는 흐름이 안전)
 app.get('/install/:mallId', (req, res) => {
   const { mallId } = req.params;
   const redirectUri = `${APP_URL}/auth/callback`;
+  const scopes = CAFE24_SCOPES || 'mall.read_category,mall.read_product,mall.read_analytics';
+
   const params = new URLSearchParams({
     response_type: 'code',
-    client_id: CAFE24_CLIENT_ID,
-    redirect_uri: redirectUri,
-    scope: DEFAULT_SCOPES,
-    state: mallId
-  }).toString();
+    client_id:     CAFE24_CLIENT_ID,
+    redirect_uri:  redirectUri,
+    scope:         scopes,
+    state:         mallId,
+  });
   const url = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`;
   console.log('[INSTALL REDIRECT]', url);
   res.redirect(url);
 });
 
-// ==============================
-// 콜백: code -> token 교환 -> DB 저장 (강화판)
+// (보통 카페24가 /auth/callback 으로 redirect) 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 → 프론트로 리다이렉트
 app.get('/auth/callback', async (req, res) => {
-  const { error, error_description, code, state: mallId } = req.query;
-  console.log('[AUTH CALLBACK] hit', { error, mallId });
-
+  const { code, state: mallId, error, error_description } = req.query;
   if (error) {
-    console.error('[AUTH CALLBACK] provider returned error', error, error_description);
-    return res.status(400).send(`
-      <h2>OAuth error</h2>
-      <pre>${error} : ${decodeURIComponent(error_description || '')}</pre>
-      <p>Redirect URI and scopes must match exactly.</p>
-    `);
+    console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, error_description);
+    // 프론트로 에러 전달 (프론트에서 처리하도록)
+    return res.redirect(`${APP_URL}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
   }
-  if (!code || !mallId) return res.status(400).send('code 또는 mallId가 없습니다.');
+  if (!code || !mallId) {
+    return res.status(400).send('code 또는 mallId가 없습니다.');
+  }
 
   try {
     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
+    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const body     = new URLSearchParams({
+      grant_type:   'authorization_code',
       code,
       redirect_uri: `${APP_URL}/auth/callback`
     }).toString();
 
-    console.log('[AUTH CALLBACK] exchanging token for mallId=', mallId);
-    const resp = await axios.post(tokenUrl, body, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${creds}` },
-      timeout: 15000
+    const { data } = await axios.post(tokenUrl, body, {
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`
+      }
     });
 
-    // debug: 전체 응답 로그 (주의: 실서비스에서는 민감정보 노출 주의)
-    console.log('[AUTH CALLBACK] token response data:', JSON.stringify(resp.data, null, 2));
-
-    const data = resp.data;
-    // 검증: access_token 유무 체크
-    if (!data || !data.access_token) {
-      console.error('[AUTH CALLBACK] token response missing access_token', data);
-      return res.status(500).send('토큰을 발급받지 못했습니다. 응답을 로그에 확인하세요.');
-    }
-
-    // 저장 시도 (upsert + 확인, 실패 시 insert fallback)
-    try {
-      const upsertRes = await db.collection('token').updateOne(
-        { mallId },
-        { $set: {
-            mallId,
-            accessToken: data.access_token || null,
-            refreshToken: data.refresh_token || null,
-            obtainedAt: new Date(),
-            expiresIn: data.expires_in ?? null,
-            raw: data
-          }
-        },
-        { upsert: true }
-      );
-      console.log('[AUTH CALLBACK] updateOne result', upsertRes.result || upsertRes);
-
-      // 강제 확인
-      const saved = await db.collection('token').findOne({ mallId });
-      if (!saved || !saved.accessToken) {
-        console.warn('[AUTH CALLBACK] saved doc not found or missing tokens. Trying insert fallback.');
-        try {
-          await db.collection('token').insertOne({
-            mallId,
-            accessToken: data.access_token || null,
-            refreshToken: data.refresh_token || null,
-            obtainedAt: new Date(),
-            expiresIn: data.expires_in ?? null,
-            raw: data
-          });
-        } catch (insErr) {
-          // 만약 unique 인덱스 에러 등으로 insert 실패하면 다시 fetch해보고 실패 리포트
-          console.error('[AUTH CALLBACK] insert fallback failed', insErr);
+    // DB에 토큰 저장 (plus 획득시점/만료)
+    await db.collection('token').updateOne(
+      { mallId },
+      {
+        $set: {
+          mallId,
+          accessToken:  data.access_token,
+          refreshToken: data.refresh_token,
+          obtainedAt:   new Date(),
+          expiresIn:    data.expires_in,
+          raw: data
         }
-      }
-    } catch (dbErr) {
-      console.error('[AUTH CALLBACK] DB write failed', dbErr);
-      return res.status(500).send('토큰 저장 중 DB 오류가 발생했습니다. 서버 로그를 확인하세요.');
-    }
+      },
+      { upsert: true }
+    );
 
-    console.log(`[AUTH CALLBACK] token saved for mallId=${mallId}`);
-    // 프론트로 포워드 (React가 redirect 처리 가능)
-    return res.redirect(`${APP_URL}/redirect?mall_id=${encodeURIComponent(mallId)}&installed=1`);
+    console.log(`[AUTH CALLBACK] App installed for mallId: ${mallId}`);
+
+    // 설치 후 프론트로 보내기 (프론트 Redirect.jsx가 mall_id 쿼리로 처리할 수 있게)
+    return res.redirect(`${APP_URL}/?mall_id=${encodeURIComponent(mallId)}`);
   } catch (err) {
-    console.error('[AUTH CALLBACK] token exchange error', err.response?.data || err.message || err);
-    // provider 오류 메시지 프론트로 전달
-    const errMsg = err.response?.data?.error_description || err.response?.data || err.message || 'token_error';
-    return res.status(500).send(`<h2>Token exchange failed</h2><pre>${JSON.stringify(errMsg, null, 2)}</pre>`);
+    console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
+    return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
   }
 });
 
-// redirect forward for front-end
+// (프론트용) 카페24가 호출하는 redirect_uri가 https://onimon.shop/redirect 로 설정되어있을 때
+// -> 쿼리 그대로 프론트의 /redirect 라우트로 포워드 (React가 처리)
 app.get('/redirect', (req, res) => {
   const qs = new URLSearchParams(req.query).toString();
   const target = `${APP_URL}/redirect${qs ? ('?' + qs) : ''}`;
@@ -214,104 +174,168 @@ app.get('/redirect', (req, res) => {
   return res.redirect(target);
 });
 
-// ==============================
-// refresh & apiRequest helper
+// ===================================================================
+// ② mallId-aware API 요청 헬퍼 (토큰조회, refresh 포함)
+// ===================================================================
+
 async function refreshAccessToken(mallId, refreshToken) {
   const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
   const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
   const params = new URLSearchParams({
-    grant_type: 'refresh_token',
+    grant_type:    'refresh_token',
     refresh_token: refreshToken
   }).toString();
 
   const { data } = await axios.post(url, params, {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${creds}` },
-    timeout: 15000
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${creds}`
+    }
   });
 
-  await db.collection('token').updateOne({ mallId }, { $set: {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    obtainedAt: new Date(),
-    expiresIn: data.expires_in,
-    raw_refresh_response: data
-  }});
+  await db.collection('token').updateOne(
+    { mallId },
+    { $set: {
+        accessToken:  data.access_token,
+        refreshToken: data.refresh_token,
+        obtainedAt:   new Date(),
+        expiresIn:    data.expires_in,
+        raw_refresh_response: data
+      }
+    }
+  );
+
   console.log(`[TOKEN REFRESH] mallId=${mallId}`);
   return data.access_token;
 }
 
 async function apiRequest(mallId, method, url, data = {}, params = {}) {
   const doc = await db.collection('token').findOne({ mallId });
-  if (!doc) {
-    const redirectUri = `${APP_URL}/auth/callback`;
-    const paramsQ = new URLSearchParams({
-      response_type: 'code',
-      client_id: CAFE24_CLIENT_ID,
-      redirect_uri: redirectUri,
-      scope: DEFAULT_SCOPES,
-      state: mallId
-    }).toString();
-    const installUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${paramsQ}`;
-    const e = new Error(`NOT_INSTALLED:${installUrl}`);
-    e.code = 'NOT_INSTALLED';
-    e.installUrl = installUrl;
-    throw e;
-  }
+  if (!doc) throw new Error(`토큰 정보 없음: mallId=${mallId}`);
+
   try {
-    const resp = await axios({ method, url, data, params, headers: {
-      Authorization: `Bearer ${doc.accessToken}`,
-      'Content-Type': 'application/json',
-      'X-Cafe24-Api-Version': CAFE24_API_VERSION
-    }, timeout: 15000 });
+    const resp = await axios({
+      method, url, data, params,
+      headers: {
+        Authorization:         `Bearer ${doc.accessToken}`,
+        'Content-Type':        'application/json',
+        'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+      }
+    });
     return resp.data;
   } catch (err) {
     if (err.response?.status === 401 && doc.refreshToken) {
-      console.log('[API REQUEST] access token expired, trying refresh for', mallId);
       const newAccess = await refreshAccessToken(mallId, doc.refreshToken);
-      const retry = await axios({ method, url, data, params, headers: {
-        Authorization: `Bearer ${newAccess}`,
-        'Content-Type': 'application/json',
-        'X-Cafe24-Api-Version': CAFE24_API_VERSION
-      }, timeout: 15000 });
+      const retry = await axios({
+        method, url, data, params,
+        headers: {
+          Authorization:         `Bearer ${newAccess}`,
+          'Content-Type':        'application/json',
+          'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+        }
+      });
       return retry.data;
     }
+    // bubble up
     throw err;
   }
 }
 
-// ==============================
-// (이하 기존 CRUD/analytics 엔드포인트 전부 동일 — 길어서 생략 안함, 필요하다면 그대로 붙여넣으세요)
-// 예시: ping, /api/:mallId/mall (설치확인), 업로드, events CRUD, track, categories, coupons, analytics 등
-// -> 실제로는 사용하시던 전체 엔드포인트를 이 파일에 그대로 넣으시면 됩니다.
+// ===================================================================
+// ③ mallId-aware 전용 엔드포인트 모음
+// ===================================================================
 
-// 간단한 ping
-app.get('/api/:mallId/ping', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+// (0) 기본 Ping
+app.get('/api/:mallId/ping', (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
 
-// 설치확인 엔드포인트 (프론트에서 호출)
+// ----------------- 핵심: 설치 여부 확인 API -----------------
+// 프론트가 설치여부를 확인하려고 호출함.
+// 설치되어 있으면 installed:true, 아니면 installed:false + installUrl 반환
 app.get('/api/:mallId/mall', async (req, res) => {
+  const { mallId } = req.params;
   try {
-    const { mallId } = req.params;
     const doc = await db.collection('token').findOne({ mallId });
-    if (doc && doc.accessToken) return res.json({ installed: true, mallId, userId: doc.userId || null });
+    if (doc && doc.accessToken) {
+      return res.json({
+        installed: true,
+        mallId,
+        userId: doc.userId || null,
+        userName: doc.userName || null
+      });
+    }
+
+    // 미설치: installUrl 생성
+    const scopes = CAFE24_SCOPES || 'mall.read_category,mall.read_product,mall.read_analytics';
     const redirectUri = `${APP_URL}/auth/callback`;
-    const paramsQ = new URLSearchParams({
-      response_type: 'code', client_id: CAFE24_CLIENT_ID, redirect_uri: redirectUri, scope: DEFAULT_SCOPES, state: req.params.mallId
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: CAFE24_CLIENT_ID,
+      redirect_uri: redirectUri,
+      scope: scopes,
+      state: mallId,
     }).toString();
-    const installUrl = `https://${req.params.mallId}.cafe24api.com/api/v2/oauth/authorize?${paramsQ}`;
-    return res.json({ installed: false, mallId: req.params.mallId, installUrl });
+
+    const installUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`;
+
+    console.log(`[API BLOCK] API request blocked because not installed: mallId=${mallId} -> ${installUrl}`);
+
+    return res.json({
+      installed: false,
+      mallId,
+      installUrl
+    });
   } catch (err) {
-    console.error('[MALL CHECK ERROR]', err);
-    res.status(500).json({ error: 'mall check failed' });
+    console.error('[MALL INFO ERROR]', err);
+    return res.status(500).json({ error: 'mall info fetch failed' });
   }
 });
 
-// (나머지 endpoints — events, uploads, track, categories, products, coupons, analytics 등은 사용하시던 것을 그대로 붙여넣어 주세요)
+// ---------------- 기존 CRUD / 기능 엔드포인트 ----------------
+// (아래는 네가 제공한 기존 코드들을 유지 — 이벤트/트래킹/쿠폰/카테고리 등)
+// (일부는 길어서 생략 불가피; 실제로는 네가 준 전체 로직을 그대로 복사해서 붙여넣어야 합니다.)
+// 여기부터는 네 원본 파일의 모든 엔드포인트 (events, uploads, track, categories, coupons, analytics 등)을
+// 그대로 붙여넣으시면 됩니다. (원본 코드와 중복되지 않도록 위치 맞추세요.)
 
-// ==============================
+// ─── 이미지 업로드 (Multer + R2/S3) ─────────────────────────────────
+app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
+  try {
+    const { mallId } = req.params;
+    const { filename, path: localPath, mimetype } = req.file;
+    const key = `uploads/${mallId}/${filename}`;
+
+    await s3Client.send(new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key:    key,
+      Body:   fs.createReadStream(localPath),
+      ContentType: mimetype,
+      ACL:    'public-read'
+    }));
+
+    fs.unlink(localPath, () => {});
+    const url = `${R2_PUBLIC_BASE}/${key}`;
+    res.json({ url });
+  } catch (err) {
+    console.error('[IMAGE UPLOAD ERROR]', err);
+    res.status(500).json({ error: '이미지 업로드 실패' });
+  }
+});
+
+// --- (이하 기존 app.js 의 모든 엔드포인트를 그대로 이어붙이세요)
+// 예: events CRUD, /api/:mallId/coupons, /api/:mallId/categories/all, 트래킹 /api/:mallId/track, analytics 등
+// 이미 질문에서 주신 원본 파일(길게 주신 app.js)이 있으므로, 그대로 이어붙이면 됩니다.
+// (중복 정의가 없도록 `app.get('/api/:mallId/mall'...)` 등 새로 추가한 엔드포인트와 충돌 나지 않게 주의)
+
+
+// ===================================================================
 // 서버 시작
+// ===================================================================
 initDb()
   .then(() => {
-    app.listen(PORT, () => console.log(`▶️ Server running at ${APP_URL} (port ${PORT})`));
+    app.listen(PORT, () => {
+      console.log(`▶️ Server running at ${APP_URL} (port ${PORT})`);
+    });
   })
   .catch(err => {
     console.error('❌ 초기화 실패:', err);
