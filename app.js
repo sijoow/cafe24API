@@ -107,17 +107,126 @@ const s3Client = new S3Client({
 app.get('/install/:mallId', (req, res) => {
   const { mallId } = req.params;
   const redirectUri = `${APP_URL}/auth/callback`;
+  const scopes = process.env.CAFE24_SCOPES || 'mall.read_category,mall.read_product,mall.read_analytics';
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
     redirect_uri:  redirectUri,
-    scope:         DEFAULT_SCOPES,
+    scope:         scopes,
     state:         mallId,
   }).toString();
 
   const url = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`;
-  console.log('[INSTALL] redirect to', url);
+  console.log('[INSTALL] redirect to:', url);
   res.redirect(url);
+});
+
+// 콜백 핸들러: code -> 토큰 발급 -> DB 저장 -> 프론트 /redirect 로 포워딩
+app.get('/auth/callback', async (req, res) => {
+  const { error, error_description, code, state: mallId } = req.query;
+
+  if (error) {
+    console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, decodeURIComponent(error_description || ''));
+    // 프론트에서 처리하려면 /redirect로 포워딩 (프론트에서 auth_error 쿼리 확인하도록)
+    return res.redirect(`${APP_URL}/redirect?auth_error=${encodeURIComponent(error)}&error_description=${encodeURIComponent(error_description||'')}&mall_id=${encodeURIComponent(mallId||'')}`);
+  }
+
+  if (!code || !mallId) {
+    return res.status(400).send('code 또는 mallId가 없습니다.');
+  }
+
+  try {
+    const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+    const creds    = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const body     = new URLSearchParams({
+      grant_type:   'authorization_code',
+      code,
+      redirect_uri: `${APP_URL}/auth/callback`
+    }).toString();
+
+    console.log('[AUTH CALLBACK] exchanging code for token, mallId=', mallId);
+    const { data } = await axios.post(tokenUrl, body, {
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`
+      },
+      timeout: 10000
+    });
+
+    console.log('[AUTH CALLBACK] token response keys:', Object.keys(data));
+
+    // DB 저장
+    await db.collection('token').updateOne(
+      { mallId },
+      {
+        $set: {
+          mallId,
+          accessToken:  data.access_token || null,
+          refreshToken: data.refresh_token || null,
+          obtainedAt:   new Date(),
+          expiresIn:    data.expires_in ?? null,
+          raw: data
+        }
+      },
+      { upsert: true }
+    );
+
+    // 저장된 내용 다시 읽어서 로그 확인
+    const saved = await db.collection('token').findOne({ mallId });
+    console.log('[AUTH CALLBACK] saved token doc:', {
+      mallId: saved?.mallId,
+      hasAccessToken: !!saved?.accessToken,
+      hasRefreshToken: !!saved?.refreshToken,
+      obtainedAt: saved?.obtainedAt
+    });
+
+    // 프론트 Redirect 컴포넌트로 포워딩 (프론트가 /api/:mallId/mall 로 추후 확인함)
+    return res.redirect(`${APP_URL}/redirect?mall_id=${encodeURIComponent(mallId)}&installed=1`);
+  } catch (err) {
+    console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
+    const msg = err.response?.data?.error_description || err.response?.data || err.message || 'token_exchange_error';
+    return res.redirect(`${APP_URL}/redirect?mall_id=${encodeURIComponent(mallId)}&auth_error=${encodeURIComponent(msg)}`);
+  }
+});
+
+// 프론트가 설치여부 확인할 때 호출하는 API
+app.get('/api/:mallId/mall', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    const doc = await db.collection('token').findOne({ mallId });
+    if (doc && doc.accessToken) {
+      return res.json({
+        installed: true,
+        mallId: doc.mallId,
+        userId: doc.userId || null,
+        userName: doc.userName || null
+      });
+    }
+
+    // 미설치: 설치 URL 생성해서 프론트에 전달
+    const redirectUri = `${APP_URL}/auth/callback`;
+    const scopes = process.env.CAFE24_SCOPES || 'mall.read_category,mall.read_product,mall.read_analytics';
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id:     CAFE24_CLIENT_ID,
+      redirect_uri:  redirectUri,
+      scope:         scopes,
+      state:         mallId,
+    }).toString();
+    const installUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`;
+
+    console.log(`[API BLOCK] API request blocked because not installed: mallId=${mallId} -> ${installUrl}`);
+
+    return res.json({
+      installed: false,
+      mallId,
+      installUrl
+    });
+  } catch (err) {
+    console.error('[MALL INFO ERROR]', err);
+    return res.status(500).json({ error: 'mall info fetch failed' });
+  }
 });
 
 // 콜백 핸들러: code -> 토큰 발급 -> DB 저장 -> 프론트 redirect
