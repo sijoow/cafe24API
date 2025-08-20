@@ -111,21 +111,109 @@ const s3Client = new S3Client({
 // ① 설치 시작 -> 권한요청(카페24) -> 콜백(token 교환) -> DB 저장
 // ===================================================================
 
-// 설치 시작: mallId 기반 권한 요청 (프론트에서 /install/:mallId 호출)
+// === install (권한요청 URL 생성) ===
 app.get('/install/:mallId', (req, res) => {
   const { mallId } = req.params;
-  const redirectUri = `${APP_URL}/auth/callback`; // 개발자센터에 동일하게 등록되어야 함
+  const redirectUri = `${APP_URL}/auth/callback`;
+  // 정확히 개발자센터에 등록된 scope 문자열을 넣으세요.
+  const scopes = process.env.CAFE24_SCOPES || DEFAULT_SCOPES;
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: CAFE24_CLIENT_ID,
     redirect_uri: redirectUri,
-    scope: DEFAULT_SCOPES,
+    scope: scopes,
     state: mallId
   }).toString();
-
   const url = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params}`;
   console.log('[INSTALL] redirect to', url);
   res.redirect(url);
+});
+
+// === auth callback (디버그 로깅 강화) ===
+app.get('/auth/callback', async (req, res) => {
+  const incoming = { query: req.query, ip: req.ip, time: new Date() };
+  console.log('[AUTH CALLBACK] incoming:', incoming);
+
+  // 저장해둘 디버그 레코드 (문제 추적용)
+  try {
+    await db.collection('debug_callbacks').insertOne({ ...incoming, savedAt: new Date() });
+  } catch (e) {
+    console.warn('[AUTH CALLBACK] debug insert failed', e && e.message);
+  }
+
+  const { error, error_description, code, state: mallId } = req.query;
+  if (error) {
+    console.warn('[AUTH CALLBACK] provider returned error', error, error_description);
+    // 개발 편의: 에러/쿼리 모두 기록 후 프론트로 포워드
+    const q = new URLSearchParams({
+      mall_id: mallId || '',
+      auth_error: error_description || error
+    }).toString();
+    return res.redirect(`${APP_URL}/redirect?${q}`);
+  }
+
+  if (!code || !mallId) {
+    console.error('[AUTH CALLBACK] missing code or state', { code, mallId });
+    return res.status(400).send('code 또는 mallId가 없습니다.');
+  }
+
+  try {
+    const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: `${APP_URL}/auth/callback`
+    }).toString();
+
+    console.log('[AUTH CALLBACK] exchanging token', { mallId });
+    const resp = await axios.post(tokenUrl, body, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${creds}`
+      },
+      timeout: 15000
+    });
+
+    const data = resp.data;
+    console.log('[AUTH CALLBACK] token response', { mallId, keys: Object.keys(data) });
+
+    // DB에 저장 (업서트) — 실패 시 에러를 throw 하여 catch에서 처리
+    const doc = {
+      mallId,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      obtainedAt: new Date(),
+      expiresIn: data.expires_in ?? null,
+      raw: data
+    };
+
+    const upsertResult = await db.collection('token').updateOne(
+      { mallId },
+      { $set: doc },
+      { upsert: true }
+    );
+
+    console.log('[AUTH CALLBACK] token saved to DB', { mallId, upsertResult });
+    // 성공 시 프론트로 포워딩
+    return res.redirect(`${APP_URL}/redirect?mall_id=${encodeURIComponent(mallId)}&installed=1`);
+  } catch (err) {
+    console.error('[AUTH CALLBACK ERROR] token exchange or db save failed', err.response?.data || err.message || err);
+    // 실패 상세를 debug_callbacks에 기록
+    try {
+      await db.collection('debug_callbacks').insertOne({
+        mallId,
+        code,
+        error: err.response?.data || err.message || err,
+        savedAt: new Date()
+      });
+    } catch (e2) {
+      console.warn('[AUTH CALLBACK] failed to insert error debug record', e2 && e2.message);
+    }
+    const msg = err.response?.data?.error_description || err.response?.data || err.message || 'token_exchange_failed';
+    const q = new URLSearchParams({ mall_id: mallId || '', auth_error: msg }).toString();
+    return res.redirect(`${APP_URL}/redirect?${q}`);
+  }
 });
 
 // 콜백: code -> token 교환 -> DB 저장 -> 프론트로 포워딩
