@@ -104,35 +104,28 @@ app.get('/install/:mallId', (req, res) => {
   res.redirect(url);
 });
 
-// 안전한 콜백 핸들러: 디버그 로그 + DB 저장 확인 + 성공 페이지 표시
+// ------------------ (중략) 기존 초기화/미들웨어 등 그대로 유지 ------------------
+
+// ─── 콜백 핸들러: code → 토큰 발급 → DB에 mallId별 저장 (디버깅 강화)
 app.get('/auth/callback', async (req, res) => {
   console.log('[AUTH CALLBACK ARRIVED] query=', req.query);
   const { error, error_description, code, state: mallId } = req.query;
 
+  // provider 에러
   if (error) {
-    console.error('[AUTH CALLBACK] provider error:', error, error_description);
-    const redirectUri = `${APP_URL}/auth/callback`;
-    const installParams = new URLSearchParams({
-      response_type: 'code',
-      client_id: CAFE24_CLIENT_ID,
-      redirect_uri: redirectUri,
-      scope: CAFE24_SCOPES || '',
-      state: mallId || ''
-    }).toString();
-    const installUrl = mallId ? `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${installParams}` : '#';
-    return res.status(400).send(`
-      <html><body style="font-family:Arial,Helvetica,sans-serif">
-        <h2>OAuth 오류</h2>
-        <p><strong>error:</strong> ${error}</p>
-        <p><strong>description:</strong> ${error_description || ''}</p>
-        <p><a href="${installUrl}">설치 재시도</a> · <a href="${APP_URL}">대시보드로 이동</a></p>
-      </body></html>
-    `);
+    console.error('[AUTH CALLBACK][PROVIDER ERROR]', error, error_description);
+    return res.status(400).send(`<h3>OAuth Error</h3><pre>${error} - ${error_description || ''}</pre>`);
   }
 
   if (!code || !mallId) {
     console.warn('[AUTH CALLBACK] missing code or state:', { code, mallId });
     return res.status(400).send('code 또는 mallId(state)가 없습니다.');
+  }
+
+  // DB 연결 확인
+  if (!db) {
+    console.error('[AUTH CALLBACK] DB not initialized (db is undefined).');
+    return res.status(500).send('서버 DB 연결이 준비되지 않았습니다. 잠시 후 다시 시도해주세요.');
   }
 
   try {
@@ -144,7 +137,7 @@ app.get('/auth/callback', async (req, res) => {
       redirect_uri: `${APP_URL}/auth/callback`
     }).toString();
 
-    console.log(`[AUTH CALLBACK] exchanging token for mallId=${mallId} ...`);
+    console.log(`[AUTH CALLBACK] exchanging token for mallId=${mallId}`);
     const { data } = await axios.post(tokenUrl, body, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -152,47 +145,71 @@ app.get('/auth/callback', async (req, res) => {
       }
     });
 
-    await db.collection('token').updateOne(
+    // 저장 시도 — 실패하면 에러를 던져 catch로 이동 (여기서 상세 로깅)
+    const upsertResult = await db.collection('token').updateOne(
       { mallId },
-      { $set: {
+      {
+        $set: {
           mallId,
           accessToken: data.access_token,
           refreshToken: data.refresh_token,
           obtainedAt: new Date(),
           expiresIn: data.expires_in,
           raw: data
-      }},
+        }
+      },
       { upsert: true }
     );
 
-    console.log('[AUTH CALLBACK] 토큰 교환 성공 & DB 저장 완료 for', mallId);
+    console.log('[AUTH CALLBACK] updateOne result:', JSON.stringify(upsertResult));
 
-    // 저장 확인용 읽기 로그
-    try {
-      const saved = await db.collection('token').findOne({ mallId });
-      console.log('[AUTH CALLBACK] token readback:', !!saved, saved ? { mallId: saved.mallId, obtainedAt: saved.obtainedAt } : null);
-    } catch (readErr) {
-      console.warn('[AUTH CALLBACK] token saved but readback failed:', readErr);
-    }
+    // 저장 후 읽기 확인
+    const saved = await db.collection('token').findOne({ mallId });
+    console.log('[AUTH CALLBACK] saved token doc:', !!saved, saved ? { mallId: saved.mallId, obtainedAt: saved.obtainedAt } : null);
 
-    // 사용자에게 성공 페이지 제공 (바로 리다이렉트하지 않음 -> 무한루프 방지)
-    return res.send(`
+    // 디버그: DB 저장 결과를 브라우저에 JSON으로 보여줌(운영에선 리다이렉트로 바꿀 것)
+    return res.status(200).send(`
       <html><body style="font-family:Arial,Helvetica,sans-serif">
-        <h2>앱 설치가 완료되었습니다</h2>
-        <p>상점 ID: <strong>${mallId}</strong></p>
-        <p>이 창을 닫고 대시보드로 돌아가거나 아래 버튼을 누르세요.</p>
-        <p><a href="${APP_URL}">대시보드로 이동</a></p>
+        <h2>앱 설치 완료 (디버그 모드)</h2>
+        <pre>mallId: ${mallId}\nsaved: ${saved ? 'YES' : 'NO'}</pre>
+        <p><a href="${APP_URL}">대시보드로 돌아가기</a></p>
       </body></html>
     `);
   } catch (err) {
-    console.error('[AUTH CALLBACK ERROR] token exchange or DB save failed:', err.response?.data || err.message || err);
+    // axios 에러인지 DB 에러인지 자세히 로깅
+    console.error('[AUTH CALLBACK ERROR] token exchange or DB upsert failed:', err.response?.data || err.message || err);
     return res.status(500).send(`
-      <html><body style="font-family:Arial,Helvetica,sans-serif">
-        <h2>토큰 교환 실패</h2>
+      <html><body>
+        <h3>토큰 교환/저장 실패 (디버그)</h3>
         <pre>${JSON.stringify(err.response?.data || err.message || err, null, 2)}</pre>
         <p><a href="${APP_URL}">대시보드로 돌아가기</a></p>
       </body></html>
     `);
+  }
+});
+
+// ----------------- 디버그 조회 API (운영에선 비활성화) -----------------
+app.get('/debug/token/:mallId', async (req, res) => {
+  try {
+    const { mallId } = req.params;
+    if (!mallId) return res.status(400).json({ error: 'mallId required' });
+    const doc = await db.collection('token').findOne({ mallId });
+    if (!doc) return res.status(404).json({ error: 'not found' });
+    // 민감한 정보 포함 -> 운영용이 아니니 주의
+    res.json(doc);
+  } catch (err) {
+    console.error('[DEBUG TOKEN ERROR]', err);
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.get('/debug/tokens', async (req, res) => {
+  try {
+    const list = await db.collection('token').find({}).limit(100).toArray();
+    res.json(list.map(d=>({ mallId: d.mallId, obtainedAt: d.obtainedAt })));
+  } catch (err) {
+    console.error('[DEBUG TOKENS ERROR]', err);
+    res.status(500).json({ error: 'failed' });
   }
 });
 
