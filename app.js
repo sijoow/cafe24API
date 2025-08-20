@@ -47,6 +47,80 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 // NOTE: express.static 을 아래에 배치했습니다 (client 핸들러가 먼저 실행되도록)
 
+app.use((req, res, next) => {
+  console.log('--- INCOMING REQUEST ---', req.method, req.originalUrl);
+  console.log(' query:', req.query);
+  // 필요하면 headers도 찍어봄
+  // console.log(' headers:', req.headers);
+  next();
+});
+
+app.get(['/', '/client'], async (req, res, next) => {
+  try {
+    const mallId = req.query.mall_id || req.query.mallId || req.query.mall || req.query.shop || req.query.shop_no;
+    if (!mallId) return next();
+
+    const tokenDoc = await db.collection('token').findOne({ mallId });
+    if (tokenDoc && tokenDoc.accessToken) {
+      console.log(`[CLIENT] mallId=${mallId} already installed -> serve SPA`);
+      return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    }
+
+    // 설치 안 되어 있으면 카페24 권한요청 URL 생성
+    const redirectUri = `${APP_URL}/auth/callback`;
+    const scope = [
+      'mall.read_promotion','mall.write_promotion',
+      'mall.read_category','mall.write_category',
+      'mall.read_product','mall.write_product',
+      'mall.read_collection','mall.read_application','mall.write_application',
+      'mall.read_analytics','mall.read_salesreport','mall.read_store'
+    ].join(',');
+
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id:     CAFE24_CLIENT_ID,
+      redirect_uri:  redirectUri,
+      scope,
+      state:         mallId
+    });
+
+    const authorizeUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
+    console.log(`[INSTALL REDIRECT] mallId=${mallId} -> ${authorizeUrl}`);
+
+    // iframe 내부에서 열리더라도 top-level에서 열리도록 HTML+JS로 응답
+    return res.send(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8"/>
+          <title>Redirecting to install...</title>
+        </head>
+        <body>
+          <p>설치 화면으로 이동 중입니다. 이동되지 않으면 <a id="link" href="${authorizeUrl}" target="_top">설치하기</a>를 클릭하세요.</p>
+          <script>
+            try {
+              // top으로 강제 이동 (iframe 내에서도 동작하도록 시도)
+              if (window.top && window.top !== window) {
+                window.top.location.href = ${JSON.stringify(authorizeUrl)};
+              } else {
+                window.location.href = ${JSON.stringify(authorizeUrl)};
+              }
+            } catch (e) {
+              // 보안상 cross-origin으로 실패하면 링크 제공
+              console.error('redirect failed', e);
+              document.getElementById('link').style.display = 'inline';
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('[CLIENT HANDLER ERROR]', err);
+    return res.status(500).send('서버 오류가 발생했습니다.');
+  }
+});
+
+
 // ─── MongoDB 연결 ───────────────────────────────────────────────
 let db;
 async function initDb() {
