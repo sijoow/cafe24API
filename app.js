@@ -1,4 +1,4 @@
-// app.js (완성본)
+// app.js (완성본: uninstall 정리 포함)
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
 
@@ -28,7 +28,7 @@ const {
   CAFE24_API_VERSION,
   FRONTEND_URL,          // 예: https://onimon.shop
   BACKEND_URL,           // 예: https://port-0-...cloudtype.app
-  CAFE24_SCOPES,         // 개발자센터 Permissions와 100% 동일해야 함. 예: mall.read_store,mall.read_product,...
+  CAFE24_SCOPES,         // 예: mall.read_store,mall.read_product,...
 
   // --- 서버/스토리지 ---
   PORT = 5000,
@@ -38,6 +38,9 @@ const {
   R2_ENDPOINT,
   R2_REGION = 'us-east-1',
   R2_PUBLIC_BASE,
+
+  // --- 언인스톨 보안 토큰(선택) ---
+  UNINSTALL_TOKEN
 } = process.env;
 
 // ---- ENV 체크 ----
@@ -57,6 +60,12 @@ if (!CAFE24_SCOPES) {
   console.error('❌ CAFE24_SCOPES 환경변수 필요 (개발자센터 Permissions와 동일)');
   process.exit(1);
 }
+
+// 트레일링 슬래시 방지
+const stripSlash = (s) => (s || '').replace(/\/+$/, '');
+const FRONTEND_BASE = stripSlash(FRONTEND_URL);
+const BACKEND_BASE  = stripSlash(BACKEND_URL);
+const REDIRECT_URI  = `${BACKEND_BASE}/auth/callback`;
 
 const app = express();
 app.use(cors());
@@ -106,11 +115,36 @@ function buildAuthorizeUrl(mallId) {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
-    redirect_uri:  `${BACKEND_URL}/auth/callback`, // 반드시 백엔드 콜백
-    scope:         CAFE24_SCOPES,                  // 개발자센터와 100% 동일
+    redirect_uri:  REDIRECT_URI, // 반드시 백엔드 콜백
+    scope:         CAFE24_SCOPES, // 개발자센터와 100% 동일
     state:         mallId,
   });
   return `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
+}
+
+// ─── 언인스톨시 데이터 정리 유틸 ───────────────────────────────
+async function cleanupMallData(mallId) {
+  // 1) 토큰 삭제
+  await db.collection('token').deleteOne({ mallId });
+
+  // 2) 테넌트 데이터 정리(존재할 때만)
+  const dropIfExists = async (name) => {
+    try {
+      const exists = await db.listCollections({ name }).hasNext();
+      if (exists) await db.collection(name).drop();
+    } catch (e) {
+      if (e.codeName !== 'NamespaceNotFound') throw e;
+    }
+  };
+
+  await Promise.allSettled([
+    db.collection('events').deleteMany({ mallId }),
+    dropIfExists(`visits_${mallId}`),
+    dropIfExists(`clicks_${mallId}`),
+    dropIfExists(`prdClick_${mallId}`),
+  ]);
+
+  console.log(`[UNINSTALL CLEANUP] mallId=${mallId} done`);
 }
 
 // ===================================================================
@@ -131,7 +165,7 @@ app.get('/auth/callback', async (req, res) => {
 
   if (error) {
     console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, error_description);
-    return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
+    return res.redirect(`${FRONTEND_BASE}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
   }
   if (!code || !mallId) {
     return res.status(400).send('code 또는 mallId가 없습니다.');
@@ -143,7 +177,7 @@ app.get('/auth/callback', async (req, res) => {
     const body     = new URLSearchParams({
       grant_type:   'authorization_code',
       code,
-      redirect_uri: `${BACKEND_URL}/auth/callback` // authorize와 완전히 동일해야 함
+      redirect_uri: REDIRECT_URI // authorize와 완전히 동일해야 함
     }).toString();
 
     const { data } = await axios.post(tokenUrl, body, {
@@ -172,7 +206,7 @@ app.get('/auth/callback', async (req, res) => {
     console.log(`[AUTH CALLBACK] installed mallId=${mallId}`);
 
     // 프론트로 mall_id 전달
-    return res.redirect(`${FRONTEND_URL}/?mall_id=${encodeURIComponent(mallId)}`);
+    return res.redirect(`${FRONTEND_BASE}/?mall_id=${encodeURIComponent(mallId)}`);
   } catch (err) {
     console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
     return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
@@ -182,13 +216,13 @@ app.get('/auth/callback', async (req, res) => {
 // 프론트 redirect 호환 포워드(선택)
 app.get('/redirect', (req, res) => {
   const qs = new URLSearchParams(req.query).toString();
-  const target = `${FRONTEND_URL}/redirect${qs ? ('?' + qs) : ''}`;
+  const target = `${FRONTEND_BASE}/redirect${qs ? ('?' + qs) : ''}`;
   console.log('[REDIRECT FORWARD] ->', target);
   return res.redirect(target);
 });
 
 // ===================================================================
-// ③ mallId-aware API 요청 헬퍼 (refresh 포함)
+// ③ mallId-aware API 요청 헬퍼 (refresh + uninstall 방어)
 // ===================================================================
 async function refreshAccessToken(mallId, refreshToken) {
   const url   = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
@@ -236,17 +270,33 @@ async function apiRequest(mallId, method, url, data = {}, params = {}) {
     });
     return resp.data;
   } catch (err) {
-    if (err.response?.status === 401 && doc.refreshToken) {
-      const newAccess = await refreshAccessToken(mallId, doc.refreshToken);
-      const retry = await axios({
-        method, url, data, params,
-        headers: {
-          Authorization:          `Bearer ${newAccess}`,
-          'Content-Type':         'application/json',
-          'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+    const status = err.response?.status;
+
+    // 액세스 토큰 만료 → refresh 시도
+    if (status === 401 && doc.refreshToken) {
+      try {
+        const newAccess = await refreshAccessToken(mallId, doc.refreshToken);
+        const retry = await axios({
+          method, url, data, params,
+          headers: {
+            Authorization:          `Bearer ${newAccess}`,
+            'Content-Type':         'application/json',
+            'X-Cafe24-Api-Version': CAFE24_API_VERSION,
+          }
+        });
+        return retry.data;
+      } catch (refreshErr) {
+        const code = refreshErr.response?.data?.error || refreshErr.response?.data?.code;
+        // refresh 자체가 invalid_grant 등으로 실패 → 언인스톨로 간주하고 정리
+        if (code === 'invalid_grant' || refreshErr.response?.status === 400) {
+          console.warn('[TOKEN INVALID] uninstall assumed, cleaning up…', { mallId, code });
+          await cleanupMallData(mallId);
+          const e = new Error('APP_UNINSTALLED');
+          e.status = 410; // 프론트가 재설치 유도할 수 있게 410 사용
+          throw e;
         }
-      });
-      return retry.data;
+        throw refreshErr;
+      }
     }
     throw err;
   }
@@ -302,7 +352,37 @@ app.get('/debug/tokens/:mallId', async (req, res) => {
 });
 
 // ===================================================================
-// ⑤ 기능 엔드포인트들
+// ⑤ 언인스톨(Webhook) 콜백
+// ===================================================================
+// 개발자센터에 등록: POST/GET  https://<백엔드>/cafe24/uninstalled?token=<UNINSTALL_TOKEN>
+app.all('/cafe24/uninstalled', async (req, res) => {
+  try {
+    const token = req.query.token || req.get('X-Webhook-Token');
+    if (UNINSTALL_TOKEN && token !== UNINSTALL_TOKEN) {
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+
+    const mallId =
+      req.query.mall_id || req.query.mallId ||
+      req.body?.mall_id || req.body?.mallId ||
+      req.query.site || req.body?.site;
+
+    if (!mallId) {
+      console.warn('[UNINSTALL] missing mallId', { query: req.query, body: req.body });
+      return res.json({ ok: true, note: 'no mallId, skipped' });
+    }
+
+    await cleanupMallData(mallId);
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[UNINSTALL CALLBACK ERROR]', e);
+    // 재시도 방지 위해 200으로 마무리하는 편이 안전
+    return res.json({ ok: true });
+  }
+});
+
+// ===================================================================
+// ⑥ 기능 엔드포인트들
 // ===================================================================
 
 // ─── 이미지 업로드 (Multer + R2/S3) ─────────────────────────────
@@ -1192,12 +1272,17 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
 });
 
 // ===================================================================
-// ⑥ 서버 시작
+// ⑦ 서버 시작
 // ===================================================================
 initDb()
   .then(() => {
+    console.log('[BOOT] FRONTEND_BASE =', FRONTEND_BASE);
+    console.log('[BOOT] BACKEND_BASE  =', BACKEND_BASE);
+    console.log('[BOOT] REDIRECT_URI  =', REDIRECT_URI);
+    console.log('[BOOT] CAFE24_SCOPES =', CAFE24_SCOPES);
+
     app.listen(PORT, () => {
-      console.log(`▶️ Server running at ${BACKEND_URL} (port ${PORT})`);
+      console.log(`▶️ Server running at ${BACKEND_BASE} (port ${PORT})`);
     });
   })
   .catch(err => {
