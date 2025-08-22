@@ -206,30 +206,38 @@ async function cleanupMallData(mallId) {
 }
 
 // 카페24 언인스톨 콜백 (GET/POST 모두 수신)
-app.all('/cafe24/uninstalled', express.urlencoded({ extended: true }), express.json(), async (req, res) => {
+// 카페24 앱 삭제 콜백 (웹훅)
+// Cafe24 개발자센터에 등록한 URL 예:
+//   https://<백엔드도메인>/cafe24/uninstalled?token=<UNINSTALL_TOKEN>
+app.all('/cafe24/uninstalled', express.json(), async (req, res) => {
   try {
-    const token = req.query.token || req.body?.token;
-    if (!token || token !== UNINSTALL_TOKEN) {
-      console.warn('[UNINSTALL] invalid token', token);
-      return res.status(401).send('unauthorized');
+    // 1) 보안 토큰 검증 (쿼리/바디/헤더 아무데나 받아줌)
+    const token = req.query.token || req.body.token || req.get('x-uninstall-token');
+    if (!process.env.UNINSTALL_TOKEN || token !== process.env.UNINSTALL_TOKEN) {
+      return res.status(401).json({ error: 'unauthorized' });
     }
-    const mallId =
-      req.query.mall_id || req.body?.mall_id ||
-      req.query.mallId  || req.body?.mallId;
-    if (!mallId) return res.status(400).send('mall_id required');
 
-    await cleanupMallData(mallId);
+    // 2) mallId 추출
+    const mallId =
+      req.body.mall_id || req.query.mall_id ||
+      req.body.mallId   || req.query.mallId;
+    if (!mallId) return res.sendStatus(204); // mallId 없으면 조용히 종료
+
+    // 3) 토큰/연관 데이터 정리
+    await Promise.allSettled([
+      db.collection('token').deleteOne({ mallId }),
+      db.collection('events').deleteMany({ mallId }),
+      db.collection(`visits_${mallId}`).drop().catch(() => {}),
+      db.collection(`clicks_${mallId}`).drop().catch(() => {}),
+      db.collection(`prdClick_${mallId}`).drop().catch(() => {}),
+    ]);
+
+    console.log(`[UNINSTALL CLEANUP] mallId=${mallId} done`);
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[UNINSTALL HANDLER ERROR]', e);
-    return res.status(500).json({ error: e.message });
+    console.error('[UNINSTALL CLEANUP ERROR]', e);
+    return res.status(500).json({ error: 'cleanup failed' });
   }
-});
-
-// 수동 테스트용
-app.post('/debug/cleanup/:mallId', async (req, res) => {
-  await cleanupMallData(req.params.mallId);
-  res.json({ ok: true });
 });
 
 // ===================================================================
