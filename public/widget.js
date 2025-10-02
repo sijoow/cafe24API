@@ -363,7 +363,9 @@
         list_image:          p.list_image,
         sale_price:          p.sale_price    || null,
         benefit_price:       p.benefit_price || null,
-        benefit_percentage:  p.benefit_percentage || null
+        benefit_percentage:  p.benefit_percentage || null,
+        decoration_icon_url: p.decoration_icon_url || null
+
       })))
       .then(products => {
         if (cacheKey) {
@@ -394,6 +396,7 @@
           sale_price:          p.sale_price    || null,
           benefit_price:       p.benefit_price || null,
           benefit_percentage:  p.benefit_percentage || null,
+          decoration_icon_url: p.decoration_icon_url || null,
           clicks:              clickMap[p.product_no] || 0
         }));
         if (cacheKey) {
@@ -443,7 +446,9 @@
              data-track-click="product"
              data-product-no="${p.product_no}"
              target="_blank" rel="noopener noreferrer">
-            <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
+            <div style="position:relative;"><img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
+                ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" class="prd_deco_icon" /></div>` : ''}
+            </div>
             <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
               ${p.summary_description || ''}
             </div>
