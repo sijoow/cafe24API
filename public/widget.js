@@ -518,6 +518,7 @@
   @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
 
   /* ===== 공통 및 상품 목록 레이아웃 ===== */
+  .prd_name{font-size:15px!important;font-weight:500;margin-top:4px;}
   .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
   .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;}
   .main_Grid_${pageId} li { color:#000; }
