@@ -535,7 +535,7 @@ function renderProducts(ul, products, cols) {
   @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
   .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px}
   .main_Grid_${pageId} .prd_name{font-size:15px;}
-  .product_list_widget{padding:20px 0;}
+  .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
   .tabs_${pageId} {
     display: grid; gap: 8px; max-width: 800px; margin: 16px auto;width:95%; grid-template-columns: repeat(${tabCount},1fr);
   }
