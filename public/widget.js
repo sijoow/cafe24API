@@ -412,6 +412,7 @@
       spinner.remove();
     }
   }
+
 function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
@@ -431,14 +432,14 @@ function renderProducts(ul, products, cols) {
   }
 
   const items = products.map(p => {
-    // [수정] 가격을 정수(Integer)로 변환하여 소수점 문제 없이 정확하게 비교합니다.
-    const originalPriceNum = parseInt(String(p.price || '0').replace(/[^0-9]/g, ''), 10);
+    // [수정] 소수점이 포함된 가격(".00")도 처리할 수 있도록 parseFloat과 정규식을 변경합니다.
+    const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
     
-    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9]/g, '');
-    const salePriceNum = parseInt(cleanSaleString, 10) || null;
+    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
+    const salePriceNum = parseFloat(cleanSaleString) || null;
 
-    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9]/g, '');
-    const couponPriceNum = parseInt(cleanCouponString, 10) || null;
+    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
+    const couponPriceNum = parseFloat(cleanCouponString) || null;
 
     // 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
     let finalPriceNum = originalPriceNum;
@@ -453,7 +454,7 @@ function renderProducts(ul, products, cols) {
     const originalPriceText = formatKRW(originalPriceNum);
     const finalPriceText = formatKRW(finalPriceNum);
     
-    // [수정] 할인이 실제로 적용되었는지(가격이 다른지) 확인하는 로직입니다.
+    // 할인이 실제로 적용되었는지(가격이 다른지) 확인합니다.
     const hasDiscount = finalPriceNum < originalPriceNum;
 
     // HTML 구조를 만듭니다.
@@ -500,6 +501,7 @@ function renderProducts(ul, products, cols) {
 
   ul.innerHTML = items;
 }
+
   // ────────────────────────────────────────────────────────────────
   // 5) CSS 주입
   // ────────────────────────────────────────────────────────────────
