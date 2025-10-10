@@ -412,7 +412,7 @@
       spinner.remove();
     }
   }
-function renderProducts(ul, products, cols) {
+  function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
   ul.style.gap = '10px';
