@@ -520,7 +520,7 @@
   /* ===== 공통 및 상품 목록 레이아웃 ===== */
   .prd_name{font-size:15px!important;font-weight:500;margin-top:4px;}
   .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
-  .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;}
+  .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;max-width:95%;}
   .main_Grid_${pageId} li { color:#000; }
   .main_Grid_${pageId} img { padding-bottom:10px; }
   .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:15px;}
@@ -528,7 +528,7 @@
 
   /* ===== 탭 메뉴 ===== */
   .tabs_${pageId} {
-    display: grid; gap: 8px; max-width: 800px; margin: 16px auto;width:95%; grid-template-columns: repeat(${tabCount},1fr);
+    display: grid; gap: 8px; max-width: 800px; margin: 16px auto; width:95%; grid-template-columns: repeat(${tabCount},1fr);
   }
   .tabs_${pageId} button { padding: 8px; font-size: 16px; border: none; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
