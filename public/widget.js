@@ -516,8 +516,7 @@ function renderProducts(ul, products, cols) {
   .prd_name{font-size:15px;}
   @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
   .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px}
-  .main_Grid_${pageId} .prd_name{-webkit-line-clamp:2;-webkit-box-orient:vertical;
-  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;font-size:15px;}
+  .main_Grid_${pageId} .prd_name{font-size:15px;}
   .product_list_widget{padding:20px 0;}
   .tabs_${pageId} {
     display: grid; gap: 8px; max-width: 800px; margin: 16px auto; grid-template-columns: repeat(${tabCount},1fr);
