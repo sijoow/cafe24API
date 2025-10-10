@@ -425,11 +425,44 @@ function renderProducts(ul, products, cols) {
   ul.style.maxWidth = '800px';
   ul.style.margin = '0 auto';
 
-  // formatKRW 함수는 잠시 사용하지 않습니다.
-  // function formatKRW(val) { ... }
+  function formatKRW(val) {
+    if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
+    if (typeof val === 'string') {
+      const t = val.trim();
+      if (t.endsWith('원')) return t;
+      const num = parseFloat(t.replace(/,/g, '')) || 0;
+      return `${num.toLocaleString('ko-KR')}원`;
+    }
+    return '-';
+  }
 
   const items = products.map(p => {
-    // HTML 구조는 그대로 두고, 가격 부분만 디버깅용으로 변경합니다.
+    // 1. 모든 가격 정보를 숫자로 정확하게 변환합니다.
+    const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
+
+    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
+    const salePriceNum = parseFloat(cleanSaleString) || null;
+
+    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
+    const couponPriceNum = parseFloat(cleanCouponString) || null;
+
+    // 2. 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
+    let finalPriceNum = originalPriceNum;
+    if (salePriceNum != null && salePriceNum < finalPriceNum) {
+      finalPriceNum = salePriceNum;
+    }
+    if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
+      finalPriceNum = couponPriceNum;
+    }
+
+    // 3. 화면에 표시될 가격 텍스트를 미리 만듭니다.
+    const originalPriceText = formatKRW(originalPriceNum);
+    const finalPriceText = formatKRW(finalPriceNum);
+    
+    // 4. 할인이 적용되었는지 여부를 확인합니다.
+    const hasDiscount = finalPriceNum < originalPriceNum;
+
+    // 5. HTML 구조를 만듭니다.
     return `
     <li style="list-style:none;">
       <a href="/product/detail.html?product_no=${p.product_no}"
@@ -449,17 +482,28 @@ function renderProducts(ul, products, cols) {
           ${p.product_name}
         </div>
       </a>
-
-      <div class="prd_price_area" style="border: 2px solid red; padding: 5px; background: #fff0f0; margin-top: 5px; font-size: 12px;">
-        <div style="font-weight:bold; margin-bottom: 3px;">[원본 데이터 확인]</div>
-        <div>
-          <strong>p.price 값:</strong> ${p.price}
-        </div>
-        <div>
-          <strong>p.sale_price 값:</strong> ${p.sale_price}
-        </div>
+      
+      <div class="prd_price_area">
+        ${
+          // 할인이 있을 경우: 취소선 정가 + 최종가
+          hasDiscount
+          ? `
+            <div>
+              <span class="original_price" style="text-decoration: line-through; color: #999; font-size: 13px;">${originalPriceText}</span>
+            </div>
+            <div class="final_price" style="font-size: 16px; font-weight: 500; margin-top: 2px;">
+              ${finalPriceText}
+            </div>
+          `
+          // 할인이 없을 경우: 정가만 표시
+          : `
+            <div class="final_price" style="font-size: 16px; font-weight: 500;">
+              ${originalPriceText}
+            </div>
+          `
+        }
       </div>
-      </li>`;
+    </li>`;
   }).join('');
 
   ul.innerHTML = items;
