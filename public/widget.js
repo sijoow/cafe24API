@@ -539,6 +539,42 @@ function renderProducts(ul, products, cols) {
   .tabs_${pageId} {
     display: grid; gap: 8px; max-width: 800px; margin: 16px auto;width:95%; grid-template-columns: repeat(${tabCount},1fr);
   }
+/* (기존 CSS 코드 아래에 이어서 붙여넣기) */
+.main_Grid_${pageId} .prd_name {
+  font-weight: 500;
+  padding-bottom: 4px;
+}
+.price_wrapper {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.price_wrapper .discount_percent {
+  color: #ff4d4f;
+  font-size: 16px;
+  font-weight: bold;
+  margin-right: 6px;
+}
+.price_wrapper .original_price {
+  text-decoration: line-through;
+  color: #999;
+  font-size: 14px;
+}
+.price_wrapper .final_price {
+  font-size: 16px;
+  font-weight: bold;
+  margin-left: 6px;
+}
+/* 할인가만 있을 때(금액 할인) original_price 옆의 final_price 간격 조정 */
+.price_wrapper .original_price + .final_price {
+  margin-left: 6px;
+}
+/* 할인율이 없을 때 final_price는 왼쪽 정렬 */
+.price_wrapper:not(:has(.discount_percent)) .final_price {
+  margin-left: 0;
+}
+
   .tabs_${pageId} button { padding: 8px; font-size: 16px; border: none; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
   .main_Grid_${pageId} img { padding-bottom:10px; }
@@ -556,43 +592,7 @@ function renderProducts(ul, products, cols) {
     .main_Grid_${pageId} .prd_desc{ font-size:12px; padding-bottom:5px; }
     .main_Grid_${pageId} .prd_price{ font-size:15px; }
     .main_Grid_${pageId} .sale_percent, .main_Grid_${pageId} .prd_coupon_percent{ font-size:15px; }
-  }
-    /* (기존 CSS 코드 아래에 이어서 붙여넣기) */
-  .main_Grid_${pageId} .prd_name {
-    font-weight: 500;
-    padding-bottom: 4px;
-  }
-  .price_wrapper {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    margin-top: 2px;
-  }
-  .price_wrapper .discount_percent {
-    color: #ff4d4f;
-    font-size: 16px;
-    font-weight: bold;
-    margin-right: 6px;
-  }
-  .price_wrapper .original_price {
-    text-decoration: line-through;
-    color: #999;
-    font-size: 14px;
-  }
-  .price_wrapper .final_price {
-    font-size: 16px;
-    font-weight: bold;
-    margin-left: 6px;
-  }
-  /* 할인가만 있을 때(금액 할인) original_price 옆의 final_price 간격 조정 */
-  .price_wrapper .original_price + .final_price {
-    margin-left: 6px;
-  }
-  /* 할인율이 없을 때 final_price는 왼쪽 정렬 */
-  .price_wrapper:not(:has(.discount_percent)) .final_price {
-    margin-left: 0;
-  }
-  `;
+  }`;
   document.head.appendChild(style);
 
   // ────────────────────────────────────────────────────────────────
