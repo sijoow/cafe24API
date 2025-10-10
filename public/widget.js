@@ -510,9 +510,11 @@ function renderProducts(ul, products, cols) {
     border-top: 4px solid ${activeColor};
     border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto;
   }
+  .prd_name{font-size:15px;}
   @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
   .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px}
-  .main_Grid_${pageId} .prd_name{-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;font-size:15px;}
+  .main_Grid_${pageId} .prd_name{-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;font-size:15px;}
   .product_list_widget{padding:20px 0;}
   .tabs_${pageId} {
     display: grid; gap: 8px; max-width: 800px; margin: 16px auto; grid-template-columns: repeat(${tabCount},1fr);
