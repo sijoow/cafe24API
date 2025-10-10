@@ -412,7 +412,6 @@
       spinner.remove();
     }
   }
-
 function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
@@ -425,7 +424,6 @@ function renderProducts(ul, products, cols) {
     if (typeof val === 'string') {
       const t = val.trim();
       if (t.endsWith('원')) return t;
-      // 쉼표를 제거하고 숫자로 변환합니다.
       const num = parseFloat(t.replace(/,/g, '')) || 0;
       return `${num.toLocaleString('ko-KR')}원`;
     }
@@ -435,8 +433,14 @@ function renderProducts(ul, products, cols) {
   const items = products.map(p => {
     // 1. 모든 가격 정보를 숫자로 변환합니다.
     const originalPriceNum = parseFloat(p.price);
-    const salePriceNum = p.sale_price != null ? parseFloat(String(p.sale_price).replace(/[^0-9.]/g, '')) : null;
-    const couponPriceNum = p.benefit_price != null ? parseFloat(String(p.benefit_price).replace(/[^0-9.]/g, '')) : null;
+
+    // [중요] '150,000원' 같은 문자열을 숫자로 바꾸는 부분을 수정했습니다.
+    // 먼저 쉼표, 원 등 모든 글자를 제거하고 ('150000') -> 그 다음에 숫자로 바꿉니다 (150000).
+    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
+    const salePriceNum = parseFloat(cleanSaleString) || null;
+
+    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
+    const couponPriceNum = parseFloat(cleanCouponString) || null;
 
     // 2. 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
     let finalPriceNum = originalPriceNum;
