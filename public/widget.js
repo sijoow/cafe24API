@@ -436,16 +436,23 @@ function renderProducts(ul, products, cols) {
     const salePriceNum = p.sale_price != null ? parseFloat(String(p.sale_price).replace(/[^0-9.]/g, '')) : null;
     const couponPriceNum = p.benefit_price != null ? parseFloat(String(p.benefit_price).replace(/[^0-9.]/g, '')) : null;
 
-    // 2. 프로모션 할인율을 계산합니다.
-    const promoPercent = (salePriceNum && originalPriceNum > 0) ? Math.round((originalPriceNum - salePriceNum) / originalPriceNum * 100) : 0;
+    // 2. 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
+    let finalPriceNum = originalPriceNum;
+    if (salePriceNum != null && salePriceNum < finalPriceNum) {
+      finalPriceNum = salePriceNum;
+    }
+    if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
+      finalPriceNum = couponPriceNum;
+    }
 
     // 3. 화면에 표시될 가격 텍스트를 미리 만듭니다.
     const originalPriceText = formatKRW(originalPriceNum);
-    const salePriceText = salePriceNum != null ? formatKRW(salePriceNum) : null;
-    const couponPriceText = couponPriceNum != null ? formatKRW(couponPriceNum) : null;
+    const finalPriceText = formatKRW(finalPriceNum);
+    
+    // 4. 할인이 적용되었는지 여부를 확인합니다.
+    const hasDiscount = finalPriceNum < originalPriceNum;
 
-
-    // 4. HTML 구조를 만듭니다.
+    // 5. HTML 구조를 만듭니다.
     return `
     <li style="list-style:none;">
       <a href="/product/detail.html?product_no=${p.product_no}"
@@ -467,49 +474,19 @@ function renderProducts(ul, products, cols) {
       </a>
       <div class="prd_price_area">
         ${
-          // CASE 1: 프로모션 할인이 있을 때 (가장 우선적으로 표시)
-          salePriceNum != null
+          // 할인이 있을 경우: 취소선 정가 + 최종가
+          hasDiscount
           ? `
-            <div class="promo_price_block">
-              <div style="display: flex; align-items: center; justify-content: start;">
-                <strong class="promo_percent" style="color:#ff4d4f; font-size: 16px; font-weight: 500;">${promoPercent}%</strong>
-                <span class="original_price" style="text-decoration: line-through; color: #999; margin-left: 5px;">${originalPriceText}</span>
-              </div>
-              <div class="sale_price" style="font-size: 16px; font-weight: 500; margin-top: 2px;">
-                ${salePriceText}
-              </div>
+            <div>
+              <span class="original_price" style="text-decoration: line-through; color: #999;">${originalPriceText}</span>
             </div>
-            ${
-              // 프로모션이 있는데, 쿠폰가가 더 저렴할 경우 추가로 표시
-              (couponPriceNum != null && couponPriceNum < salePriceNum)
-              ? `
-                <div class="coupon_final_price_block" style="margin-top: 5px; border-top: 1px dashed #ddd; padding-top: 5px;">
-                  <div style="display: flex; align-items: center; justify-content: start;">
-                    <strong style="color:#ff4d4f; font-weight:500;">${p.benefit_percentage}%</strong>
-                    <span style="font-weight:500; margin-left: 5px;">${couponPriceText}</span>
-                  </div>
-                  <div style="font-size: 12px; color: #ff4d4f;">쿠폰 최종가</div>
-                </div>
-              `
-              : ''
-            }
-          `
-          // CASE 2: 프로모션은 없지만 쿠폰 할인이 있을 때
-          : (couponPriceNum != null && couponPriceNum < originalPriceNum)
-          ? `
-            <div class="coupon_price_block">
-              <div style="display: flex; align-items: center; justify-content: start;">
-                <strong style="color:#ff4d4f; font-weight:500;">${p.benefit_percentage}%</strong>
-                <span class="original_price" style="text-decoration: line-through; color: #999; margin-left: 5px;">${originalPriceText}</span>
-              </div>
-              <div style="font-size: 16px; font-weight: 500; margin-top: 2px;">
-                ${couponPriceText}
-              </div>
+            <div class="final_price" style="font-size: 16px; font-weight: 500; margin-top: 2px;">
+              ${finalPriceText}
             </div>
           `
-          // CASE 3: 아무 할인도 없을 때 (정가만 표시)
+          // 할인이 없을 경우: 정가만 표시
           : `
-            <div class="normal_price_block" style="font-size: 16px; font-weight: 500;">
+            <div class="final_price" style="font-size: 16px; font-weight: 500;">
               ${originalPriceText}
             </div>
           `
