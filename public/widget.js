@@ -534,7 +534,7 @@
   .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
 
   /* ===== 가격 표시 (새로운 2줄 레이아웃) ===== */
-  .prd_price_area { margin-top: 2px; }
+  .prd_price_area { margin-top: 2px; font-size:16px;font-weight:bold!important;}
   .original_price_line .original_price {
     font-size: 14px;
     color: #bbb;
@@ -546,14 +546,14 @@
     margin-top: 2px;
   }
   .final_price_line .discount_percent {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: bold;
     color: #ff4d4f;
     margin-right: 6px;
     margin-top:2px;
   }
   .final_price_line .final_price {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: bold;
     color: #000;
   }
