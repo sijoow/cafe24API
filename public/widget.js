@@ -415,7 +415,7 @@
  function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
-  ul.style.gap = '10px';
+  ul.style.gap = '20px';
   ul.style.maxWidth = '800px';
   ul.style.margin = '0 auto';
 
@@ -549,6 +549,7 @@
     font-weight: bold;
     color: #ff4d4f;
     margin-right: 6px;
+    margin-top:2px;
   }
   .final_price_line .final_price {
     font-size: 18px;
