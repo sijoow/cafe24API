@@ -507,6 +507,7 @@ function renderProducts(ul, products, cols) {
   // ────────────────────────────────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
+  .final_price{font-weight:bold}
   .grid-spinner {
     width: 40px; height: 40px; border: 4px solid #f3f3f3;
     border-top: 4px solid ${activeColor};
