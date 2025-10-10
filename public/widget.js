@@ -412,133 +412,104 @@
       spinner.remove();
     }
   }
-  function renderProducts(ul, products, cols) {
-  ul.style.display = 'grid';
-  ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
-  ul.style.gap = '10px';
-  ul.style.maxWidth = '800px';
-  ul.style.margin = '0 auto';
+ function renderProducts(ul, products, cols) {
+  ul.style.display = 'grid';
+  ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
+  ul.style.gap = '20px';
+  ul.style.maxWidth = '800px';
+  ul.style.margin = '0 auto';
 
-  function formatKRW(val) {
-    if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
-    if (typeof val === 'string') {
-      const t = val.trim();
-      if (t.endsWith('원')) return t;
-      const num = parseFloat(t.replace(/,/g, '')) || 0;
-      return `${num.toLocaleString('ko-KR')}원`;
-    }
-    return '-';
-  }
-
-  const items = products.map(p => {
-    // [수정] 소수점이 포함된 가격(".00")도 처리할 수 있도록 parseFloat과 정규식을 변경합니다.
-    const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
-    
-    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
-    const salePriceNum = parseFloat(cleanSaleString) || null;
-
-    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
-    const couponPriceNum = parseFloat(cleanCouponString) || null;
-
-    // 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
-    let finalPriceNum = originalPriceNum;
-    if (salePriceNum != null && salePriceNum < finalPriceNum) {
-      finalPriceNum = salePriceNum;
-    }
-    if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
-      finalPriceNum = couponPriceNum;
-    }
-
-    // 화면에 표시될 가격 텍스트를 미리 만듭니다.
-    const originalPriceText = formatKRW(originalPriceNum);
-    const finalPriceText = formatKRW(finalPriceNum);
-    
-    // 할인이 실제로 적용되었는지(가격이 다른지) 확인합니다.
-    const hasDiscount = finalPriceNum < originalPriceNum;
-
-    // HTML 구조를 만듭니다.
-    return `
-    <li style="list-style:none;">
-      <a href="/product/detail.html?product_no=${p.product_no}"
-         class="prd_link"
-         style="text-decoration:none;color:inherit;"
-         data-track-click="product"
-         data-product-no="${p.product_no}"
-         target="_blank" rel="noopener noreferrer">
-        
-                <div class="prd_image_container">
-          <img class="main_image" src="${p.list_image}" alt="${p.product_name}" />
-          ${p.small_image ? `<img class="hover_image" src="${p.small_image}" alt="${p.product_name}" />` : ''}
-          ${p.decoration_icon_url ? `<div class="prd_deco_icon_wrapper"><img src="${p.decoration_icon_url}" alt="icon" class="prd_deco_icon" /></div>` : ''}
-        </div>
-                <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
-          ${p.summary_description || ''}
-        </div>
-        <div class="prd_name" style="font-weight:500;padding-bottom:4px;">
-          ${p.product_name}
-        </div>
-      </a>
-      
-      <div class="prd_price_area">
-        ${
-          // 할인이 있을 경우: 취소선 정가와 최종가를 함께 표시
-          hasDiscount
-          ? `
-            <div style="display: flex; align-items: center; flex-wrap: wrap; margin-top: 2px;">
-              <span class="original_price" style="text-decoration: line-through; color: #999; font-size: 14px;">${originalPriceText}</span>
-              <span class="final_price" style="font-size: 16px; font-weight: bold; margin-left: 6px;">${finalPriceText}</span>
-            </div>
-          `
-          // 할인이 없을 경우: 최종 가격만 표시
-          : `
-            <div style="font-size: 16px; font-weight: 500; margin-top: 2px;">
-              <span class="final_price">${originalPriceText}</span>
-            </div>
-          `
-        }
-      </div>
-    </li>`;
-  }).join('');
-
-  ul.innerHTML = items;
+  function formatKRW(val) {
+    if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
+    if (typeof val === 'string') {
+      const t = val.trim();
+      if (t.endsWith('원')) return t;
+      const num = parseFloat(t.replace(/,/g, '')) || 0;
+      return `${num.toLocaleString('ko-KR')}원`;
+    }
+    return '-';
   }
-  
+
+  const items = products.map(p => {
+    // 가격 파싱 및 최종가 계산 로직은 그대로 유지합니다.
+    const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
+    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
+    const salePriceNum = parseFloat(cleanSaleString) || null;
+    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
+    const couponPriceNum = parseFloat(cleanCouponString) || null;
+
+    let finalPriceNum = originalPriceNum;
+    if (salePriceNum != null && salePriceNum < finalPriceNum) {
+      finalPriceNum = salePriceNum;
+    }
+    if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
+      finalPriceNum = couponPriceNum;
+    }
+
+    const originalPriceText = formatKRW(originalPriceNum);
+    const finalPriceText = formatKRW(finalPriceNum);
+    const hasDiscount = finalPriceNum < originalPriceNum;
+    let displayPercent = null;
+    if (hasDiscount) {
+      if (finalPriceNum === couponPriceNum && p.benefit_percentage > 0) {
+        displayPercent = p.benefit_percentage;
+      } else if (originalPriceNum > 0) {
+        displayPercent = Math.round(((originalPriceNum - finalPriceNum) / originalPriceNum) * 100);
+      }
+    }
+
+    // [수정] 새로운 2줄 레이아웃을 위한 HTML 구조로 변경합니다.
+    return `
+    <li style="list-style:none;">
+      <a href="/product/detail.html?product_no=${p.product_no}"
+         class="prd_link"
+         style="text-decoration:none;color:inherit;"
+         data-track-click="product"
+         data-product-no="${p.product_no}"
+         target="_blank" rel="noopener noreferrer">
+        <div style="position:relative;">
+          <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
+          ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" class="prd_deco_icon" /></div>` : ''}
+        </div>
+        <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
+          ${p.summary_description || ''}
+        </div>
+        <div class="prd_name">
+          ${p.product_name}
+        </div>
+      </a>
+      
+      <div class="prd_price_area">
+        ${
+          hasDiscount
+          ? `
+            <div class="price_wrapper vertical_layout">
+              <div class="original_price_line">
+                <span class="original_price">${originalPriceText}</span>
+              </div>
+              <div class="final_price_line">
+                ${(displayPercent && displayPercent > 0) ? `<strong class="discount_percent">${displayPercent}%</strong>` : ''}
+                <span class="final_price">${finalPriceText}</span>
+              </div>
+            </div>
+          `
+          : `
+            <div class="price_wrapper">
+              <span class="final_price">${originalPriceText}</span>
+            </div>
+          `
+        }
+      </div>
+    </li>`;
+  }).join('');
+
+  ul.innerHTML = items;
+}
 // ────────────────────────────────────────────────────────────────
   // 5) CSS 주입
   // ────────────────────────────────────────────────────────────────
   const style = document.createElement('style');
-  style.textContent = `
-
-
-  /* ▼▼▼▼▼ 이미지 hover 효과 (이 부분을 추가하세요) ▼▼▼▼▼ */
-  .prd_image_container {
-    position: relative;
-    overflow: hidden; /* 컨테이너 밖으로 이미지가 나가지 않도록 */
-  }
-  .prd_image_container .main_image,
-  .prd_image_container .hover_image {
-    width: 100%;
-    display: block;
-    transition: opacity 0.3s ease-in-out; /* 부드러운 전환 효과 */
-  }
-  .prd_image_container .hover_image {
-    position: absolute;
-    top: 0;
-    left: 0;
-    opacity: 0; /* 평소에는 투명하게 */
-  }
-  .prd_image_container:hover .hover_image {
-    opacity: 1; /* 마우스를 올리면 보이게 */
-  }
-  .prd_deco_icon_wrapper {
-    position: absolute;
-    top: 0;
-    right: 0;
-    z-index: 2; /* hover 이미지보다 위에 오도록 */
-  }
-  /* ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ */
-
-  
+  style.textContent = `
   .grid-spinner {
     width: 40px; height: 40px; border: 4px solid #f3f3f3;
     border-top: 4px solid ${activeColor};
