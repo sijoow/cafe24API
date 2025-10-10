@@ -520,7 +520,7 @@
   /* ===== 공통 및 상품 목록 레이아웃 ===== */
   .prd_name{font-size:15px!important;font-weight:500;margin-top:4px;}
   .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
-  .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;max-width:95%;}
+  .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;width:95%;}
   .main_Grid_${pageId} li { color:#000; }
   .main_Grid_${pageId} img { padding-bottom:10px; }
   .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:15px;}
@@ -534,7 +534,7 @@
   .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
 
   /* ===== 가격 표시 (새로운 2줄 레이아웃) ===== */
-  .prd_price_area { margin-top: 2px; font-size:16px;font-weight:bold!important;}
+  .prd_price_area { margin-top: 2px; font-size:16px;;}
   .original_price_line .original_price {
     font-size: 14px;
     color: #bbb;
@@ -543,7 +543,7 @@
   .final_price_line {
     display: flex;
     align-items: center;
-    margin-top: 2px;
+    margin-top: 4px;
   }
   .final_price_line .discount_percent {
     font-size: 16px;
