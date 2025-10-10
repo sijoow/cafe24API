@@ -412,11 +412,6 @@
       spinner.remove();
     }
   }
-
-  /**
- * 🎨 이 부분이 수정되었습니다.
- * 프로모션 가격과 쿠폰 가격을 모두 고려하여 최종 가격을 표시하도록 로직을 변경했습니다.
- */
 function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
@@ -436,60 +431,95 @@ function renderProducts(ul, products, cols) {
   }
 
   const items = products.map(p => {
-    // 가격 변수를 숫자 타입으로 먼저 파싱하여 계산에 용이하게 만듭니다.
+    // 1. 모든 가격 정보를 숫자로 변환합니다.
     const originalPriceNum = parseFloat(p.price);
-    // p.sale_price가 '10,000원' 같은 문자열일 수 있으므로 숫자만 추출합니다.
     const salePriceNum = p.sale_price != null ? parseFloat(String(p.sale_price).replace(/[^0-9.]/g, '')) : null;
     const couponPriceNum = p.benefit_price != null ? parseFloat(String(p.benefit_price).replace(/[^0-9.]/g, '')) : null;
 
-    // 최종적으로 표시될 가격과 할인율을 결정합니다.
-    let finalPriceNum = salePriceNum ?? originalPriceNum;
-    let discountPercent = (salePriceNum && originalPriceNum) ? Math.round((originalPriceNum - salePriceNum) / originalPriceNum * 100) : 0;
-    
-    let isCouponApplied = false;
-    // 쿠폰가가 존재하고, (프로모션가 또는 정가보다) 더 낮을 경우 최종가로 채택합니다.
-    if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
-        finalPriceNum = couponPriceNum;
-        discountPercent = p.benefit_percentage; // 백엔드에서 준 쿠폰 할인율을 사용
-        isCouponApplied = true;
-    }
-    
-    // 화면에 표시할 텍스트를 포맷팅합니다.
-    const originalPriceText = formatKRW(originalPriceNum);
-    const finalPriceText = formatKRW(finalPriceNum);
+    // 2. 프로모션 할인율을 계산합니다.
+    const promoPercent = (salePriceNum && originalPriceNum > 0) ? Math.round((originalPriceNum - salePriceNum) / originalPriceNum * 100) : 0;
 
+    // 3. 화면에 표시될 가격 텍스트를 미리 만듭니다.
+    const originalPriceText = formatKRW(originalPriceNum);
+    const salePriceText = salePriceNum != null ? formatKRW(salePriceNum) : null;
+    const couponPriceText = couponPriceNum != null ? formatKRW(couponPriceNum) : null;
+
+
+    // 4. HTML 구조를 만듭니다.
     return `
     <li style="list-style:none;">
-        <a href="/product/detail.html?product_no=${p.product_no}"
-            class="prd_link"
-            style="text-decoration:none;color:inherit;"
-            data-track-click="product"
-            data-product-no="${p.product_no}"
-            target="_blank" rel="noopener noreferrer">
-          <div style="position:relative;"><img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
-              ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" class="prd_deco_icon" /></div>` : ''}
-          </div>
-          <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
-              ${p.summary_description || ''}
-          </div>
-          <div class="prd_name" style="font-weight:500;padding-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;">
-              ${p.product_name}
-          </div>
-        </a>
-        <div class="prd_price_area">
-            ${ (finalPriceNum < originalPriceNum) ? `<div class="original_price" style="color:#999;text-decoration:line-through;">${originalPriceText}</div>` : '' }
-            <div class="final_price_wrapper" style="display:flex;align-items:center;font-size:16px;font-weight:500;margin-top:2px;">
-                ${ discountPercent > 0 ? `<span class="discount_percent" style="color:#ff4d4f;margin-right:4px;">${discountPercent}%</span>` : '' }
-                <span class="final_price">${finalPriceText}</span>
-            </div>
-            ${ isCouponApplied ? `<div class="coupon_badge" style="color:#ff4d4f;font-size:12px;margin-top:2px;">쿠폰 적용가</div>` : '' }
+      <a href="/product/detail.html?product_no=${p.product_no}"
+         class="prd_link"
+         style="text-decoration:none;color:inherit;"
+         data-track-click="product"
+         data-product-no="${p.product_no}"
+         target="_blank" rel="noopener noreferrer">
+        <div style="position:relative;">
+          <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
+          ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" class="prd_deco_icon" /></div>` : ''}
         </div>
+        <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
+          ${p.summary_description || ''}
+        </div>
+        <div class="prd_name" style="font-weight:500;padding-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;">
+          ${p.product_name}
+        </div>
+      </a>
+      <div class="prd_price_area">
+        ${
+          // CASE 1: 프로모션 할인이 있을 때 (가장 우선적으로 표시)
+          salePriceNum != null
+          ? `
+            <div class="promo_price_block">
+              <div style="display: flex; align-items: center; justify-content: start;">
+                <strong class="promo_percent" style="color:#ff4d4f; font-size: 16px; font-weight: 500;">${promoPercent}%</strong>
+                <span class="original_price" style="text-decoration: line-through; color: #999; margin-left: 5px;">${originalPriceText}</span>
+              </div>
+              <div class="sale_price" style="font-size: 16px; font-weight: 500; margin-top: 2px;">
+                ${salePriceText}
+              </div>
+            </div>
+            ${
+              // 프로모션이 있는데, 쿠폰가가 더 저렴할 경우 추가로 표시
+              (couponPriceNum != null && couponPriceNum < salePriceNum)
+              ? `
+                <div class="coupon_final_price_block" style="margin-top: 5px; border-top: 1px dashed #ddd; padding-top: 5px;">
+                  <div style="display: flex; align-items: center; justify-content: start;">
+                    <strong style="color:#ff4d4f; font-weight:500;">${p.benefit_percentage}%</strong>
+                    <span style="font-weight:500; margin-left: 5px;">${couponPriceText}</span>
+                  </div>
+                  <div style="font-size: 12px; color: #ff4d4f;">쿠폰 최종가</div>
+                </div>
+              `
+              : ''
+            }
+          `
+          // CASE 2: 프로모션은 없지만 쿠폰 할인이 있을 때
+          : (couponPriceNum != null && couponPriceNum < originalPriceNum)
+          ? `
+            <div class="coupon_price_block">
+              <div style="display: flex; align-items: center; justify-content: start;">
+                <strong style="color:#ff4d4f; font-weight:500;">${p.benefit_percentage}%</strong>
+                <span class="original_price" style="text-decoration: line-through; color: #999; margin-left: 5px;">${originalPriceText}</span>
+              </div>
+              <div style="font-size: 16px; font-weight: 500; margin-top: 2px;">
+                ${couponPriceText}
+              </div>
+            </div>
+          `
+          // CASE 3: 아무 할인도 없을 때 (정가만 표시)
+          : `
+            <div class="normal_price_block" style="font-size: 16px; font-weight: 500;">
+              ${originalPriceText}
+            </div>
+          `
+        }
+      </div>
     </li>`;
   }).join('');
 
   ul.innerHTML = items;
 }
-
   // ────────────────────────────────────────────────────────────────
   // 5) CSS 주입
   // ────────────────────────────────────────────────────────────────
