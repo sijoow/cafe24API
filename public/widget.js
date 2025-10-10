@@ -439,7 +439,7 @@ function renderProducts(ul, products, cols) {
   const items = products.map(p => {
     // 1. 모든 가격 정보를 숫자로 정확하게 변환합니다.
     const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
-
+    
     const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
     const salePriceNum = parseFloat(cleanSaleString) || null;
 
@@ -485,13 +485,13 @@ function renderProducts(ul, products, cols) {
       
       <div class="prd_price_area">
         ${
-          // 할인이 있을 경우: 취소선 정가 + 최종가
+          // 할인이 있을 경우: 취소선 정가 + 굵은 최종가
           hasDiscount
           ? `
             <div>
               <span class="original_price" style="text-decoration: line-through; color: #999; font-size: 13px;">${originalPriceText}</span>
             </div>
-            <div class="final_price" style="font-size: 16px; font-weight: 500; margin-top: 2px;">
+            <div class="final_price" style="font-size: 16px; font-weight: bold; margin-top: 2px;">
               ${finalPriceText}
             </div>
           `
