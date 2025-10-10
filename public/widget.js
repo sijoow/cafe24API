@@ -412,6 +412,11 @@
       spinner.remove();
     }
   }
+
+  /**
+ * 🎨 이 부분이 수정되었습니다.
+ * 프로모션 가격과 쿠폰 가격을 모두 고려하여 최종 가격을 표시하도록 로직을 변경했습니다.
+ */
 function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
@@ -431,83 +436,60 @@ function renderProducts(ul, products, cols) {
   }
 
   const items = products.map(p => {
-    // =================================================================
-    // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 디버깅 코드 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-    //
-    //      어떤 데이터가 들어오는지 확인하기 위해 이 코드를 추가했습니다.
-    //
-    console.log("상품 데이터(p):", p);
-    //
-    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 디버깅 코드 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-    // =================================================================
-
-    // 1. 모든 가격 정보를 숫자로 변환합니다.
+    // 가격 변수를 숫자 타입으로 먼저 파싱하여 계산에 용이하게 만듭니다.
     const originalPriceNum = parseFloat(p.price);
+    // p.sale_price가 '10,000원' 같은 문자열일 수 있으므로 숫자만 추출합니다.
+    const salePriceNum = p.sale_price != null ? parseFloat(String(p.sale_price).replace(/[^0-9.]/g, '')) : null;
+    const couponPriceNum = p.benefit_price != null ? parseFloat(String(p.benefit_price).replace(/[^0-9.]/g, '')) : null;
 
-    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
-    const salePriceNum = parseFloat(cleanSaleString) || null;
-
-    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
-    const couponPriceNum = parseFloat(cleanCouponString) || null;
-
-    // 2. 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
-    let finalPriceNum = originalPriceNum;
-    if (salePriceNum != null && salePriceNum < finalPriceNum) {
-      finalPriceNum = salePriceNum;
-    }
+    // 최종적으로 표시될 가격과 할인율을 결정합니다.
+    let finalPriceNum = salePriceNum ?? originalPriceNum;
+    let discountPercent = (salePriceNum && originalPriceNum) ? Math.round((originalPriceNum - salePriceNum) / originalPriceNum * 100) : 0;
+    
+    let isCouponApplied = false;
+    // 쿠폰가가 존재하고, (프로모션가 또는 정가보다) 더 낮을 경우 최종가로 채택합니다.
     if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
-      finalPriceNum = couponPriceNum;
+        finalPriceNum = couponPriceNum;
+        discountPercent = p.benefit_percentage; // 백엔드에서 준 쿠폰 할인율을 사용
+        isCouponApplied = true;
     }
-
-    // 3. 화면에 표시될 가격 텍스트를 미리 만듭니다.
+    
+    // 화면에 표시할 텍스트를 포맷팅합니다.
     const originalPriceText = formatKRW(originalPriceNum);
     const finalPriceText = formatKRW(finalPriceNum);
-    
-    const hasDiscount = finalPriceNum < originalPriceNum;
 
-    // 5. HTML 구조를 만듭니다.
     return `
     <li style="list-style:none;">
-      <a href="/product/detail.html?product_no=${p.product_no}"
-         class="prd_link"
-         style="text-decoration:none;color:inherit;"
-         data-track-click="product"
-         data-product-no="${p.product_no}"
-         target="_blank" rel="noopener noreferrer">
-        <div style="position:relative;">
-          <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
-          ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" class="prd_deco_icon" /></div>` : ''}
-        </div>
-        <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
-          ${p.summary_description || ''}
-        </div>
-        <div class="prd_name" style="font-weight:500;padding-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;">
-          ${p.product_name}
-        </div>
-      </a>
-      <div class="prd_price_area">
-        ${
-          hasDiscount
-          ? `
-            <div>
-              <span class="original_price" style="text-decoration: line-through; color: #999;">${originalPriceText}</span>
+        <a href="/product/detail.html?product_no=${p.product_no}"
+            class="prd_link"
+            style="text-decoration:none;color:inherit;"
+            data-track-click="product"
+            data-product-no="${p.product_no}"
+            target="_blank" rel="noopener noreferrer">
+          <div style="position:relative;"><img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
+              ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" class="prd_deco_icon" /></div>` : ''}
+          </div>
+          <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
+              ${p.summary_description || ''}
+          </div>
+          <div class="prd_name" style="font-weight:500;padding-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;">
+              ${p.product_name}
+          </div>
+        </a>
+        <div class="prd_price_area">
+            ${ (finalPriceNum < originalPriceNum) ? `<div class="original_price" style="color:#999;text-decoration:line-through;">${originalPriceText}</div>` : '' }
+            <div class="final_price_wrapper" style="display:flex;align-items:center;font-size:16px;font-weight:500;margin-top:2px;">
+                ${ discountPercent > 0 ? `<span class="discount_percent" style="color:#ff4d4f;margin-right:4px;">${discountPercent}%</span>` : '' }
+                <span class="final_price">${finalPriceText}</span>
             </div>
-            <div class="final_price" style="font-size: 16px; font-weight: 500; margin-top: 2px;">
-              ${finalPriceText}
-            </div>
-          `
-          : `
-            <div class="final_price" style="font-size: 16px; font-weight: 500;">
-              ${originalPriceText}
-            </div>
-          `
-        }
-      </div>
+            ${ isCouponApplied ? `<div class="coupon_badge" style="color:#ff4d4f;font-size:12px;margin-top:2px;">쿠폰 적용가</div>` : '' }
+        </div>
     </li>`;
   }).join('');
 
   ul.innerHTML = items;
 }
+
   // ────────────────────────────────────────────────────────────────
   // 5) CSS 주입
   // ────────────────────────────────────────────────────────────────
