@@ -412,12 +412,6 @@
       spinner.remove();
     }
   }
-/**
- * =======================================================================
- * [디버깅 전용 코드]
- * 모든 계산 로직을 제거하고 원본 데이터가 무엇인지 화면에 직접 표시합니다.
- * =======================================================================
- */
 function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
@@ -437,14 +431,14 @@ function renderProducts(ul, products, cols) {
   }
 
   const items = products.map(p => {
-    // 1. 모든 가격 정보를 숫자로 정확하게 변환합니다.
-    const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
+    // 1. 가격을 정수(Integer)로 변환하여 소수점 문제 없이 정확하게 비교합니다.
+    const originalPriceNum = parseInt(String(p.price || '0').replace(/[^0-9]/g, ''), 10);
     
-    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
-    const salePriceNum = parseFloat(cleanSaleString) || null;
+    const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9]/g, '');
+    const salePriceNum = parseInt(cleanSaleString, 10) || null;
 
-    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
-    const couponPriceNum = parseFloat(cleanCouponString) || null;
+    const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9]/g, '');
+    const couponPriceNum = parseInt(cleanCouponString, 10) || null;
 
     // 2. 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
     let finalPriceNum = originalPriceNum;
@@ -459,7 +453,7 @@ function renderProducts(ul, products, cols) {
     const originalPriceText = formatKRW(originalPriceNum);
     const finalPriceText = formatKRW(finalPriceNum);
     
-    // 4. 할인이 적용되었는지 여부를 확인합니다.
+    // 4. 할인이 실제로 적용되었는지(가격이 다른지) 확인합니다.
     const hasDiscount = finalPriceNum < originalPriceNum;
 
     // 5. HTML 구조를 만듭니다.
@@ -485,20 +479,18 @@ function renderProducts(ul, products, cols) {
       
       <div class="prd_price_area">
         ${
-          // 할인이 있을 경우: 취소선 정가 + 굵은 최종가
+          // 할인이 있을 경우: 취소선 정가와 최종가를 한 줄에 표시
           hasDiscount
           ? `
-            <div>
-              <span class="original_price" style="text-decoration: line-through; color: #999; font-size: 13px;">${originalPriceText}</span>
-            </div>
-            <div class="final_price" style="font-size: 16px; font-weight: bold; margin-top: 2px;">
-              ${finalPriceText}
+            <div style="display: flex; align-items: center; flex-wrap: wrap; margin-top: 2px;">
+              <span class="original_price" style="text-decoration: line-through; color: #999; font-size: 14px;">${originalPriceText}</span>
+              <span class="final_price" style="font-size: 16px; font-weight: bold; margin-left: 6px;">${finalPriceText}</span>
             </div>
           `
           // 할인이 없을 경우: 정가만 표시
           : `
-            <div class="final_price" style="font-size: 16px; font-weight: 500;">
-              ${originalPriceText}
+            <div style="font-size: 16px; font-weight: 500; margin-top: 2px;">
+              <span class="final_price">${originalPriceText}</span>
             </div>
           `
         }
