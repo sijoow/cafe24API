@@ -412,7 +412,6 @@
       spinner.remove();
     }
   }
-
 function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
@@ -432,7 +431,7 @@ function renderProducts(ul, products, cols) {
   }
 
   const items = products.map(p => {
-    // [수정] 소수점이 포함된 가격(".00")도 처리할 수 있도록 parseFloat과 정규식을 변경합니다.
+    // 1. 모든 가격 정보를 숫자로 정확하게 변환합니다.
     const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
     
     const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
@@ -441,7 +440,7 @@ function renderProducts(ul, products, cols) {
     const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
     const couponPriceNum = parseFloat(cleanCouponString) || null;
 
-    // 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
+    // 2. 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
     let finalPriceNum = originalPriceNum;
     if (salePriceNum != null && salePriceNum < finalPriceNum) {
       finalPriceNum = salePriceNum;
@@ -450,14 +449,29 @@ function renderProducts(ul, products, cols) {
       finalPriceNum = couponPriceNum;
     }
 
-    // 화면에 표시될 가격 텍스트를 미리 만듭니다.
+    // 3. 화면에 표시될 가격 텍스트를 미리 만듭니다.
     const originalPriceText = formatKRW(originalPriceNum);
     const finalPriceText = formatKRW(finalPriceNum);
     
-    // 할인이 실제로 적용되었는지(가격이 다른지) 확인합니다.
+    // 4. 할인이 실제로 적용되었는지 확인합니다.
     const hasDiscount = finalPriceNum < originalPriceNum;
 
-    // HTML 구조를 만듭니다.
+    // 5. [신규] 표시할 할인율을 결정하는 로직
+    let displayPercent = null;
+    if (hasDiscount) {
+      // 최종가가 쿠폰가와 같고, 쿠폰에 % 정보가 있으면 그 값을 사용
+      if (finalPriceNum === couponPriceNum && p.benefit_percentage > 0) {
+        displayPercent = p.benefit_percentage;
+      }
+      // 그렇지 않고 최종가가 프로모션 할인가와 같으면, 할인율을 직접 계산
+      else if (finalPriceNum === salePriceNum) {
+        if (originalPriceNum > 0) {
+          displayPercent = Math.round(((originalPriceNum - finalPriceNum) / originalPriceNum) * 100);
+        }
+      }
+    }
+
+    // 6. HTML 구조를 만듭니다.
     return `
     <li style="list-style:none;">
       <a href="/product/detail.html?product_no=${p.product_no}"
@@ -473,24 +487,28 @@ function renderProducts(ul, products, cols) {
         <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
           ${p.summary_description || ''}
         </div>
-        <div class="prd_name" style="font-weight:500;padding-bottom:4px;">
+        <div class="prd_name">
           ${p.product_name}
         </div>
       </a>
       
       <div class="prd_price_area">
         ${
-          // 할인이 있을 경우: 취소선 정가와 최종가를 함께 표시
           hasDiscount
           ? `
-            <div style="display: flex; align-items: center; flex-wrap: wrap; margin-top: 2px;">
-              <span class="original_price" style="text-decoration: line-through; color: #999; font-size: 14px;">${originalPriceText}</span>
-              <span class="final_price" style="font-size: 16px; font-weight: bold; margin-left: 6px;">${finalPriceText}</span>
+            <div class="price_wrapper">
+              ${
+                // displayPercent 값이 있을 때만 할인율(%) 표시
+                (displayPercent && displayPercent > 0)
+                ? `<strong class="discount_percent">${displayPercent}%</strong>`
+                : ''
+              }
+              <span class="original_price">${originalPriceText}</span>
+              <span class="final_price">${finalPriceText}</span>
             </div>
           `
-          // 할인이 없을 경우: 최종 가격만 표시
           : `
-            <div style="font-size: 16px; font-weight: 500; margin-top: 2px;">
+            <div class="price_wrapper">
               <span class="final_price">${originalPriceText}</span>
             </div>
           `
@@ -538,7 +556,43 @@ function renderProducts(ul, products, cols) {
     .main_Grid_${pageId} .prd_desc{ font-size:12px; padding-bottom:5px; }
     .main_Grid_${pageId} .prd_price{ font-size:15px; }
     .main_Grid_${pageId} .sale_percent, .main_Grid_${pageId} .prd_coupon_percent{ font-size:15px; }
-  }`;
+  }
+    /* (기존 CSS 코드 아래에 이어서 붙여넣기) */
+  .main_Grid_${pageId} .prd_name {
+    font-weight: 500;
+    padding-bottom: 4px;
+  }
+  .price_wrapper {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+  .price_wrapper .discount_percent {
+    color: #ff4d4f;
+    font-size: 16px;
+    font-weight: bold;
+    margin-right: 6px;
+  }
+  .price_wrapper .original_price {
+    text-decoration: line-through;
+    color: #999;
+    font-size: 14px;
+  }
+  .price_wrapper .final_price {
+    font-size: 16px;
+    font-weight: bold;
+    margin-left: 6px;
+  }
+  /* 할인가만 있을 때(금액 할인) original_price 옆의 final_price 간격 조정 */
+  .price_wrapper .original_price + .final_price {
+    margin-left: 6px;
+  }
+  /* 할인율이 없을 때 final_price는 왼쪽 정렬 */
+  .price_wrapper:not(:has(.discount_percent)) .final_price {
+    margin-left: 0;
+  }
+  `;
   document.head.appendChild(style);
 
   // ────────────────────────────────────────────────────────────────
