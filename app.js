@@ -842,87 +842,72 @@ app.get('/api/:mallId/products', async (req, res) => {
 
 // Product - 단건 (쿠폰할인가 포함)
 app.get('/api/:mallId/products/:product_no', async (req, res) => {
-    const { mallId, product_no } = req.params;
-    try {
-      const shop_no = 1;
-      const coupon_query = req.query.coupon_no || '';
-      const coupon_nos = coupon_query.split(',').filter(Boolean);
-  
-      const prodUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}`;
-      const prodData = await apiRequest(mallId, 'GET', prodUrl, {}, { shop_no });
-      const p = prodData.product || prodData.products?.[0];
-      if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
-  
-      const disUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
-      const disData = await apiRequest(mallId, 'GET', disUrl, {}, { shop_no });
-      const rawSale = disData.discountprice?.pc_discount_price;
-      const sale_price = rawSale != null ? parseFloat(rawSale) : null;
-  
-      // 아이콘 꾸미기 정보 가져오기
-      let decoration_icon_url = null;
-      try {
-          const iconsUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}/icons`;
-          const iconsData = await apiRequest(mallId, 'GET', iconsUrl, {}, { shop_no });
-          // 아이콘이 배열로 오며, 첫 번째 아이콘의 이미지 경로를 사용
-          if (iconsData.icons && iconsData.icons.length > 0) {
-              decoration_icon_url = iconsData.icons[0].image_path;
-          }
-      } catch (iconErr) {
-          // 아이콘 조회에 실패하더라도 전체 응답은 정상적으로 보내기 위해 오류를 로깅만 함
-          console.error(`[GET ICON ERROR] for product ${product_no}:`, iconErr.message);
+  const { mallId, product_no } = req.params;
+  try {
+    const shop_no = 1;
+    const coupon_query = req.query.coupon_no || '';
+    const coupon_nos = coupon_query.split(',').filter(Boolean);
+
+    const prodUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}`;
+    const prodData = await apiRequest(mallId, 'GET', prodUrl, {}, { shop_no });
+    const p = prodData.product || prodData.products?.[0];
+    if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
+
+    const disUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
+    const disData = await apiRequest(mallId, 'GET', disUrl, {}, { shop_no });
+    const rawSale = disData.discountprice?.pc_discount_price;
+    const sale_price = rawSale != null ? parseFloat(rawSale) : null;
+
+    const coupons = await Promise.all(coupon_nos.map(async no => {
+      const urlCoupon = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
+      const { coupons: arr } = await apiRequest(mallId, 'GET', urlCoupon, {}, {
+        shop_no,
+        coupon_no: no,
+        fields: [
+          'coupon_no',
+          'available_product','available_product_list',
+          'available_category','available_category_list',
+          'benefit_amount','benefit_percentage'
+        ].join(',')
+      });
+      return arr?.[0] || null;
+    }));
+    const validCoupons = coupons.filter(Boolean);
+    let benefit_price = null, benefit_percentage = null;
+    validCoupons.forEach(coupon => {
+      const pList = coupon.available_product_list || [];
+      const ok = coupon.available_product === 'U'
+        || (coupon.available_product === 'I' && pList.includes(parseInt(product_no, 10)))
+        || (coupon.available_product === 'E' && !pList.includes(parseInt(product_no, 10)));
+      if (!ok) return;
+      const orig = parseFloat(p.price);
+      const pct = parseFloat(coupon.benefit_percentage || 0);
+      const amt = parseFloat(coupon.benefit_amount || 0);
+      let bPrice = null;
+      if (pct > 0) bPrice = +(orig * (100 - pct) / 100).toFixed(2);
+      else if (amt > 0) bPrice = +(orig - amt).toFixed(2);
+      if (bPrice != null && pct > (benefit_percentage || 0)) {
+        benefit_price = bPrice;
+        benefit_percentage = pct;
       }
-  
-      const coupons = await Promise.all(coupon_nos.map(async no => {
-        const urlCoupon = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
-        const { coupons: arr } = await apiRequest(mallId, 'GET', urlCoupon, {}, {
-          shop_no,
-          coupon_no: no,
-          fields: [
-            'coupon_no',
-            'available_product','available_product_list',
-            'available_category','available_category_list',
-            'benefit_amount','benefit_percentage'
-          ].join(',')
-        });
-        return arr?.[0] || null;
-      }));
-      const validCoupons = coupons.filter(Boolean);
-      let benefit_price = null, benefit_percentage = null;
-      validCoupons.forEach(coupon => {
-        const pList = coupon.available_product_list || [];
-        const ok = coupon.available_product === 'U'
-          || (coupon.available_product === 'I' && pList.includes(parseInt(product_no, 10)))
-          || (coupon.available_product === 'E' && !pList.includes(parseInt(product_no, 10)));
-        if (!ok) return;
-        const orig = parseFloat(p.price);
-        const pct = parseFloat(coupon.benefit_percentage || 0);
-        const amt = parseFloat(coupon.benefit_amount || 0);
-        let bPrice = null;
-        if (pct > 0) bPrice = +(orig * (100 - pct) / 100).toFixed(2);
-        else if (amt > 0) bPrice = +(orig - amt).toFixed(2);
-        if (bPrice != null && pct > (benefit_percentage || 0)) {
-          benefit_price = bPrice;
-          benefit_percentage = pct;
-        }
-      });
-  
-      res.json({
-        product_no,
-        product_code: p.product_code,
-        product_name: p.product_name,
-        price: p.price,
-        summary_description: p.summary_description || '',
-        sale_price,
-        benefit_price,
-        benefit_percentage,
-        list_image: p.list_image,
-        decoration_icon_url // 여기에 추가된 아이콘 URL 포함
-      });
-    } catch (err) {
-      console.error('[GET PRODUCT ERROR]', err);
-      return replyInstallGuard(res, err, '단일 상품 조회 실패');
-    }
-  });
+    });
+
+    res.json({
+      product_no,
+      product_code: p.product_code,
+      product_name: p.product_name,
+      price: p.price,
+      summary_description: p.summary_description || '',
+      sale_price,
+      benefit_price,
+      benefit_percentage,
+      list_image: p.list_image
+    });
+  } catch (err) {
+    console.error('[GET PRODUCT ERROR]', err);
+    return replyInstallGuard(res, err, '단일 상품 조회 실패');
+  }
+});
 
 // Analytics - visitors-by-date
 app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
