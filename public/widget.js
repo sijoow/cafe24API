@@ -412,7 +412,8 @@
       spinner.remove();
     }
   }
-  function renderProducts(ul, products, cols) {
+
+function renderProducts(ul, products, cols) {
   ul.style.display = 'grid';
   ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
   ul.style.gap = '10px';
@@ -424,6 +425,7 @@
     if (typeof val === 'string') {
       const t = val.trim();
       if (t.endsWith('원')) return t;
+      // 쉼표를 제거하고 숫자로 변환합니다.
       const num = parseFloat(t.replace(/,/g, '')) || 0;
       return `${num.toLocaleString('ko-KR')}원`;
     }
