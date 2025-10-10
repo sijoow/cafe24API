@@ -431,7 +431,7 @@ function renderProducts(ul, products, cols) {
   }
 
   const items = products.map(p => {
-    // 1. 가격을 정수(Integer)로 변환하여 소수점 문제 없이 정확하게 비교합니다.
+    // [수정] 가격을 정수(Integer)로 변환하여 소수점 문제 없이 정확하게 비교합니다.
     const originalPriceNum = parseInt(String(p.price || '0').replace(/[^0-9]/g, ''), 10);
     
     const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9]/g, '');
@@ -440,7 +440,7 @@ function renderProducts(ul, products, cols) {
     const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9]/g, '');
     const couponPriceNum = parseInt(cleanCouponString, 10) || null;
 
-    // 2. 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
+    // 여러 할인 중 가장 저렴한 가격을 최종 가격으로 결정합니다.
     let finalPriceNum = originalPriceNum;
     if (salePriceNum != null && salePriceNum < finalPriceNum) {
       finalPriceNum = salePriceNum;
@@ -449,14 +449,14 @@ function renderProducts(ul, products, cols) {
       finalPriceNum = couponPriceNum;
     }
 
-    // 3. 화면에 표시될 가격 텍스트를 미리 만듭니다.
+    // 화면에 표시될 가격 텍스트를 미리 만듭니다.
     const originalPriceText = formatKRW(originalPriceNum);
     const finalPriceText = formatKRW(finalPriceNum);
     
-    // 4. 할인이 실제로 적용되었는지(가격이 다른지) 확인합니다.
+    // [수정] 할인이 실제로 적용되었는지(가격이 다른지) 확인하는 로직입니다.
     const hasDiscount = finalPriceNum < originalPriceNum;
 
-    // 5. HTML 구조를 만듭니다.
+    // HTML 구조를 만듭니다.
     return `
     <li style="list-style:none;">
       <a href="/product/detail.html?product_no=${p.product_no}"
@@ -479,7 +479,7 @@ function renderProducts(ul, products, cols) {
       
       <div class="prd_price_area">
         ${
-          // 할인이 있을 경우: 취소선 정가와 최종가를 한 줄에 표시
+          // 할인이 있을 경우: 취소선 정가와 최종가를 함께 표시
           hasDiscount
           ? `
             <div style="display: flex; align-items: center; flex-wrap: wrap; margin-top: 2px;">
@@ -487,7 +487,7 @@ function renderProducts(ul, products, cols) {
               <span class="final_price" style="font-size: 16px; font-weight: bold; margin-left: 6px;">${finalPriceText}</span>
             </div>
           `
-          // 할인이 없을 경우: 정가만 표시
+          // 할인이 없을 경우: 최종 가격만 표시
           : `
             <div style="font-size: 16px; font-weight: 500; margin-top: 2px;">
               <span class="final_price">${originalPriceText}</span>
