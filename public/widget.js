@@ -431,11 +431,19 @@ function renderProducts(ul, products, cols) {
   }
 
   const items = products.map(p => {
+    // =================================================================
+    // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 디버깅 코드 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    //
+    //      어떤 데이터가 들어오는지 확인하기 위해 이 코드를 추가했습니다.
+    //
+    console.log("상품 데이터(p):", p);
+    //
+    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 디버깅 코드 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+    // =================================================================
+
     // 1. 모든 가격 정보를 숫자로 변환합니다.
     const originalPriceNum = parseFloat(p.price);
 
-    // [중요] '150,000원' 같은 문자열을 숫자로 바꾸는 부분을 수정했습니다.
-    // 먼저 쉼표, 원 등 모든 글자를 제거하고 ('150000') -> 그 다음에 숫자로 바꿉니다 (150000).
     const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
     const salePriceNum = parseFloat(cleanSaleString) || null;
 
@@ -455,7 +463,6 @@ function renderProducts(ul, products, cols) {
     const originalPriceText = formatKRW(originalPriceNum);
     const finalPriceText = formatKRW(finalPriceNum);
     
-    // 4. 할인이 적용되었는지 여부를 확인합니다.
     const hasDiscount = finalPriceNum < originalPriceNum;
 
     // 5. HTML 구조를 만듭니다.
@@ -480,7 +487,6 @@ function renderProducts(ul, products, cols) {
       </a>
       <div class="prd_price_area">
         ${
-          // 할인이 있을 경우: 취소선 정가 + 최종가
           hasDiscount
           ? `
             <div>
@@ -490,7 +496,6 @@ function renderProducts(ul, products, cols) {
               ${finalPriceText}
             </div>
           `
-          // 할인이 없을 경우: 정가만 표시
           : `
             <div class="final_price" style="font-size: 16px; font-weight: 500;">
               ${originalPriceText}
