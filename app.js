@@ -21,30 +21,30 @@ dayjs.extend(tz);
 
 // ===== ENV =====
 const {
-  MONGODB_URI,
-  DB_NAME,
-  CAFE24_CLIENT_ID,
-  CAFE24_CLIENT_SECRET,
-  CAFE24_API_VERSION,
-  FRONTEND_URL,
-  BACKEND_URL,
-  CAFE24_SCOPES,
-  UNINSTALL_TOKEN,
-  PORT = 5000,
-  R2_ACCESS_KEY,
-  R2_SECRET_KEY,
-  R2_BUCKET_NAME,
-  R2_ENDPOINT,
-  R2_REGION = 'us-east-1',
-  R2_PUBLIC_BASE,
+  MONGODB_URI,
+  DB_NAME,
+  CAFE24_CLIENT_ID,
+  CAFE24_CLIENT_SECRET,
+  CAFE24_API_VERSION,
+  FRONTEND_URL,
+  BACKEND_URL,
+  CAFE24_SCOPES,
+  UNINSTALL_TOKEN,
+  PORT = 5000,
+  R2_ACCESS_KEY,
+  R2_SECRET_KEY,
+  R2_BUCKET_NAME,
+  R2_ENDPOINT,
+  R2_REGION = 'us-east-1',
+  R2_PUBLIC_BASE,
 } = process.env;
 
 // ENV 체크 (필수값이 없으면 프로세스 종료)
 function ensureEnv(key) {
-  if (!process.env[key]) {
-    console.error(`❌ Missing ENV: ${key}`);
-    process.exit(1);
-  }
+  if (!process.env[key]) {
+    console.error(`❌ Missing ENV: ${key}`);
+    process.exit(1);
+  }
 }
 ['MONGODB_URI','DB_NAME','CAFE24_CLIENT_ID','CAFE24_CLIENT_SECRET','FRONTEND_URL','BACKEND_URL','CAFE24_SCOPES','CAFE24_API_VERSION'].forEach(ensureEnv);
 
@@ -57,149 +57,151 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // 요청 로거
 app.use((req, _res, next) => {
-  console.log(new Date().toISOString(), req.method, req.originalUrl, Object.keys(req.query || {}).length ? req.query : '');
-  next();
+  console.log(new Date().toISOString(), req.method, req.originalUrl, Object.keys(req.query || {}).length ? req.query : '');
+  next();
 });
 
 // ===== MongoDB 연결 =====
 let db;
 async function initDb() {
-  const client = new MongoClient(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
-  await client.connect();
-  db = client.db(DB_NAME);
-  await db.collection('token').createIndex({ mallId: 1 }, { unique: true });
-  console.log('▶️ MongoDB connected to', DB_NAME);
+  const client = new MongoClient(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+  await client.connect();
+  db = client.db(DB_NAME);
+  await db.collection('token').createIndex({ mallId: 1 }, { unique: true });
+  console.log('▶️ MongoDB connected to', DB_NAME);
 }
 
 // ===== Multer (파일 업로드 임시저장) =====
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
 });
 const upload = multer({ storage });
 
 // ===== R2 (S3 호환) 클라이언트 =====
 const s3Client = new S3Client({
-  region: R2_REGION,
-  endpoint: R2_ENDPOINT,
-  credentials: {
-    accessKeyId: R2_ACCESS_KEY,
-    secretAccessKey: R2_SECRET_KEY,
-  },
-  forcePathStyle: true,
+  region: R2_REGION,
+  endpoint: R2_ENDPOINT,
+  credentials: {
+    accessKeyId: R2_ACCESS_KEY,
+    secretAccessKey: R2_SECRET_KEY,
+  },
+  forcePathStyle: true,
 });
 
 // ===== OAuth URL 빌더 =====
 function buildAuthorizeUrl(mallId) {
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id:     CAFE24_CLIENT_ID,
-    redirect_uri:  `${BACKEND_URL}/auth/callback`,
-    scope:         CAFE24_SCOPES,
-    state:         mallId,
-  });
-  return `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id:     CAFE24_CLIENT_ID,
+    redirect_uri:  `${BACKEND_URL}/auth/callback`,
+    scope:         CAFE24_SCOPES,
+    state:         mallId,
+  });
+  return `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
 }
 
 // ===== 토큰 리프레시 =====
 async function refreshAccessToken(mallId, refreshToken) {
-  const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-  const params = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken
-  }).toString();
+  const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken
+  }).toString();
 
-  const { data } = await axios.post(url, params, {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${creds}`
-    }
-  });
+  const { data } = await axios.post(url, params, {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${creds}`
+    }
+  });
 
-  await db.collection('token').updateOne(
-    { mallId },
-    { $set: {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        obtainedAt: new Date(),
-        expiresIn: data.expires_in,
-        raw_refresh_response: data
-      }
-    }
-  );
+  await db.collection('token').updateOne(
+    { mallId },
+    { $set: {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        obtainedAt: new Date(),
+        expiresIn: data.expires_in,
+        raw_refresh_response: data
+      }
+    }
+  );
 
-  console.log(`[TOKEN REFRESH] mallId=${mallId}`);
-  return data.access_token;
+  console.log(`[TOKEN REFRESH] mallId=${mallId}`);
+  return data.access_token;
 }
 
 // ===== 에러/재설치 헬퍼 =====
 function installRequired(mallId) {
-  const err = new Error('INSTALL_REQUIRED');
-  err.installRequired = true;
-  err.payload = { installed: false, mallId, installUrl: buildAuthorizeUrl(mallId) };
-  return err;
+  const err = new Error('INSTALL_REQUIRED');
+  err.installRequired = true;
+  err.payload = { installed: false, mallId, installUrl: buildAuthorizeUrl(mallId) };
+  return err;
 }
 
 function replyInstallGuard(res, err, fallbackMsg, statusWhenUnknown = 500) {
-  if (err?.installRequired) {
-    return res.status(409).json(err.payload);
-  }
-  const code = err.response?.status || statusWhenUnknown;
-  return res.status(code).json({
-    message: fallbackMsg,
-    error: err.message,
-    provider: err.response?.data || null
-  });
+  if (err?.installRequired) {
+    return res.status(409).json(err.payload);
+  }
+  const code = err.response?.status || statusWhenUnknown;
+  return res.status(code).json({
+    message: fallbackMsg,
+    error: err.message,
+    provider: err.response?.data || null
+  });
 }
 
-// ===== Cafe24 API 요청 헬퍼 =====
+// ===== Cafe24 API 요청 헬퍼 (토큰 자동 리프레시, 실패 시 token 정리) =====
 async function apiRequest(mallId, method, url, data = {}, params = {}) {
-  const doc = await db.collection('token').findOne({ mallId });
-  if (!doc) throw installRequired(mallId);
+  const doc = await db.collection('token').findOne({ mallId });
+  if (!doc) throw installRequired(mallId);
 
-  try {
-    const resp = await axios({
-      method, url, data, params,
-      headers: {
-        Authorization: `Bearer ${doc.accessToken}`,
-        'Content-Type': 'application/json',
-        'X-Cafe24-Api-Version': CAFE24_API_VERSION
-      }
-    });
-    return resp.data;
-  } catch (err) {
-    const status = err.response?.status;
+  try {
+    const resp = await axios({
+      method, url, data, params,
+      headers: {
+        Authorization: `Bearer ${doc.accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Cafe24-Api-Version': CAFE24_API_VERSION
+      }
+    });
+    return resp.data;
+  } catch (err) {
+    const status = err.response?.status;
 
-    if (status === 401 && doc.refreshToken) {
-      try {
-        const newAccess = await refreshAccessToken(mallId, doc.refreshToken);
-        const retry = await axios({
-          method, url, data, params,
-          headers: {
-            Authorization: `Bearer ${newAccess}`,
-            'Content-Type': 'application/json',
-            'X-Cafe24-Api-Version': CAFE24_API_VERSION
-          }
-        });
-        return retry.data;
-      } catch (_e) {
-        await db.collection('token').deleteOne({ mallId });
-        throw installRequired(mallId);
-      }
-    }
+    // 401 -> 시도: refresh
+    if (status === 401 && doc.refreshToken) {
+      try {
+        const newAccess = await refreshAccessToken(mallId, doc.refreshToken);
+        const retry = await axios({
+          method, url, data, params,
+          headers: {
+            Authorization: `Bearer ${newAccess}`,
+            'Content-Type': 'application/json',
+            'X-Cafe24-Api-Version': CAFE24_API_VERSION
+          }
+        });
+        return retry.data;
+      } catch (_e) {
+        // 리프레시 실패하면 token 정리하고 재설치 유도
+        await db.collection('token').deleteOne({ mallId });
+        throw installRequired(mallId);
+      }
+    }
 
-    if (status === 401 || status === 403) {
-      await db.collection('token').deleteOne({ mallId });
-      throw installRequired(mallId);
-    }
+    // 401(리프레시 불가) 또는 403(권한/앱삭제) -> 토큰 정리
+    if (status === 401 || status === 403) {
+      await db.collection('token').deleteOne({ mallId });
+      throw installRequired(mallId);
+    }
 
-    throw err;
-  }
+    throw err;
+  }
 }
-
 
 // ================================================================
 // 1) 설치 시작 (프론트/외부에서 호출 가능)
@@ -702,160 +704,209 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     return replyInstallGuard(res, err, '쿠폰 통계 조회 실패');
   }
 });
+
 // Category products + coupon logic
 app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
-  const { mallId, category_no } = req.params;
-  try {
-    const coupon_query = req.query.coupon_no || '';
-    const coupon_nos = coupon_query ? coupon_query.split(',') : [];
-    const limit = parseInt(req.query.limit, 10) || 100;
-    const offset = parseInt(req.query.offset, 10) || 0;
-    const shop_no = 1;
-    const display_group = 1;
+  const { mallId, category_no } = req.params;
+  try {
+    const coupon_query = req.query.coupon_no || '';
+    const coupon_nos = coupon_query ? coupon_query.split(',') : [];
+    const limit = parseInt(req.query.limit, 10) || 100;
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const shop_no = 1;
+    const display_group = 1;
 
-    const coupons = await Promise.all(coupon_nos.map(async no => {
-      const urlCoupon = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
-      const { coupons: arr } = await apiRequest(mallId, 'GET', urlCoupon, {}, {
-        shop_no,
-        coupon_no: no,
-        fields: 'coupon_no,available_product,available_product_list,available_category,available_category_list,benefit_amount,benefit_percentage'
-      });
-      return arr?.[0] || null;
-    }));
-    const validCoupons = coupons.filter(c => c);
+    const coupons = await Promise.all(coupon_nos.map(async no => {
+      const urlCoupon = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
+      const { coupons: arr } = await apiRequest(mallId, 'GET', urlCoupon, {}, {
+        shop_no,
+        coupon_no: no,
+        fields: [
+          'coupon_no',
+          'available_product','available_product_list',
+          'available_category','available_category_list',
+          'benefit_amount','benefit_percentage'
+        ].join(',')
+      });
+      return arr?.[0] || null;
+    }));
+    const validCoupons = coupons.filter(c => c);
 
-    const urlCats = `https://${mallId}.cafe24api.com/api/v2/admin/categories/${category_no}/products`;
-    const catRes = await apiRequest(mallId, 'GET', urlCats, {}, { shop_no, display_group, limit, offset });
-    const sorted = (catRes.products || []).slice().sort((a,b)=>a.sequence_no - b.sequence_no);
-    const productNos = sorted.map(p => p.product_no);
-    if (!productNos.length) return res.json([]);
+    const urlCats = `https://${mallId}.cafe24api.com/api/v2/admin/categories/${category_no}/products`;
+    const catRes = await apiRequest(mallId, 'GET', urlCats, {}, { shop_no, display_group, limit, offset });
+    const sorted = (catRes.products || []).slice().sort((a,b)=>a.sequence_no - b.sequence_no);
+    const productNos = sorted.map(p => p.product_no);
+    if (!productNos.length) return res.json([]);
 
-    const urlProds = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
-    const detailRes = await apiRequest(mallId, 'GET', urlProds, {}, { shop_no, product_no: productNos.join(','), limit: productNos.length });
-    const details = detailRes.products || [];
-    const detailMap = details.reduce((m,p) => { m[p.product_no] = p; return m; }, {});
+    const urlProds = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
+    const detailRes = await apiRequest(mallId, 'GET', urlProds, {}, { shop_no, product_no: productNos.join(','), limit: productNos.length });
+    const details = detailRes.products || [];
+    const detailMap = details.reduce((m,p) => { m[p.product_no] = p; return m; }, {});
 
-    function calcCouponInfos(prodNo) {
-      const prodDetail = detailMap[prodNo];
-      if (!prodDetail) return [];
-      return validCoupons.map(coupon => {
-        const pList = coupon.available_product_list || [];
-        const prodOk = coupon.available_product === 'U'
-          || (coupon.available_product === 'I' && pList.includes(prodNo))
-          || (coupon.available_product === 'E' && !pList.includes(prodNo));
-        const cList = coupon.available_category_list || [];
-        const catOk = coupon.available_category === 'U'
-          || (coupon.available_category === 'I' && cList.includes(parseInt(category_no, 10)))
-          || (coupon.available_category === 'E' && !cList.includes(parseInt(category_no, 10)));
-        if (!prodOk || !catOk) return null;
-        const orig = parseFloat(prodDetail.price || 0);
-        const pct = parseFloat(coupon.benefit_percentage || 0);
-        const amt = parseFloat(coupon.benefit_amount || 0);
-        let benefit_price = null;
-        if (pct > 0) benefit_price = +(orig * (100 - pct) / 100).toFixed(2);
-        else if (amt > 0) benefit_price = +(orig - amt).toFixed(2);
-        if (benefit_price == null) return null;
-        return { coupon_no: coupon.coupon_no, benefit_percentage: pct, benefit_price };
-      }).filter(Boolean).sort((a,b) => b.benefit_percentage - a.benefit_percentage);
-    }
+    const discountMap = {};
+    await Promise.all(productNos.map(async no => {
+      const urlDis = `https://${mallId}.cafe24api.com/api/v2/admin/products/${no}/discountprice`;
+      const { discountprice } = await apiRequest(mallId, 'GET', urlDis, {}, { shop_no });
+      discountMap[no] = discountprice?.pc_discount_price != null ? parseFloat(discountprice.pc_discount_price) : null;
+    }));
 
-    const full = sorted.map(item => {
-      const prod = detailMap[item.product_no];
-      if (!prod) return null;
-      return {
-        product_no: item.product_no,
-        product_name: prod.product_name,
-        price: prod.retail_price,
-        sale_price: prod.price,
-        summary_description: prod.summary_description,
-        list_image: prod.list_image,
-        small_image: prod.image ? prod.image.small : null,
-        couponInfos: calcCouponInfos(item.product_no)
-      };
-    }).filter(Boolean);
+    const formatKRW = num => num != null ? Number(num).toLocaleString('ko-KR') + '원' : null;
 
-    const slim = full.map(p => {
-      const infos = p.couponInfos || [];
-      const first = infos.length ? infos[0] : null;
-      return {
-        product_no: p.product_no,
-        product_name: p.product_name,
-        price: p.price,
-        sale_price: (p.sale_price != null && +p.sale_price !== +p.price) ? p.sale_price : null,
-        benefit_price: first ? first.benefit_price : null,
-        summary_description: p.summary_description,
-        list_image: p.list_image,
-        small_image: p.small_image,
-        benefit_percentage: first ? first.benefit_percentage : null,
-        couponInfos: infos.length ? infos : null
-      };
-    });
+    function calcCouponInfos(prodNo) {
+      return validCoupons.map(coupon => {
+        const pList = coupon.available_product_list || [];
+        const prodOk = coupon.available_product === 'U'
+          || (coupon.available_product === 'I' && pList.includes(prodNo))
+          || (coupon.available_product === 'E' && !pList.includes(prodNo));
+        const cList = coupon.available_category_list || [];
+        const catOk = coupon.available_category === 'U'
+          || (coupon.available_category === 'I' && cList.includes(parseInt(category_no, 10)))
+          || (coupon.available_category === 'E' && !cList.includes(parseInt(category_no, 10)));
+        if (!prodOk || !catOk) return null;
+        const orig = parseFloat(detailMap[prodNo].price || 0);
+        const pct = parseFloat(coupon.benefit_percentage || 0);
+        const amt = parseFloat(coupon.benefit_amount || 0);
+        let benefit_price = null;
+        if (pct > 0) benefit_price = +(orig * (100 - pct) / 100).toFixed(2);
+        else if (amt > 0) benefit_price = +(orig - amt).toFixed(2);
+        if (benefit_price == null) return null;
+        return { coupon_no: coupon.coupon_no, benefit_percentage: pct, benefit_price };
+      }).filter(Boolean).sort((a,b) => b.benefit_percentage - a.benefit_percentage);
+    }
 
-    res.json(slim);
-  } catch (err) {
-    console.error('[CATEGORY PRODUCTS ERROR]', err);
-    return replyInstallGuard(res, err, '카테고리 상품 조회 실패', err.response?.status || 500);
-  }
+    const full = sorted.map(item => {
+      const prod = detailMap[item.product_no];
+      if (!prod) return null;
+      return {
+        product_no: item.product_no,
+        product_name: prod.product_name,
+        price: prod.price,
+        summary_description: prod.summary_description,
+        list_image: prod.list_image,
+        sale_price: discountMap[item.product_no],
+        couponInfos: calcCouponInfos(item.product_no)
+      };
+    }).filter(Boolean);
+
+    const slim = full.map(p => {
+      const infos = p.couponInfos || [];
+      const first = infos.length ? infos[0] : null;
+      return {
+        product_no: p.product_no,
+        product_name: p.product_name,
+        price: formatKRW(parseFloat(p.price)),
+        summary_description: p.summary_description,
+        list_image: p.list_image,
+        sale_price: (p.sale_price != null && +p.sale_price !== +p.price) ? formatKRW(p.sale_price) : null,
+        benefit_price: first ? formatKRW(first.benefit_price) : null,
+        benefit_percentage: first ? first.benefit_percentage : null,
+        couponInfos: infos.length ? infos : null
+      };
+    });
+
+    res.json(slim);
+  } catch (err) {
+    console.error('[CATEGORY PRODUCTS ERROR]', err);
+    return replyInstallGuard(res, err, '카테고리 상품 조회 실패', err.response?.status || 500);
+  }
+});
+
+// Products - 전체 조회 (검색/페이징)
+app.get('/api/:mallId/products', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    const shop_no = 1;
+    const limit = parseInt(req.query.limit, 10) || 1000;
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const q = (req.query.q || '').trim();
+    const url = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
+
+    const params = { shop_no, limit, offset };
+    if (q) params['search[product_name]'] = q;
+
+    const data = await apiRequest(mallId, 'GET', url, {}, params);
+    const slim = (data.products || []).map(p => ({
+      product_no: p.product_no,
+      product_code: p.product_code,
+      product_name: p.product_name,
+      price: p.price,
+      list_image: p.list_image
+    }));
+
+    res.json({ products: slim, total: data.total_count });
+  } catch (err) {
+    console.error('[GET PRODUCTS ERROR]', err);
+    return replyInstallGuard(res, err, '전체 상품 조회 실패');
+  }
 });
 
 // Product - 단건 (쿠폰할인가 포함)
 app.get('/api/:mallId/products/:product_no', async (req, res) => {
-  const { mallId, product_no } = req.params;
-  try {
-    const shop_no = 1;
-    const coupon_query = req.query.coupon_no || '';
-    const coupon_nos = coupon_query.split(',').filter(Boolean);
+  const { mallId, product_no } = req.params;
+  try {
+    const shop_no = 1;
+    const coupon_query = req.query.coupon_no || '';
+    const coupon_nos = coupon_query.split(',').filter(Boolean);
 
-    const prodUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}`;
-    const prodData = await apiRequest(mallId, 'GET', prodUrl, {}, { shop_no });
-    const p = prodData.product || prodData.products?.[0];
-    if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
+    const prodUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}`;
+    const prodData = await apiRequest(mallId, 'GET', prodUrl, {}, { shop_no });
+    const p = prodData.product || prodData.products?.[0];
+    if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
 
-    const coupons = await Promise.all(coupon_nos.map(async no => {
-      const urlCoupon = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
-      const { coupons: arr } = await apiRequest(mallId, 'GET', urlCoupon, {}, {
-        shop_no,
-        coupon_no: no,
-        fields: 'coupon_no,available_product,available_product_list,available_category,available_category_list,benefit_amount,benefit_percentage'
-      });
-      return arr?.[0] || null;
-    }));
-    const validCoupons = coupons.filter(Boolean);
-    let benefit_price = null, benefit_percentage = null;
-    validCoupons.forEach(coupon => {
-      const pList = coupon.available_product_list || [];
-      const ok = coupon.available_product === 'U'
-        || (coupon.available_product === 'I' && pList.includes(parseInt(product_no, 10)))
-        || (coupon.available_product === 'E' && !pList.includes(parseInt(product_no, 10)));
-      if (!ok) return;
-      const orig = parseFloat(p.price);
-      const pct = parseFloat(coupon.benefit_percentage || 0);
-      const amt = parseFloat(coupon.benefit_amount || 0);
-      let bPrice = null;
-      if (pct > 0) bPrice = +(orig * (100 - pct) / 100).toFixed(2);
-      else if (amt > 0) bPrice = +(orig - amt).toFixed(2);
-      if (bPrice != null && (benefit_price === null || bPrice < benefit_price)) {
-        benefit_price = bPrice;
-        benefit_percentage = pct;
-      }
-    });
+    const disUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}/discountprice`;
+    const disData = await apiRequest(mallId, 'GET', disUrl, {}, { shop_no });
+    const rawSale = disData.discountprice?.pc_discount_price;
+    const sale_price = rawSale != null ? parseFloat(rawSale) : null;
 
-    res.json({
-      product_no,
-      product_code: p.product_code,
-      product_name: p.product_name,
-      price: p.retail_price,
-      summary_description: p.summary_description || '',
-      sale_price: p.price,
-      benefit_price,
-      benefit_percentage,
-      list_image: p.list_image,
-      small_image: p.image ? p.image.small : null
-    });
-  } catch (err) {
-    console.error('[GET PRODUCT ERROR]', err);
-    return replyInstallGuard(res, err, '단일 상품 조회 실패');
-  }
+    const coupons = await Promise.all(coupon_nos.map(async no => {
+      const urlCoupon = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
+      const { coupons: arr } = await apiRequest(mallId, 'GET', urlCoupon, {}, {
+        shop_no,
+        coupon_no: no,
+        fields: [
+          'coupon_no',
+          'available_product','available_product_list',
+          'available_category','available_category_list',
+          'benefit_amount','benefit_percentage'
+        ].join(',')
+      });
+      return arr?.[0] || null;
+    }));
+    const validCoupons = coupons.filter(Boolean);
+    let benefit_price = null, benefit_percentage = null;
+    validCoupons.forEach(coupon => {
+      const pList = coupon.available_product_list || [];
+      const ok = coupon.available_product === 'U'
+        || (coupon.available_product === 'I' && pList.includes(parseInt(product_no, 10)))
+        || (coupon.available_product === 'E' && !pList.includes(parseInt(product_no, 10)));
+      if (!ok) return;
+      const orig = parseFloat(p.price);
+      const pct = parseFloat(coupon.benefit_percentage || 0);
+      const amt = parseFloat(coupon.benefit_amount || 0);
+      let bPrice = null;
+      if (pct > 0) bPrice = +(orig * (100 - pct) / 100).toFixed(2);
+      else if (amt > 0) bPrice = +(orig - amt).toFixed(2);
+      if (bPrice != null && pct > (benefit_percentage || 0)) {
+        benefit_price = bPrice;
+        benefit_percentage = pct;
+      }
+    });
+
+    res.json({
+      product_no,
+      product_code: p.product_code,
+      product_name: p.product_name,
+      price: p.price,
+      summary_description: p.summary_description || '',
+      sale_price,
+      benefit_price,
+      benefit_percentage,
+      list_image: p.list_image
+    });
+  } catch (err) {
+    console.error('[GET PRODUCT ERROR]', err);
+    return replyInstallGuard(res, err, '단일 상품 조회 실패');
+  }
 });
 
 // Analytics - visitors-by-date
