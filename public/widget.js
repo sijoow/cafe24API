@@ -521,7 +521,7 @@
    .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;width:95%;}
    .main_Grid_${pageId} li { color:#000; }
    .main_Grid_${pageId} img { padding-bottom:10px; }
-   .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:15px;}
+   .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:15px;line-height:1.2;}
    .main_Grid_${pageId} .prd_desc { padding-bottom:3px; font-size:14px; color:#666; }
 
    /* ===== 탭 메뉴 ===== */
