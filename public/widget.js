@@ -414,179 +414,162 @@
   }
 
   function renderProducts(ul, products, cols) {
-     ul.style.display = 'grid';
-     ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
-     ul.style.gap = '20px';
-     ul.style.maxWidth = '800px';
-     ul.style.margin = '0 auto';
-
+    ul.style.display = 'grid';
+    ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
+    ul.style.gap = '20px';
+    ul.style.maxWidth = '800px';
+    ul.style.margin = '0 auto';
+  
     function formatKRW(val) {
-     if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
-     if (typeof val === 'string') {
-     const t = val.trim();
-     if (t.endsWith('원')) return t;
-     const num = parseFloat(t.replace(/,/g, '')) || 0;
-     return `${num.toLocaleString('ko-KR')}원`;
-     }
-     return '-';
-    }
-    
-  const items = products.map(p => {
- const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
- const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
- const salePriceNum = parseFloat(cleanSaleString) || null;
- const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
- const couponPriceNum = parseFloat(cleanCouponString) || null;
-    
-    let finalPriceNum = originalPriceNum;
-    if (salePriceNum != null && salePriceNum < finalPriceNum) {
-     finalPriceNum = salePriceNum;
-    }
-    if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
-     finalPriceNum = couponPriceNum;
-    }
-    
-     const originalPriceText = formatKRW(originalPriceNum);
-   const finalPriceText = formatKRW(finalPriceNum);
-   const hasDiscount = finalPriceNum < originalPriceNum;
-   
-   // ▼▼▼▼▼ [수정된 부분] 할인율 계산 로직 ▼▼▼▼▼
-   let displayPercent = null;
-   if (hasDiscount) {
-          // CASE 1: 최종 할인가가 '쿠폰'에 의한 것이고, 해당 쿠폰이 '%' 할인일 때
-    if (finalPriceNum === couponPriceNum && p.benefit_percentage > 0) {
-     displayPercent = p.benefit_percentage;
-    // CASE 2: 최종 할인가가 '프로모션'에 의한 것일 때 (쿠폰 할인이 아님)
-    } else if (finalPriceNum === salePriceNum) {
-     if (originalPriceNum > 0) {
-        // 프로모션은 % 정보를 따로 주지 않으므로 직접 계산
-    displayPercent = Math.round(((originalPriceNum - finalPriceNum) / originalPriceNum) * 100);
-     }
-    }
-          // ※ 참고: 금액 할인 쿠폰의 경우, displayPercent는 null로 유지되어 %가 표시되지 않습니다.
-    }
-        // ▲▲▲▲▲ [수정된 부분] 할인율 계산 로직 ▲▲▲▲▲
-    
-     return `
-     <li style="list-style:none;">
-      <a href="/product/detail.html?product_no=${p.product_no}"
-     class="prd_link"
-     style="text-decoration:none;color:inherit;"
-     data-track-click="product"
-     data-product-no="${p.product_no}"
-     target="_blank" rel="noopener noreferrer">
-     <div style="position:relative;">
-    <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
-    ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" class="prd_deco_icon" /></div>` : ''}
-      </div>
-      <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
-    ${p.summary_description || ''}
-     </div>
-      <div class="prd_name">
-    ${p.product_name}
-       </div>
-      </a>
-      
-      <div class="prd_price_area">
-      ${
-       hasDiscount
-       ? `
-        <div class="price_wrapper vertical_layout">
-       <div class="original_price_line">
-      <span class="original_price">${originalPriceText}</span>
-        </div>
-       <div class="final_price_line">
-     ${(displayPercent && displayPercent > 0) ? `<strong class="discount_percent">${displayPercent}%</strong>` : ''}
-          <span class="final_price">${finalPriceText}</span>
-        </div>
-        </div>
-       `
-       : `
-        <div class="price_wrapper">
-        <span class="final_price">${originalPriceText}</span>
-        </div>
-       `
+      if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
+      if (typeof val === 'string') {
+        const t = val.trim();
+        if (t.endsWith('원')) return t;
+        const num = parseFloat(t.replace(/,/g, '')) || 0;
+        return `${num.toLocaleString('ko-KR')}원`;
       }
-      </div>
-     </li>`;
-     }).join('');
-    
-     ul.innerHTML = items;
+      return '-';
     }
-  // ────────────────────────────────────────────────────────────────
-  // 5) CSS 주입
-  // ────────────────────────────────────────────────────────────────
-  const style = document.createElement('style');
-  style.textContent = `
-  .final_price{font-weight:bold}
-  .grid-spinner {
-    width: 40px; height: 40px; border: 4px solid #f3f3f3;
-    border-top: 4px solid ${activeColor};
-    border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto;
+  
+    const items = products.map(p => {
+      const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
+      const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
+      const salePriceNum = parseFloat(cleanSaleString) || null;
+      const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
+      const couponPriceNum = parseFloat(cleanCouponString) || null;
+  
+      let finalPriceNum = originalPriceNum;
+      if (salePriceNum != null && salePriceNum < finalPriceNum) {
+        finalPriceNum = salePriceNum;
+      }
+      if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
+        finalPriceNum = couponPriceNum;
+      }
+  
+      const originalPriceText = formatKRW(originalPriceNum);
+      const finalPriceText = formatKRW(finalPriceNum);
+      const hasDiscount = finalPriceNum < originalPriceNum;
+  
+      let displayPercent = null;
+      if (hasDiscount) {
+        if (finalPriceNum === couponPriceNum && p.benefit_percentage > 0) {
+          displayPercent = p.benefit_percentage;
+        } else if (finalPriceNum === salePriceNum && originalPriceNum > 0) {
+          displayPercent = Math.round(((originalPriceNum - finalPriceNum) / originalPriceNum) * 100);
+        }
+      }
+  
+      return `
+      <li style="list-style:none;">
+        <a href="/product/detail.html?product_no=${p.product_no}"
+           class="prd_link"
+           style="text-decoration:none;color:inherit;"
+           data-track-click="product"
+           data-product-no="${p.product_no}"
+           target="_blank" rel="noopener noreferrer">
+          <div style="position:relative;">
+            <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
+            ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
+          </div>
+          <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
+            ${p.summary_description || ''}
+          </div>
+          <div class="prd_name">
+            ${p.product_name}
+          </div>
+        </a>
+        <div class="prd_price_area">
+          ${
+            hasDiscount
+            ? `
+              <div class="price_wrapper vertical_layout">
+                <div class="original_price_line">
+                  <span class="original_price">${originalPriceText}</span>
+                </div>
+                <div class="final_price_line">
+                  ${(displayPercent && displayPercent > 0) ? `<strong class="discount_percent">${displayPercent}%</strong>` : ''}
+                  <span class="final_price">${finalPriceText}</span>
+                </div>
+              </div>
+            `
+            : `
+              <div class="price_wrapper">
+                <span class="final_price">${originalPriceText}</span>
+              </div>
+            `
+          }
+        </div>
+      </li>`;
+    }).join('');
+  
+    ul.innerHTML = items;
   }
-  .prd_name{font-size:15px;}
-  @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
-  .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px}
-  .main_Grid_${pageId} .prd_name{font-size:15px;}
-  .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
-  .tabs_${pageId} {
-    display: grid; gap: 8px; max-width: 800px; margin: 16px auto;width:95%; grid-template-columns: repeat(${tabCount},1fr);
-  }
-  .tabs_${pageId} button { padding: 8px; font-size: 16px; border: none; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
-  .main_Grid_${pageId} img { padding-bottom:10px; }
-  .main_Grid_${pageId} { row-gap:50px!important; }
-  .main_Grid_${pageId} li { color:#000; }
-  .main_Grid_${pageId} .prd_desc { padding-bottom:3px; font-size:14px; color:#666; }
-  .main_Grid_${pageId} .prd_price { font-size:16px; }
-  .main_Grid_${pageId} .coupon_wrapper, .main_Grid_${pageId} .sale_wrapper { margin-top:4px; display:flex; align-items:center; }
-  .main_Grid_${pageId} .prd_coupon_percent, .main_Grid_${pageId} .sale_percent { color:#ff4d4f; font-weight:500; margin-right:4px; }
-  .main_Grid_${pageId} .sale_price, .main_Grid_${pageId} .prd_coupon { font-weight:500; }
-  @media (max-width: 400px) {
+  // ────────────────────────────────────────────────────────────────
+   // 5) CSS 주입
+   // ────────────────────────────────────────────────────────────────
+   const style = document.createElement('style');
+   style.textContent = `
+   .grid-spinner {
+     width: 40px; height: 40px; border: 4px solid #f3f3f3;
+     border-top: 4px solid ${activeColor};
+     border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto;
+   }
+   @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
+
+   /* ===== 공통 및 상품 목록 레이아웃 ===== */
+   .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
+   .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;width:95%;}
+   .main_Grid_${pageId} li { color:#000; }
+   .main_Grid_${pageId} img { padding-bottom:10px; }
+   .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:15px;}
+   .main_Grid_${pageId} .prd_desc { padding-bottom:3px; font-size:14px; color:#666; }
+
+   /* ===== 탭 메뉴 ===== */
+   .tabs_${pageId} {
+    display: grid; gap: 8px; max-width: 800px; margin: 16px auto; width:95%; grid-template-columns: repeat(${tabCount},1fr);
+   }
+   .tabs_${pageId} button { padding: 8px; font-size: 16px; border: none; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+   .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
+
+   /* ===== 가격 표시 (새로운 2줄 레이아웃) ===== */
+   .prd_price_area { margin-top: 2px; }
+   .original_price_line .original_price {
+     font-size: 14px;
+     color: #bbb;
+     text-decoration: line-through;
+   }
+   .final_price_line {
+    display: flex;
+    align-items: center;
+    margin-top: 2px;
+   }
+   .final_price_line .discount_percent {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ff4d4f;
+    margin-right: 6px;
+   }
+   .final_price_line .final_price {
+    font-size: 18px;
+    font-weight: bold;
+    color: #000;
+   }
+   /* 할인이 없을 때 가격 스타일 */
+   .price_wrapper:not(.vertical_layout) .final_price {
+    font-size: 16px;
+    font-weight: 500;
+   }
+
+   /* ===== 모바일 반응형 ===== */
+   @media (max-width: 400px) {
     .tabs_${pageId}{ width:95%; margin:0 auto;margin-top:20px; font-weight:bold; }
     .tabs_${pageId} button{ font-size:14px; }
     .main_Grid_${pageId}{ width:95%; margin:0 auto; row-gap:30px!important; }
     .main_Grid_${pageId} .prd_desc{ font-size:12px; padding-bottom:5px; }
-    .main_Grid_${pageId} .prd_price{ font-size:15px; }
-    .main_Grid_${pageId} .sale_percent, .main_Grid_${pageId} .prd_coupon_percent{ font-size:15px; }
-  }
-    /* (기존 CSS 코드 아래에 이어서 붙여넣기) */
-  .main_Grid_${pageId} .prd_name {
-    font-weight: 500;
-    padding-bottom: 4px;
-  }
-  .price_wrapper {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    margin-top: 2px;
-  }
-  .price_wrapper .discount_percent {
-    color: #ff4d4f;
-    font-size: 16px;
-    font-weight: bold;
-    margin-right: 6px;
-  }
-  .price_wrapper .original_price {
-    text-decoration: line-through;
-    color: #999;
-    font-size: 14px;
-  }
-  .price_wrapper .final_price {
-    font-size: 16px;
-    font-weight: bold;
-    margin-left: 6px;
-  }
-  /* 할인가만 있을 때(금액 할인) original_price 옆의 final_price 간격 조정 */
-  .price_wrapper .original_price + .final_price {
-    margin-left: 6px;
-  }
-  /* 할인율이 없을 때 final_price는 왼쪽 정렬 */
-  .price_wrapper:not(:has(.discount_percent)) .final_price {
-    margin-left: 0;
-  }
-  `;
-  document.head.appendChild(style);
+    .final_price_line .discount_percent,
+    .final_price_line .final_price { font-size: 16px; }
+   }`;
+   document.head.appendChild(style);
 
   // ────────────────────────────────────────────────────────────────
   // 6) 데이터 로드 & 실행
