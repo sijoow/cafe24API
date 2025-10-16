@@ -265,6 +265,27 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
+
+// ▼▼▼▼▼ 디버깅을 위해 이 코드를 추가 ▼▼▼▼▼
+app.get('/api/debug/find-token/:mallId', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    console.log(`[DEBUG] Finding token for mallId: '${mallId}'`);
+    const doc = await db.collection('token').findOne({ mallId });
+
+    if (doc) {
+      console.log('[DEBUG] Token found:', doc);
+      res.json({ status: 'FOUND', message: '✅ 성공: DB에서 해당 mallId의 토큰을 찾았습니다.' });
+    } else {
+      console.log('[DEBUG] Token not found!');
+      res.status(404).json({ status: 'NOT_FOUND', message: '❌ 실패: DB에서 해당 mallId의 토큰을 찾을 수 없습니다.' });
+    }
+  } catch (e) {
+    console.error('[DEBUG] Error during token find:', e);
+    res.status(500).json({ status: 'ERROR', message: e.message });
+  }
+});
+
 // (선택) 프론트 라우트 포워드 (카페24 redirect_uri를 프론트로 바로 보내야 할 경우)
 app.get('/redirect', (req, res) => {
   const qs = new URLSearchParams(req.query).toString();
