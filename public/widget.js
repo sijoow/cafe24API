@@ -122,7 +122,7 @@
   }
 
   const productsCache = {};
-  const storagePrefix = `widgetCache_${pageId}_`;
+  const storagePrefix = `widgetCache_${pageId}_v2_`;
 
   function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
     return fetch(url, opts).then(res => {
