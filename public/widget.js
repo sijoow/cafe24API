@@ -544,13 +544,13 @@
     margin-top: 2px;
    }
    .final_price_line .discount_percent {
-    font-size: 18px;
+    font-size: 15px;
     font-weight: bold;
     color: #ff4d4f;
     margin-right: 6px;
    }
    .final_price_line .final_price {
-    font-size: 18px;
+    font-size: 15px;
     font-weight: bold;
     color: #000;
    }
@@ -567,7 +567,7 @@
     .main_Grid_${pageId}{ width:95%; margin:0 auto; row-gap:30px!important; }
     .main_Grid_${pageId} .prd_desc{ font-size:12px; padding-bottom:5px; }
     .final_price_line .discount_percent,
-    .final_price_line .final_price { font-size: 16px; }
+    .final_price_line .final_price { font-size: 15px; }
    }`;
    document.head.appendChild(style);
 
