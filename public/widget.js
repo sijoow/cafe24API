@@ -117,7 +117,6 @@
     return v === true || v === 'true' || v === 1 || v === '1' || v === 'on';
   }
   
-  // ✨✨✨ START: RE-ADDED HELPER FUNCTION ✨✨✨
   function invalidateProductCache() {
     try {
       const keys = Object.keys(localStorage);
@@ -131,7 +130,6 @@
       console.warn('[widget.js] invalidateProductCache error', e);
     }
   }
-  // ✨✨✨ END: RE-ADDED HELPER FUNCTION ✨✨✨
   
   function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
     return fetch(url, opts).then(res => {
@@ -143,7 +141,6 @@
     });
   }
   
-  // ✨✨✨ START: RE-ADDED CACHE CLEAR LOGIC ✨✨✨
   // ────────────────────────────────────────────────────────────────
   // 2-1) 새로고침 시 캐시 자동 삭제
   // ────────────────────────────────────────────────────────────────
@@ -158,7 +155,6 @@
       console.warn('[widget.js] 새로고침 감지 중 오류:', e);
     }
   })();
-  // ✨✨✨ END: RE-ADDED CACHE CLEAR LOGIC ✨✨✨
 
   // ────────────────────────────────────────────────────────────────
   // 3) 블록 렌더(텍스트/이미지/영상)
@@ -269,7 +265,7 @@
   // ────────────────────────────────────────────────────────────────
   // 4) 상품 그리드
   // ────────────────────────────────────────────────────────────────
-    async function loadPanel(ul) {
+  async function loadPanel(ul) {
     const cols = parseInt(ul.dataset.gridSize, 10) || 1;
     const cacheKey = ul.dataset.directNos ? `direct_${ul.dataset.directNos}` : (ul.dataset.cate ? `cat_${ul.dataset.cate}` : null);
     if (!cacheKey) return;
@@ -287,17 +283,26 @@
     spinner.className = 'grid-spinner';
     ul.parentNode.insertBefore(spinner, ul);
 
-
     try {
       const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
       localStorage.setItem(storageKey, JSON.stringify(products));
       renderProducts(ul, products, cols);
     } catch (err) {
-      showError(err); // 에러 발생 시 showError 함수 호출
+      showError(err);
     } finally {
       spinner.remove();
     }
   }
+  
+  // showError 함수 정의
+  function showError(ul, err) {
+      const errDiv = document.createElement('div');
+      errDiv.style.textAlign = 'center';
+      errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
+      errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
+      ul.parentNode.insertBefore(errDiv, ul);
+  }
+
   async function fetchProducts(directNosAttr, category, limit = 300) {
     const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
     const ulDirect = directNosAttr || directNos;
@@ -309,7 +314,8 @@
       ));
       return results.map(p => (p && p.product_no) ? p : {}).map(p => ({
         product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
-        list_image: p.list_image, sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
+        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small,
+        sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
         decoration_icon_url: p.decoration_icon_url || null
       }));
     } else if (category) {
@@ -319,7 +325,8 @@
       ]);
       return rawProducts.map(p => (typeof p === 'object' ? p : {})).map(p => ({
         product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
-        list_image: p.list_image, sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
+        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small,
+        sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
         decoration_icon_url: p.decoration_icon_url || null
       }));
     }
@@ -369,11 +376,20 @@
       const originalPriceText = formatKRW(originalPriceNum);
       const finalPriceText = formatKRW(finalPriceNum);
       
+      // ✨✨✨ START: MODIFIED SECTION ✨✨✨
+      const mediumImg = p.image_medium || p.list_image; // 기본 이미지 (medium 우선)
+      const smallImg = p.image_small; // 마우스 오버 시 보일 이미지
+      
+      // small 이미지가 있을 때만 마우스 오버/아웃 이벤트를 추가
+      const mouseEvents = smallImg 
+        ? `onmouseover="this.src='${smallImg}'" onmouseout="this.src='${mediumImg}'"`
+        : '';
+      
       return `
       <li style="list-style:none;">
         <a href="/product/detail.html?product_no=${p.product_no}" class="prd_link" style="text-decoration:none;color:inherit;" data-track-click="product" data-product-no="${p.product_no}" target="_blank" rel="noopener noreferrer">
           <div style="position:relative;">
-            <img src="${p.list_image}" alt="${escapeHtml(p.product_name)}" style="width:100%;display:block;" />
+            <img src="${mediumImg}" alt="${escapeHtml(p.product_name)}" style="width:100%;display:block;" ${mouseEvents} />
             ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
           </div>
           <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">${p.summary_description || ''}</div>
@@ -397,9 +413,8 @@
           }
         </div>
       </li>`;
+      // ✨✨✨ END: MODIFIED SECTION ✨✨✨
     }).join('');
-    
-    ul.innerHTML = items;
   }
   
   // ────────────────────────────────────────────────────────────────
@@ -473,7 +488,6 @@
     });
   };
 
-  // ✨✨✨ START: RE-ADDED TAB HANDLER ✨✨✨
   // ────────────────────────────────────────────────────────────────
   // 8) 탭-링크 핸들러
   // ────────────────────────────────────────────────────────────────
@@ -515,7 +529,6 @@
       }
     }, { passive: false });
   })();
-  // ✨✨✨ END: RE-ADDED TAB HANDLER ✨✨✨
 
   // ────────────────────────────────────────────────────────────────
   // 9) 페이지 초기화
