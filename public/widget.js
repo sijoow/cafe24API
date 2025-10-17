@@ -269,7 +269,7 @@
   // ────────────────────────────────────────────────────────────────
   // 4) 상품 그리드
   // ────────────────────────────────────────────────────────────────
-  async function loadPanel(ul) {
+    async function loadPanel(ul) {
     const cols = parseInt(ul.dataset.gridSize, 10) || 1;
     const cacheKey = ul.dataset.directNos ? `direct_${ul.dataset.directNos}` : (ul.dataset.cate ? `cat_${ul.dataset.cate}` : null);
     if (!cacheKey) return;
@@ -286,21 +286,26 @@
     const spinner = document.createElement('div');
     spinner.className = 'grid-spinner';
     ul.parentNode.insertBefore(spinner, ul);
+
+    const showError = err => {
+      spinner.remove();
+      const errDiv = document.createElement('div');
+      errDiv.style.textAlign = 'center';
+      errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
+      errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
+      ul.parentNode.insertBefore(errDiv, ul);
+    };
+
     try {
       const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
       localStorage.setItem(storageKey, JSON.stringify(products));
       renderProducts(ul, products, cols);
     } catch (err) {
-      const errDiv = document.createElement('div');
-      errDiv.style.textAlign = 'center';
-      //errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
-      errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
-      ul.parentNode.insertBefore(errDiv, ul);
+      showError(err); // 에러 발생 시 showError 함수 호출
     } finally {
       spinner.remove();
     }
   }
-
   async function fetchProducts(directNosAttr, category, limit = 300) {
     const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
     const ulDirect = directNosAttr || directNos;
