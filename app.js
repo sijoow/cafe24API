@@ -725,7 +725,6 @@ app.get('/api/:mallId/analytics/:pageId/coupon-stats', async (req, res) => {
     return replyInstallGuard(res, err, '쿠폰 통계 조회 실패');
   }
 });
-
 // Category products + coupon logic
 app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
     const { mallId, category_no } = req.params;
@@ -754,11 +753,10 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
       const productNos = sorted.map(p => p.product_no);
       if (!productNos.length) return res.json([]);
   
-      // ✅ 1. 요청할 필드 목록에 이미지와 아이콘을 추가합니다.
       const productFields = [
         'product_no', 'product_name', 'price', 'summary_description',
-        'list_image', 'medium_image', 'small_image', 'tiny_image', // 다양한 크기 이미지
-        'decoration_icon_url' // 아이콘
+        'list_image', 'medium_image', 'small_image', 'tiny_image',
+        'decoration_icon_url'
       ].join(',');
   
       const urlProds = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
@@ -766,7 +764,7 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
         shop_no, 
         product_no: productNos.join(','), 
         limit: productNos.length,
-        fields: productFields // ✅ 2. fields 파라미터로 추가된 필드를 요청합니다.
+        fields: productFields 
       });
       const details = detailRes.products || [];
       const detailMap = details.reduce((m,p) => { m[p.product_no] = p; return m; }, {});
@@ -781,7 +779,6 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
       const formatKRW = num => num != null ? Number(num).toLocaleString('ko-KR') + '원' : null;
   
       function calcCouponInfos(prodNo) {
-        // (기존 쿠폰 계산 로직은 변경 없음)
         return validCoupons.map(coupon => {
           const pList = coupon.available_product_list || [];
           const prodOk = coupon.available_product === 'U'
@@ -807,7 +804,7 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
         const prod = detailMap[item.product_no];
         if (!prod) return null;
         return {
-          ...prod, // ✅ 3. 모든 상세 정보를 full 객체로 넘깁니다.
+          ...prod,
           sale_price: discountMap[item.product_no],
           couponInfos: calcCouponInfos(item.product_no)
         };
@@ -822,12 +819,11 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
           price: formatKRW(parseFloat(p.price)),
           summary_description: p.summary_description,
           
-          // ✅ 4. 응답 객체에 새로운 이미지와 아이콘 필드를 추가합니다.
           list_image: p.list_image,
           image_medium: p.medium_image,
           image_small: p.small_image,
-          image_thumbnail: p.tiny_image, // tiny_image를 썸네일로 매핑
-          icon_url: p.decoration_icon_url,
+          image_thumbnail: p.tiny_image,
+          decoration_icon_url: p.decoration_icon_url || null,
           
           sale_price: (p.sale_price != null && +p.sale_price !== +p.price) ? formatKRW(p.sale_price) : null,
           benefit_price: first ? formatKRW(first.benefit_price) : null,
@@ -842,8 +838,7 @@ app.get('/api/:mallId/categories/:category_no/products', async (req, res) => {
       return replyInstallGuard(res, err, '카테고리 상품 조회 실패', err.response?.status || 500);
     }
   });
-
-  // Product - 단건 (쿠폰할인가 포함)
+// Product - 단건 (쿠폰할인가 포함)
 app.get('/api/:mallId/products/:product_no', async (req, res) => {
     const { mallId, product_no } = req.params;
     try {
@@ -851,17 +846,16 @@ app.get('/api/:mallId/products/:product_no', async (req, res) => {
       const coupon_query = req.query.coupon_no || '';
       const coupon_nos = coupon_query.split(',').filter(Boolean);
   
-      // ✅ 1. 요청할 필드 목록에 이미지와 아이콘을 추가합니다.
       const productFields = [
-        'product_no', 'product_code', 'product_name', 'price', 'summary_description',
-        'list_image', 'medium_image', 'small_image', 'tiny_image', // 다양한 크기 이미지
-        'decoration_icon_url' // 아이콘
+          'product_no', 'product_code', 'product_name', 'price', 'summary_description',
+          'list_image', 'medium_image', 'small_image', 'tiny_image',
+          'decoration_icon_url'
       ].join(',');
   
       const prodUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}`;
       const prodData = await apiRequest(mallId, 'GET', prodUrl, {}, { 
           shop_no,
-          fields: productFields // ✅ 2. fields 파라미터로 추가된 필드를 요청합니다.
+          fields: productFields
       });
       const p = prodData.product || prodData.products?.[0];
       if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
@@ -876,7 +870,12 @@ app.get('/api/:mallId/products/:product_no', async (req, res) => {
         const { coupons: arr } = await apiRequest(mallId, 'GET', urlCoupon, {}, {
           shop_no,
           coupon_no: no,
-          fields: ['coupon_no', 'available_product','available_product_list', 'available_category','available_category_list', 'benefit_amount','benefit_percentage'].join(',')
+          fields: [
+            'coupon_no',
+            'available_product','available_product_list',
+            'available_category','available_category_list',
+            'benefit_amount','benefit_percentage'
+          ].join(',')
         });
         return arr?.[0] || null;
       }));
@@ -906,13 +905,12 @@ app.get('/api/:mallId/products/:product_no', async (req, res) => {
         product_name: p.product_name,
         price: p.price,
         summary_description: p.summary_description || '',
-  
-        // ✅ 3. 응답 객체에 새로운 이미지와 아이콘 필드를 추가합니다.
+        
         list_image: p.list_image,
         image_medium: p.medium_image,
         image_small: p.small_image,
-        image_thumbnail: p.tiny_image, // tiny_image를 썸네일로 매핑
-        icon_url: p.decoration_icon_url,
+        image_thumbnail: p.tiny_image,
+        decoration_icon_url: p.decoration_icon_url || null,
   
         sale_price,
         benefit_price,
@@ -923,7 +921,6 @@ app.get('/api/:mallId/products/:product_no', async (req, res) => {
       return replyInstallGuard(res, err, '단일 상품 조회 실패');
     }
   });
-
 
 // Analytics - visitors-by-date
 app.get('/api/:mallId/analytics/:pageId/visitors-by-date', async (req, res) => {
