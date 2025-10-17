@@ -416,7 +416,7 @@
   .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;width:95%;}
   .main_Grid_${pageId} li { color:#000; }
   .main_Grid_${pageId} img { padding-bottom:10px; }
-  .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:15px;line-height:1.2;}
+  .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:16px;line-height:1.2;}
   .main_Grid_${pageId} .prd_desc { padding-bottom:3px; font-size:14px; color:#666; }
   .tabs_${pageId} { display: grid; gap: 8px; max-width: 800px; margin: 16px auto; width:95%; grid-template-columns: repeat(${tabCount},1fr); }
   .tabs_${pageId} button { padding: 8px; font-size: 16px; border: none; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
