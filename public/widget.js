@@ -293,7 +293,7 @@
     } catch (err) {
       const errDiv = document.createElement('div');
       errDiv.style.textAlign = 'center';
-      errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
+      //errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
       errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
       ul.parentNode.insertBefore(errDiv, ul);
     } finally {
