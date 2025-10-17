@@ -425,6 +425,7 @@
   .final_price_line .final_price { font-size: 15px; font-weight: bold; color: #000; }
   .price_wrapper:not(.vertical_layout) .final_price { font-size: 16px; font-weight: 500; }
   @media (max-width: 400px) {
+     .prd_name{font-size:15px!important;}
     .tabs_${pageId}{ width:95%; margin:0 auto;margin-top:20px; font-weight:bold; }
     .tabs_${pageId} button{ font-size:14px; }
     .main_Grid_${pageId}{ width:95%; margin:0 auto; row-gap:30px!important; }
