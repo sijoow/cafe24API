@@ -13,18 +13,18 @@
     return;
   }
 
-  const API_BASE       = script.dataset.apiBase;
-  const pageId         = script.dataset.pageId;
-  const mallId         = script.dataset.mallId;
-  const tabCount       = parseInt(script.dataset.tabCount || '0', 10);
-  const activeColor    = script.dataset.activeColor || '#1890ff';
-  const couponNos      = script.dataset.couponNos || '';
-  const couponQSStart  = couponNos ? `?coupon_no=${couponNos}` : '';
+  const API_BASE = script.dataset.apiBase;
+  const pageId = script.dataset.pageId;
+  const mallId = script.dataset.mallId;
+  const tabCount = parseInt(script.dataset.tabCount || '0', 10);
+  const activeColor = script.dataset.activeColor || '#1890ff';
+  const couponNos = script.dataset.couponNos || '';
+  const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
   const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
-  const directNos      = script.dataset.directNos || '';
-  const ignoreText     = script.dataset.ignoreText === '1';
-  const autoplayAll    = script.dataset.autoplayAll === '1';
-  const loopAll        = script.dataset.loopAll === '1'; // (선택) 모든 영상 강제 반복
+  const directNos = script.dataset.directNos || '';
+  const ignoreText = script.dataset.ignoreText === '1';
+  const autoplayAll = script.dataset.autoplayAll === '1';
+  const loopAll = script.dataset.loopAll === '1';
 
   // API preconnect
   if (API_BASE) {
@@ -89,11 +89,10 @@
   // ────────────────────────────────────────────────────────────────
   // 2) 공통 헬퍼
   // ────────────────────────────────────────────────────────────────
+  const storagePrefix = `widgetCache_${pageId}_v2_`;
   function escapeHtml(s = '') {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
-
-  // ✅ 유튜브 ID 파서 (URL/ID/iframe src 모두 대응)
   function parseYouTubeId(input) {
     if (!input) return null;
     const str = String(input).trim();
@@ -109,21 +108,31 @@
         if (m) return m[2];
       }
     } catch (_) {
-      // not a URL, try to extract from iframe src
       const m = str.match(/src=["']([^"']+)["']/i);
       if (m) return parseYouTubeId(m[1]);
     }
     return null;
   }
-
-  // truthy → boolean
   function toBool(v) {
     return v === true || v === 'true' || v === 1 || v === '1' || v === 'on';
   }
-
-  const productsCache = {};
-  const storagePrefix = `widgetCache_${pageId}_v2_`;
-
+  
+  // ✨✨✨ START: RE-ADDED HELPER FUNCTION ✨✨✨
+  function invalidateProductCache() {
+    try {
+      const keys = Object.keys(localStorage);
+      for (const k of keys) {
+        if (k.startsWith(storagePrefix)) {
+          localStorage.removeItem(k);
+        }
+      }
+      console.info('[widget.js] Product cache invalidated.');
+    } catch (e) {
+      console.warn('[widget.js] invalidateProductCache error', e);
+    }
+  }
+  // ✨✨✨ END: RE-ADDED HELPER FUNCTION ✨✨✨
+  
   function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
     return fetch(url, opts).then(res => {
       if (res.status === 429 && retries > 0) {
@@ -133,12 +142,28 @@
       return res;
     });
   }
+  
+  // ✨✨✨ START: RE-ADDED CACHE CLEAR LOGIC ✨✨✨
+  // ────────────────────────────────────────────────────────────────
+  // 2-1) 새로고침 시 캐시 자동 삭제
+  // ────────────────────────────────────────────────────────────────
+  (function clearCacheOnReload() {
+    try {
+      const navigationEntries = performance.getEntriesByType("navigation");
+      if (navigationEntries.length > 0 && navigationEntries[0].type === 'reload') {
+        console.log('[widget.js] 페이지 새로고침을 감지하여 캐시를 삭제합니다.');
+        invalidateProductCache();
+      }
+    } catch (e) {
+      console.warn('[widget.js] 새로고침 감지 중 오류:', e);
+    }
+  })();
+  // ✨✨✨ END: RE-ADDED CACHE CLEAR LOGIC ✨✨✨
 
   // ────────────────────────────────────────────────────────────────
-  // 3) 블록 렌더(텍스트/이미지/영상) — “순서대로”
+  // 3) 블록 렌더(텍스트/이미지/영상)
   // ────────────────────────────────────────────────────────────────
   function getRootContainer() {
-    // 1순위: #evt-root, 2순위: #evt-images, 3순위: 동적 생성
     let root = document.getElementById('evt-root');
     if (!root) root = document.getElementById('evt-images');
     if (!root) {
@@ -146,21 +171,16 @@
       root.id = 'evt-root';
       document.body.insertBefore(root, document.body.firstChild);
     }
-    // 혹시 기존 #evt-text가 있으면 비워 중복 제거
     const textDiv = document.getElementById('evt-text');
     if (textDiv) textDiv.innerHTML = '';
-    // 비우고 시작
     root.innerHTML = '';
     return root;
   }
 
   function renderBlocks(blocks) {
     const root = getRootContainer();
-
     blocks.forEach((b) => {
       const type = b.type || 'image';
-
-      // TEXT
       if (type === 'text') {
         if (ignoreText) return;
         const st = b.style || {};
@@ -168,82 +188,47 @@
         wrapper.style.textAlign = st.align || 'center';
         wrapper.style.marginTop = `${st.mt ?? 16}px`;
         wrapper.style.marginBottom = `${st.mb ?? 16}px`;
-
         const inner = document.createElement('div');
         inner.style.fontSize = `${st.fontSize || 18}px`;
         inner.style.fontWeight = st.fontWeight || 'normal';
         inner.style.color = st.color || '#333';
         inner.innerHTML = escapeHtml(b.text || '').replace(/\n/g, '<br/>');
-
         wrapper.appendChild(inner);
         root.appendChild(wrapper);
         return;
       }
-
-      // VIDEO
       if (type === 'video') {
         const ratio = b.ratio || { w: 16, h: 9 };
         const yid = b.youtubeId || parseYouTubeId(b.src);
         if (!yid) return;
-
-        // autoplay 및 loop 처리
         const willAutoplay = autoplayAll || toBool(b.autoplay);
-        // ✅ 변경된 핵심: 자동재생이 켜졌다면 강제로 loop 적용 (개별 영상 기준)
-        const willLoop     = loopAll || toBool(b.loop) || willAutoplay;
-
-        const qs = new URLSearchParams({
-          autoplay: willAutoplay ? '1' : '0',
-          mute: willAutoplay ? '1' : '0',      // 모바일 자동재생 필수
-          playsinline: '1',                    // iOS 인라인 재생
-          rel: '0',
-          modestbranding: '1'
-        });
-
+        const willLoop = loopAll || toBool(b.loop) || willAutoplay;
+        const qs = new URLSearchParams({ autoplay: willAutoplay ? '1' : '0', mute: willAutoplay ? '1' : '0', playsinline: '1', rel: '0', modestbranding: '1' });
         if (willLoop) {
-          // YouTube loop 규칙: loop=1 + playlist=<videoId>
           qs.set('loop', '1');
           qs.set('playlist', yid);
         }
-
         const src = `https://www.youtube.com/embed/${yid}?${qs.toString()}`;
-
         const wrap = document.createElement('div');
-        wrap.style.position = 'relative';
-        wrap.style.width = '100%';
-        wrap.style.maxWidth = '800px';
-        wrap.style.margin = '0 auto';
-
-        // aspect-ratio 속성(미지원 브라우저 대비)
+        wrap.style.cssText = 'position:relative; width:100%; max-width:800px; margin:0 auto;';
         if ('aspectRatio' in wrap.style) {
           wrap.style.aspectRatio = `${ratio.w}/${ratio.h}`;
           const iframe = document.createElement('iframe');
           iframe.src = src;
           iframe.title = `youtube-${yid}`;
-          iframe.style.position = 'absolute';
-          iframe.style.inset = '0';
-          iframe.style.width = '100%';
-          iframe.style.height = '100%';
-          iframe.style.border = '0';
+          iframe.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; border:0;';
           iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
           iframe.setAttribute('allowfullscreen', '');
           wrap.appendChild(iframe);
           root.appendChild(wrap);
           return;
         }
-
-        // 패딩박스 방식
         const innerBox = document.createElement('div');
-        innerBox.style.position = 'relative';
-        innerBox.style.width = '100%';
-        innerBox.style.paddingTop = `${(ratio.h / ratio.w) * 100}%`;
+        innerBox.style.cssText = `position:relative; width:100%; padding-top:${(ratio.h / ratio.w) * 100}%;`;
         const iframe = document.createElement('iframe');
         iframe.src = src;
         iframe.title = `youtube-${yid}`;
-        iframe.style.position = 'absolute';
-        iframe.style.inset = '0';
-        iframe.style.width = '100%';
-        iframe.style.height = '100%';
-        iframe.style.border = '0';
+        iframe.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; border:0;';
         iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
         iframe.setAttribute('allowfullscreen', '');
         innerBox.appendChild(iframe);
@@ -251,193 +236,120 @@
         root.appendChild(wrap);
         return;
       }
-
       // IMAGE
-      {
-        const wrap = document.createElement('div');
-        wrap.style.position = 'relative';
-        wrap.style.margin = '0 auto';
-        wrap.style.width = '100%';
-        wrap.style.maxWidth = '800px';
-
-        const img = document.createElement('img');
-        img.src = b.src;
-        img.style.maxWidth = '100%';
-        img.style.height = 'auto';
-        img.style.display = 'block';
-        img.style.margin = '0 auto';
-        wrap.appendChild(img);
-
-        (b.regions || []).forEach(r => {
-          const l = (r.xRatio * 100).toFixed(2);
-          const t = (r.yRatio * 100).toFixed(2);
-          const w = (r.wRatio * 100).toFixed(2);
-          const h = (r.hRatio * 100).toFixed(2);
-
-          if (r.coupon) {
-            const btn = document.createElement('button');
-            btn.dataset.trackClick = 'coupon';
-            btn.style.position = 'absolute';
-            btn.style.left = `${l}%`;
-            btn.style.top = `${t}%`;
-            btn.style.width = `${w}%`;
-            btn.style.height = `${h}%`;
-            btn.style.border = 'none';
-            btn.style.cursor = 'pointer';
-            btn.style.opacity = '0'; // 보이지 않게(맵핑만)
-            btn.addEventListener('click', () => downloadCoupon(r.coupon));
-            wrap.appendChild(btn);
-          } else if (r.href) {
-            const a = document.createElement('a');
-            a.dataset.trackClick = 'url';
-            a.style.position = 'absolute';
-            a.style.left = `${l}%`;
-            a.style.top = `${t}%`;
-            a.style.width = `${w}%`;
-            a.style.height = `${h}%`;
-            a.href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
-            a.target = '_blank';
-            a.rel = 'noreferrer';
-            wrap.appendChild(a);
-          }
-        });
-
-        root.appendChild(wrap);
-      }
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:relative; margin:0 auto; width:100%; max-width:800px;';
+      const img = document.createElement('img');
+      img.src = b.src;
+      img.style.cssText = 'max-width:100%; height:auto; display:block; margin:0 auto;';
+      wrap.appendChild(img);
+      (b.regions || []).forEach(r => {
+        const l = (r.xRatio * 100).toFixed(2), t = (r.yRatio * 100).toFixed(2), w = (r.wRatio * 100).toFixed(2), h = (r.hRatio * 100).toFixed(2);
+        if (r.coupon) {
+          const btn = document.createElement('button');
+          btn.dataset.trackClick = 'coupon';
+          btn.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; border:none; cursor:pointer; opacity:0;`;
+          btn.addEventListener('click', () => downloadCoupon(r.coupon));
+          wrap.appendChild(btn);
+        } else if (r.href) {
+          const a = document.createElement('a');
+          a.dataset.trackClick = 'url';
+          a.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; display:block; text-decoration:none; cursor:pointer;`;
+          a.setAttribute('data-href', r.href);
+          a.href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
+          a.target = '_blank';
+          a.rel = 'noreferrer';
+          wrap.appendChild(a);
+        }
+      });
+      root.appendChild(wrap);
     });
   }
 
   // ────────────────────────────────────────────────────────────────
   // 4) 상품 그리드
   // ────────────────────────────────────────────────────────────────
-  function loadPanel(ul) {
-    const cols     = parseInt(ul.dataset.gridSize, 10) || 1;
-    const limit    = ul.dataset.count || 300;
-    const category = ul.dataset.cate;
-    const ulDirect = ul.dataset.directNos || directNos;
-    const cacheKey = ulDirect ? `direct_${ulDirect}` : (category ? `cat_${category}` : null);
-    const storageKey = cacheKey ? storagePrefix + cacheKey : null;
+  async function loadPanel(ul) {
+    const cols = parseInt(ul.dataset.gridSize, 10) || 1;
+    const cacheKey = ul.dataset.directNos ? `direct_${ul.dataset.directNos}` : (ul.dataset.cate ? `cat_${ul.dataset.cate}` : null);
+    if (!cacheKey) return;
+    const storageKey = storagePrefix + cacheKey;
 
-    // 캐시
-    if (storageKey) {
-      const stored = localStorage.getItem(storageKey);
-      if (stored) {
-        try {
-          const prods = JSON.parse(stored);
-          renderProducts(ul, prods, cols);
-          return;
-        } catch {}
-      }
+    const stored = localStorage.getItem(storageKey);
+    if (stored) {
+      try {
+        renderProducts(ul, JSON.parse(stored), cols);
+        return;
+      } catch {}
     }
 
-    // 스피너
     const spinner = document.createElement('div');
     spinner.className = 'grid-spinner';
     ul.parentNode.insertBefore(spinner, ul);
-
-    const showError = err => {
-      spinner.remove();
+    try {
+      const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
+      localStorage.setItem(storageKey, JSON.stringify(products));
+      renderProducts(ul, products, cols);
+    } catch (err) {
       const errDiv = document.createElement('div');
       errDiv.style.textAlign = 'center';
-      errDiv.innerHTML = `
-        <p style="color:#f00;">상품 로드에 실패했습니다.</p>
-        <button style="padding:6px 12px;cursor:pointer;">다시 시도</button>
-      `;
-      errDiv.querySelector('button').onclick = () => {
-        errDiv.remove();
-        loadPanel(ul);
-      };
+      errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
+      errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
       ul.parentNode.insertBefore(errDiv, ul);
-    };
-
-    if (ulDirect) {
-      const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
-      Promise.all(ids.map(no =>
-        fetchWithRetry(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`).then(r => r.json())
-      ))
-      .then(raw => raw.map(p => ({
-        product_no:          p.product_no,
-        product_name:        p.product_name,
-        summary_description: p.summary_description || '',
-        price:               p.price,
-        list_image:          p.list_image,
-        sale_price:          p.sale_price    || null,
-        benefit_price:       p.benefit_price || null,
-        benefit_percentage:  p.benefit_percentage || null,
-        decoration_icon_url: p.decoration_icon_url || null
-
-      })))
-      .then(products => {
-        if (cacheKey) {
-          productsCache[cacheKey] = products;
-          localStorage.setItem(storageKey, JSON.stringify(products));
-        }
-        renderProducts(ul, products, cols);
-        spinner.remove();
-      })
-      .catch(showError);
-
-    } else if (category) {
-      const prodUrl = `${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`;
-      const perfUrl = `${API_BASE}/api/${mallId}/analytics/${pageId}/product-performance?category_no=${category}`;
-
-      Promise.all([
-        fetchWithRetry(prodUrl).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.products || [])),
-        fetchWithRetry(perfUrl).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.data || []))
-      ])
-      .then(([rawProducts, clicksData]) => {
-        const clickMap = clicksData.reduce((m, c) => { m[c.productNo] = c.clicks; return m; }, {});
-        const products = rawProducts.map(p => ({
-          product_no:          p.product_no,
-          product_name:        p.product_name,
-          summary_description: p.summary_description || '',
-          price:               p.price,
-          list_image:          p.list_image,
-          sale_price:          p.sale_price    || null,
-          benefit_price:       p.benefit_price || null,
-          benefit_percentage:  p.benefit_percentage || null,
-          decoration_icon_url: p.decoration_icon_url || null,
-          clicks:              clickMap[p.product_no] || 0
-        }));
-        if (cacheKey) {
-          productsCache[cacheKey] = products;
-          localStorage.setItem(storageKey, JSON.stringify(products));
-        }
-        renderProducts(ul, products, cols);
-        spinner.remove();
-      })
-      .catch(showError);
-
-    } else {
+    } finally {
       spinner.remove();
     }
   }
 
+  async function fetchProducts(directNosAttr, category, limit = 300) {
+    const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
+    const ulDirect = directNosAttr || directNos;
+
+    if (ulDirect) {
+      const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
+      const results = await Promise.all(ids.map(no =>
+        fetchWithRetry(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`, fetchOpts).then(r => r.json())
+      ));
+      return results.map(p => (p && p.product_no) ? p : {}).map(p => ({
+        product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
+        list_image: p.list_image, sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
+        decoration_icon_url: p.decoration_icon_url || null
+      }));
+    } else if (category) {
+      const prodUrl = `${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`;
+      const [rawProducts] = await Promise.all([
+        fetchWithRetry(prodUrl, fetchOpts).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.products || [])),
+      ]);
+      return rawProducts.map(p => (typeof p === 'object' ? p : {})).map(p => ({
+        product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
+        list_image: p.list_image, sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
+        decoration_icon_url: p.decoration_icon_url || null
+      }));
+    }
+    return [];
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // 5) 상품 렌더링
+  // ────────────────────────────────────────────────────────────────
   function renderProducts(ul, products, cols) {
     ul.style.display = 'grid';
     ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
     ul.style.gap = '20px';
     ul.style.maxWidth = '800px';
     ul.style.margin = '0 auto';
-  
+    
     function formatKRW(val) {
       if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
-      if (typeof val === 'string') {
-        const t = val.trim();
-        if (t.endsWith('원')) return t;
-        const num = parseFloat(t.replace(/,/g, '')) || 0;
-        return `${num.toLocaleString('ko-KR')}원`;
-      }
-      return '-';
+      const num = parseFloat(String(val).replace(/[^0-9.]/g, '')) || 0;
+      return `${num.toLocaleString('ko-KR')}원`;
     }
-  
-    const items = products.map(p => {
+    
+    ul.innerHTML = products.map(p => {
       const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
-      const cleanSaleString = String(p.sale_price || '0').replace(/[^0-9.]/g, '');
-      const salePriceNum = parseFloat(cleanSaleString) || null;
-      const cleanCouponString = String(p.benefit_price || '0').replace(/[^0-9.]/g, '');
-      const couponPriceNum = parseFloat(cleanCouponString) || null;
-  
+      const salePriceNum = parseFloat(String(p.sale_price || '').replace(/[^0-9.]/g, '')) || null;
+      const couponPriceNum = parseFloat(String(p.benefit_price || '').replace(/[^0-9.]/g, '')) || null;
+      
       let finalPriceNum = originalPriceNum;
       if (salePriceNum != null && salePriceNum < finalPriceNum) {
         finalPriceNum = salePriceNum;
@@ -445,188 +357,109 @@
       if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
         finalPriceNum = couponPriceNum;
       }
-  
-      const originalPriceText = formatKRW(originalPriceNum);
-      const finalPriceText = formatKRW(finalPriceNum);
+      
       const hasDiscount = finalPriceNum < originalPriceNum;
-  
+      
       let displayPercent = null;
-      if (hasDiscount) {
+      if (hasDiscount && originalPriceNum > 0) {
         if (finalPriceNum === couponPriceNum && p.benefit_percentage > 0) {
           displayPercent = p.benefit_percentage;
-        } else if (finalPriceNum === salePriceNum && originalPriceNum > 0) {
+        } else {
           displayPercent = Math.round(((originalPriceNum - finalPriceNum) / originalPriceNum) * 100);
         }
       }
-  
+      
+      const originalPriceText = formatKRW(originalPriceNum);
+      const finalPriceText = formatKRW(finalPriceNum);
+      
       return `
       <li style="list-style:none;">
-        <a href="/product/detail.html?product_no=${p.product_no}"
-           class="prd_link"
-           style="text-decoration:none;color:inherit;"
-           data-track-click="product"
-           data-product-no="${p.product_no}"
-           target="_blank" rel="noopener noreferrer">
+        <a href="/product/detail.html?product_no=${p.product_no}" class="prd_link" style="text-decoration:none;color:inherit;" data-track-click="product" data-product-no="${p.product_no}" target="_blank" rel="noopener noreferrer">
           <div style="position:relative;">
-            <img src="${p.list_image}" alt="${p.product_name}" style="width:100%;display:block;" />
+            <img src="${p.list_image}" alt="${escapeHtml(p.product_name)}" style="width:100%;display:block;" />
             ${p.decoration_icon_url ? `<div style="position:absolute;top:0;right:0;"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
           </div>
-          <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">
-            ${p.summary_description || ''}
-          </div>
-          <div class="prd_name">
-            ${p.product_name}
-          </div>
+          <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">${p.summary_description || ''}</div>
+          <div class="prd_name">${p.product_name}</div>
         </a>
         <div class="prd_price_area">
           ${
             hasDiscount
-            ? `
-              <div class="price_wrapper vertical_layout">
-                <div class="original_price_line">
-                  <span class="original_price">${originalPriceText}</span>
-                </div>
-                <div class="final_price_line">
-                  ${(displayPercent && displayPercent > 0) ? `<strong class="discount_percent">${displayPercent}%</strong>` : ''}
-                  <span class="final_price">${finalPriceText}</span>
-                </div>
-              </div>
-            `
-            : `
-              <div class="price_wrapper">
-                <span class="final_price">${originalPriceText}</span>
-              </div>
-            `
+            ? `<div class="price_wrapper vertical_layout">
+                 <div class="original_price_line">
+                   <span class="original_price">${originalPriceText}</span>
+                 </div>
+                 <div class="final_price_line">
+                   ${(displayPercent && displayPercent > 0) ? `<strong class="discount_percent">${displayPercent}%</strong>` : ''}
+                   <span class="final_price">${finalPriceText}</span>
+                 </div>
+               </div>`
+            : `<div class="price_wrapper">
+                 <span class="final_price">${originalPriceText}</span>
+               </div>`
           }
         </div>
       </li>`;
     }).join('');
-  
+    
     ul.innerHTML = items;
   }
+  
   // ────────────────────────────────────────────────────────────────
-   // 5) CSS 주입
-   // ────────────────────────────────────────────────────────────────
-   const style = document.createElement('style');
-   style.textContent = `
-   .grid-spinner {
-     width: 40px; height: 40px; border: 4px solid #f3f3f3;
-     border-top: 4px solid ${activeColor};
-     border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto;
-   }
-   @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
-
-   /* ===== 공통 및 상품 목록 레이아웃 ===== */
-   .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
-   .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;width:95%;}
-   .main_Grid_${pageId} li { color:#000; }
-   .main_Grid_${pageId} img { padding-bottom:10px; }
-   .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:15px;line-height:1.2;}
-   .main_Grid_${pageId} .prd_desc { padding-bottom:3px; font-size:14px; color:#666; }
-
-   /* ===== 탭 메뉴 ===== */
-   .tabs_${pageId} {
-    display: grid; gap: 8px; max-width: 800px; margin: 16px auto; width:95%; grid-template-columns: repeat(${tabCount},1fr);
-   }
-   .tabs_${pageId} button { padding: 8px; font-size: 16px; border: none; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-   .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
-
-   /* ===== 가격 표시 (새로운 2줄 레이아웃) ===== */
-   .prd_price_area { margin-top: 2px; }
-   .original_price_line .original_price {
-     font-size: 14px;
-     color: #bbb;
-     text-decoration: line-through;
-   }
-   .final_price_line {
-    display: flex;
-    align-items: center;
-    margin-top: 2px;
-   }
-   .final_price_line .discount_percent {
-    font-size: 15px;
-    font-weight: bold;
-    color: #ff4d4f;
-    margin-right: 6px;
-   }
-   .final_price_line .final_price {
-    font-size: 15px;
-    font-weight: bold;
-    color: #000;
-   }
-   /* 할인이 없을 때 가격 스타일 */
-   .price_wrapper:not(.vertical_layout) .final_price {
-    font-size: 16px;
-    font-weight: 500;
-   }
-
-   /* ===== 모바일 반응형 ===== */
-   @media (max-width: 400px) {
+  // 6) CSS 주입
+  // ────────────────────────────────────────────────────────────────
+  const style = document.createElement('style');
+  style.textContent = `
+  .grid-spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid ${activeColor}; border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto; }
+  @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
+  .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
+  .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;width:95%;}
+  .main_Grid_${pageId} li { color:#000; }
+  .main_Grid_${pageId} img { padding-bottom:10px; }
+  .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:15px;line-height:1.2;}
+  .main_Grid_${pageId} .prd_desc { padding-bottom:3px; font-size:14px; color:#666; }
+  .tabs_${pageId} { display: grid; gap: 8px; max-width: 800px; margin: 16px auto; width:95%; grid-template-columns: repeat(${tabCount},1fr); }
+  .tabs_${pageId} button { padding: 8px; font-size: 16px; border: none; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
+  .prd_price_area { margin-top: 2px; }
+  .original_price_line .original_price { font-size: 14px; color: #bbb; text-decoration: line-through; }
+  .final_price_line { display: flex; align-items: center; margin-top: 2px; }
+  .final_price_line .discount_percent { font-size: 15px; font-weight: bold; color: #ff4d4f; margin-right: 6px; }
+  .final_price_line .final_price { font-size: 15px; font-weight: bold; color: #000; }
+  .price_wrapper:not(.vertical_layout) .final_price { font-size: 16px; font-weight: 500; }
+  @media (max-width: 400px) {
     .tabs_${pageId}{ width:95%; margin:0 auto;margin-top:20px; font-weight:bold; }
     .tabs_${pageId} button{ font-size:14px; }
     .main_Grid_${pageId}{ width:95%; margin:0 auto; row-gap:30px!important; }
     .main_Grid_${pageId} .prd_desc{ font-size:12px; padding-bottom:5px; }
     .final_price_line .discount_percent,
     .final_price_line .final_price { font-size: 15px; }
-   }`;
-   document.head.appendChild(style);
+  }`;
+  document.head.appendChild(style);
 
   // ────────────────────────────────────────────────────────────────
-  // 6) 데이터 로드 & 실행
+  // 7) 메인 초기화 및 전역 함수
   // ────────────────────────────────────────────────────────────────
-  fetch(`${API_BASE}/api/${mallId}/events/${pageId}`)
-    .then(res => res.json())
-    .then(ev => {
-      // blocks 우선, 없으면 images를 image-block으로 변환
-      const rawBlocks = Array.isArray(ev?.content?.blocks) && ev.content.blocks.length
-        ? ev.content.blocks
-        : (ev.images || []).map(img => ({
-            type: 'image',
-            src: img.src,
-            regions: img.regions || []
-          }));
-
+  async function initializePage() {
+    try {
+      const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}`);
+      if (!response.ok) throw new Error('Event data fetch failed');
+      const ev = await response.json();
+      
+      const rawBlocks = Array.isArray(ev?.content?.blocks) && ev.content.blocks.length ? ev.content.blocks : (ev.images || []).map(img => ({ type: 'image', src: img.src, regions: img.regions || [] }));
       const blocks = rawBlocks.map(b => {
         const t = b.type || 'image';
-        if (t === 'video') {
-          // youtubeId 보정 + autoplay/loop boolean
-          const yid = b.youtubeId || parseYouTubeId(b.src);
-          return {
-            type: 'video',
-            youtubeId: yid,
-            ratio: (b.ratio && typeof b.ratio.w === 'number' && typeof b.ratio.h === 'number') ? b.ratio : { w: 16, h: 9 },
-            autoplay: toBool(b.autoplay),
-            loop: toBool(b.loop)
-          };
-        }
-        if (t === 'text') {
-          return {
-            type: 'text',
-            text: b.text || '',
-            style: b.style || {}
-          };
-        }
-        return {
-          type: 'image',
-          src: b.src,
-          regions: (b.regions || []).map(r => ({
-            xRatio: r.xRatio, yRatio: r.yRatio, wRatio: r.wRatio, hRatio: r.hRatio,
-            href: r.href, coupon: r.coupon
-          }))
-        };
+        if (t === 'video') return { type: 'video', youtubeId: b.youtubeId || parseYouTubeId(b.src), ratio: (b.ratio && b.ratio.w && b.ratio.h) ? b.ratio : { w: 16, h: 9 }, autoplay: toBool(b.autoplay), loop: toBool(b.loop) };
+        if (t === 'text') return { type: 'text', text: b.text || '', style: b.style || {} };
+        return { type: 'image', src: b.src, regions: (b.regions || []).map(r => ({ xRatio: r.xRatio, yRatio: r.yRatio, wRatio: r.wRatio, hRatio: r.hRatio, href: r.href, coupon: r.coupon })) };
       });
-
-      // 1) 블록(텍스트/이미지/영상) 순서대로 렌더
       renderBlocks(blocks);
-
-      // 2) 상품 그리드 로드
       document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
-    })
-    .catch(err => console.error('EVENT LOAD ERROR', err));
+    } catch (err) {
+      console.error('EVENT LOAD ERROR', err);
+    }
+  }
 
-  // ────────────────────────────────────────────────────────────────
-  // 7) 탭 전환/쿠폰 다운로드
-  // ────────────────────────────────────────────────────────────────
   window.showTab = (id, btn) => {
     document.querySelectorAll(`.tab-content_${pageId}`).forEach(el => el.style.display = 'none');
     document.querySelectorAll(`.tabs_${pageId} button`).forEach(b => b.classList.remove('active'));
@@ -641,4 +474,54 @@
       window.open(url + `&opener_url=${encodeURIComponent(location.href)}`, '_blank');
     });
   };
-})();
+
+  // ✨✨✨ START: RE-ADDED TAB HANDLER ✨✨✨
+  // ────────────────────────────────────────────────────────────────
+  // 8) 탭-링크 핸들러
+  // ────────────────────────────────────────────────────────────────
+  (function attachTabHandler() {
+    const SCROLL_OFFSET = 200;
+    function scrollToElementOffset(el) {
+      if (!el) return;
+      const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - SCROLL_OFFSET);
+      window.scrollTo({ top, behavior: 'smooth' });
+    }
+    function tryScrollPanel(tabId) {
+      let attempts = 0;
+      const timer = setInterval(() => {
+        const panel = document.getElementById(tabId);
+        if (panel || ++attempts >= 6) {
+          clearInterval(timer);
+          if (panel) scrollToElementOffset(panel);
+        }
+      }, 80);
+    }
+    function normalizeTabId(raw) {
+      if (!raw) return null;
+      raw = String(raw).trim().replace(/^#/, '');
+      const m = raw.match(/^tab[:\s\-]?(\d+)$/i);
+      return m ? 'tab-' + m[1] : (/^tab-\d+$/i.test(raw) ? raw : null);
+    }
+    document.addEventListener('click', function (ev) {
+      const el = ev.target.closest('a[data-href]');
+      if (!el) return;
+      const raw = el.getAttribute('data-href');
+      const tabId = normalizeTabId(raw);
+      if (!tabId) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const btn = document.querySelector(`.tabs_${pageId} button[onclick*="'${tabId}'"]`);
+      if (typeof window.showTab === 'function') {
+        window.showTab(tabId, btn);
+        tryScrollPanel(tabId);
+      }
+    }, { passive: false });
+  })();
+  // ✨✨✨ END: RE-ADDED TAB HANDLER ✨✨✨
+
+  // ────────────────────────────────────────────────────────────────
+  // 9) 페이지 초기화
+  // ────────────────────────────────────────────────────────────────
+  initializePage();
+
+})(); // end IIFE
