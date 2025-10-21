@@ -105,49 +105,48 @@ function buildAuthorizeUrl(mallId) {
   return `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
 }
 
-
-// ===== 토큰 리프레시 (디버깅 로그 추가 버전) =====
+// ===== 토큰 리프레시 (최종 수정본) =====
 async function refreshAccessToken(mallId, refreshToken) {
-   const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-   const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-   const params = new URLSearchParams({
-     grant_type: 'refresh_token',
-     refresh_token: refreshToken
-   }).toString();
+  const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken
+  }).toString();
 
-   const { data } = await axios.post(url, params, {
-     headers: {
-       'Content-Type': 'application/x-www-form-urlencoded',
-       'Authorization': `Basic ${creds}`
-     }
-   });
+  const { data } = await axios.post(url, params, {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${creds}`
+    }
+  });
 
-  // ▼▼▼▼▼ 디버깅을 위해 이 로그를 추가했습니다 ▼▼▼▼▼
-  console.log(`[CAFE24 RAW RESPONSE] for mallId=${mallId}:`, JSON.stringify(data, null, 2));
-  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+  // ▼▼▼ 수정된 부분: data.expires_at을 직접 사용합니다 ▼▼▼
+  // Cafe24 API가 보내주는 만료 시각 문자열로 직접 Date 객체를 생성합니다.
+  const newExpiresAt = new Date(data.expires_at);
 
-   const newExpiresIn = data.expires_in;
-   const newExpiresAt = new Date(Date.now() + newExpiresIn * 1000);
+  // (참고용) expires_in 값을 역으로 계산하여 저장합니다.
+  const newExpiresIn = Math.round((newExpiresAt.getTime() - Date.now()) / 1000);
+  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-   await db.collection('token').updateOne(
-   { mallId },
-   { $set: {
-       accessToken: data.access_token,
-       refreshToken: data.refresh_token,
-       obtainedAt: new Date(),
-       expiresIn: newExpiresIn,
-       expiresAt: newExpiresAt,
-       raw_refresh_response: data
-     }
-   }
-   );
+  await db.collection('token').updateOne(
+    { mallId },
+    { $set: {
+         accessToken: data.access_token,
+         refreshToken: data.refresh_token,
+         obtainedAt: new Date(),
+         expiresIn: newExpiresIn,
+         expiresAt: newExpiresAt,
+         raw_refresh_response: data
+       }
+    }
+  );
 
-   console.log(`[TOKEN REFRESH] mallId=${mallId}`);
-   console.log(`✅ [DB UPDATED] mallId=${mallId}, new expiry: ${newExpiresAt.toISOString()}`);
+  console.log(`[TOKEN REFRESH] mallId=${mallId}`);
+  console.log(`✅ [DB UPDATED] mallId=${mallId}, new expiry: ${newExpiresAt.toISOString()}`);
 
-   return data.access_token;
+  return data.access_token;
 }
-
 
 // ===== 에러/재설치 헬퍼 =====
 function installRequired(mallId) {
