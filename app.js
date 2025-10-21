@@ -138,6 +138,7 @@ async function refreshAccessToken(mallId, refreshToken) {
    );
    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  
    console.log(`[TOKEN REFRESH] mallId=${mallId}`);
+   console.log(`✅ [DB UPDATED] mallId=${mallId}, new expiry: ${newExpiresAt.toLocaleString('ko-KR')}`);
    return data.access_token;
 }
 
@@ -1381,8 +1382,10 @@ initDb()
 
     // 2. 2시간마다 주기적으로 갱신하는 스케줄러 등록
     // cron 표현식: '0 */2 * * *' -> 매 2시간마다 0분에 실행
-    cron.schedule('0 */2 * * *', runTokenRefreshScheduler);
-    console.log('▶️ Cron job scheduled to run every 2 hours.');
+    // cron.schedule('0 */2 * * *', runTokenRefreshScheduler);
+
+    cron.schedule('*/30 * * * *', runTokenRefreshScheduler);
+    console.log('▶️ Cron job scheduled to run every 30 minutes.');
 
     app.listen(PORT, () => {
       console.log(`▶️ Server running at ${BACKEND_URL} (port ${PORT})`);
