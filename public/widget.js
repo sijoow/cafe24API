@@ -142,19 +142,19 @@
     }
     
     // ────────────────────────────────────────────────────────────────
-    // 2-1) 새로고침 시 캐시 자동 삭제
+    // 2-1) 새로고침 시 캐시 자동 삭제 잠깐 주석처리
     // ────────────────────────────────────────────────────────────────
-    (function clearCacheOnReload() {
-      try {
-        const navigationEntries = performance.getEntriesByType("navigation");
-        if (navigationEntries.length > 0 && navigationEntries[0].type === 'reload') {
-          console.log('[widget.js] 페이지 새로고침을 감지하여 캐시를 삭제합니다.');
-          invalidateProductCache();
-        }
-      } catch (e) {
-        console.warn('[widget.js] 새로고침 감지 중 오류:', e);
-      }
-    })();
+    // (function clearCacheOnReload() {
+    //   try {
+    //     const navigationEntries = performance.getEntriesByType("navigation");
+    //     if (navigationEntries.length > 0 && navigationEntries[0].type === 'reload') {
+    //       console.log('[widget.js] 페이지 새로고침을 감지하여 캐시를 삭제합니다.');
+    //       invalidateProductCache();
+    //     }
+    //   } catch (e) {
+    //     console.warn('[widget.js] 새로고침 감지 중 오류:', e);
+    //   }
+    // })();
   
     // ────────────────────────────────────────────────────────────────
     // 3) 블록 렌더(텍스트/이미지/영상)
@@ -261,47 +261,68 @@
         root.appendChild(wrap);
       });
     }
-  
-    // ────────────────────────────────────────────────────────────────
-    // 4) 상품 그리드
-    // ────────────────────────────────────────────────────────────────
-    async function loadPanel(ul) {
-      const cols = parseInt(ul.dataset.gridSize, 10) || 1;
-      const cacheKey = ul.dataset.directNos ? `direct_${ul.dataset.directNos}` : (ul.dataset.cate ? `cat_${ul.dataset.cate}` : null);
-      if (!cacheKey) return;
-      const storageKey = storagePrefix + cacheKey;
-  
+  // ────────────────────────────────────────────────────────────────
+  // 4) 상품 그리드
+  // ────────────────────────────────────────────────────────────────
+  async function loadPanel(ul) {
+    const cols = parseInt(ul.dataset.gridSize, 10) || 1;
+    const cacheKey = ul.dataset.directNos ? `direct_${ul.dataset.directNos}` : (ul.dataset.cate ? `cat_${ul.dataset.cate}` : null);
+    if (!cacheKey) return;
+    const storageKey = storagePrefix + cacheKey;
+    const CACHE_DURATION = 30 * 60 * 1000; // 30분 캐시 유효기간
+
+    // 1. 캐시 먼저 보여주기
+    try {
       const stored = localStorage.getItem(storageKey);
       if (stored) {
-        try {
-          renderProducts(ul, JSON.parse(stored), cols);
-          return;
-        } catch {}
+        const { timestamp, data } = JSON.parse(stored);
+        // 캐시가 유효기간 이내이면 즉시 렌더링
+        if (Date.now() - timestamp < CACHE_DURATION) {
+          renderProducts(ul, data, cols);
+
+          // 배경에서 조용히 최신 데이터 가져오기
+          fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count)
+            .then(freshData => {
+              // 데이터가 변경되었을 경우에만 화면을 다시 그리고 캐시 업데이트
+              if (JSON.stringify(data) !== JSON.stringify(freshData)) {
+                console.log('[widget.js] 상품 정보가 변경되어 업데이트합니다.', cacheKey);
+                renderProducts(ul, freshData, cols);
+                localStorage.setItem(storageKey, JSON.stringify({ timestamp: Date.now(), data: freshData }));
+              }
+            }).catch(console.warn); // 백그라운드 업데이트 실패는 조용히 처리
+
+          return; // 즉시 렌더링 후 함수 종료
+        }
       }
-  
-      const spinner = document.createElement('div');
-      spinner.className = 'grid-spinner';
-      ul.parentNode.insertBefore(spinner, ul);
-  
-      const showError = err => {
-        spinner.remove();
-        const errDiv = document.createElement('div');
-        errDiv.style.textAlign = 'center';
-        errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
-        errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
-        ul.parentNode.insertBefore(errDiv, ul);
-      };
-  
-      try {
-        const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
-        localStorage.setItem(storageKey, JSON.stringify(products));
-        renderProducts(ul, products, cols);
-      } catch (err) {
-        showError(err);
-      } finally {
-        spinner.remove();
-      }
+    } catch (e) {
+      console.warn('[widget.js] 캐시 파싱 오류', e);
     }
+
+    // 2. 캐시가 없거나 만료된 경우: 로딩 스피너 보여주고 데이터 가져오기
+    const spinner = document.createElement('div');
+    spinner.className = 'grid-spinner';
+    ul.parentNode.insertBefore(spinner, ul);
+
+    const showError = () => {
+      spinner.remove();
+      const errDiv = document.createElement('div');
+      errDiv.style.textAlign = 'center';
+      errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
+      errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
+      ul.parentNode.insertBefore(errDiv, ul);
+    };
+
+    try {
+      const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
+      // 타임스탬프와 함께 데이터 캐시
+      localStorage.setItem(storageKey, JSON.stringify({ timestamp: Date.now(), data: products }));
+      renderProducts(ul, products, cols);
+    } catch (err) {
+      showError();
+    } finally {
+      spinner.remove();
+    }
+  }
   
     async function fetchProducts(directNosAttr, category, limit = 300) {
       const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
