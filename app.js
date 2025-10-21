@@ -106,42 +106,42 @@ function buildAuthorizeUrl(mallId) {
 }
 // ===== 토큰 리프레시 =====
 async function refreshAccessToken(mallId, refreshToken) {
-  const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-  const params = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken
-  }).toString();
-
-  const { data } = await axios.post(url, params, {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${creds}`
-    }
-  });
-
-  // ▼▼▼ expiresAt 계산 로직 추가 ▼▼▼
-  const newExpiresIn = data.expires_in;
-  const newExpiresAt = new Date(Date.now() + newExpiresIn * 1000);
-
-   await db.collection('token').updateOne(
-     { mallId },
-     { $set: {
-         accessToken: data.access_token,
-         refreshToken: data.refresh_token,
-         obtainedAt: new Date(),
-         expiresIn: newExpiresIn, // 수정
-         expiresAt: newExpiresAt, // 추가
-         raw_refresh_response: data
-       }
+   const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+   const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+   const params = new URLSearchParams({
+     grant_type: 'refresh_token',
+     refresh_token: refreshToken
+   }).toString(); 
+   const { data } = await axios.post(url, params, {
+     headers: {
+       'Content-Type': 'application/x-www-form-urlencoded',
+       'Authorization': `Basic ${creds}`
      }
-   );
-   // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  
-   console.log(`[TOKEN REFRESH] mallId=${mallId}`);
-   console.log(`✅ [DB UPDATED] mallId=${mallId}, new expiry: ${newExpiresAt.toLocaleString('ko-KR')}`);
-   return data.access_token;
-}
+   });  
+   const newExpiresIn = data.expires_in;
+   const newExpiresAt = new Date(Date.now() + newExpiresIn * 1000);
 
+  await db.collection('token').updateOne(
+   { mallId },
+   { $set: {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    obtainedAt: new Date(),
+    expiresIn: newExpiresIn,
+    expiresAt: newExpiresAt,
+    raw_refresh_response: data
+     }
+   }
+  );
+
+  // ▼▼▼ 로그 출력 방식 수정 ▼▼▼
+  console.log(`[TOKEN REFRESH] mallId=${mallId}`);
+  // toLocaleString 대신, 표준 형식인 toISOString()을 사용해 로그를 남깁니다.
+  console.log(`✅ [DB UPDATED] mallId=${mallId}, new expiry: ${newExpiresAt.toISOString()}`);
+  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+  return data.access_token;
+}
 // ===== 에러/재설치 헬퍼 =====
 function installRequired(mallId) {
   const err = new Error('INSTALL_REQUIRED');
