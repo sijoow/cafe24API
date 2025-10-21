@@ -1329,23 +1329,66 @@ async function runTokenRefreshScheduler() {
     console.error('[CRON-FATAL] Scheduler run failed:', err);
   }
 }
+// ▼▼▼▼▼ 모든 토큰 강제 갱신 함수 (서버 시작 시 실행) ▼▼▼▼▼
+async function forceRefreshAllTokens() {
+   console.log('🔥 [STARTUP] Starting a forced refresh for ALL tokens...');
+   let successCount = 0;
+   let failCount = 0;
 
+   try {
+     // refreshToken이 존재하는 모든 토큰을 DB에서 찾음
+     const allTokens = await db.collection('token').find({
+       refreshToken: { $ne: null }
+     }).toArray();
+
+     if (allTokens.length === 0) {
+       console.log('🔥 [STARTUP] No tokens found to refresh.');
+       return;
+     }
+
+     console.log(`🔥 [STARTUP] Found ${allTokens.length} tokens. Attempting refresh...`);
+
+     // 모든 토큰 갱신을 병렬로 시도하고 결과를 기다립니다.
+     const results = await Promise.allSettled(
+      allTokens.map(tokenDoc => refreshAccessToken(tokenDoc.mallId, tokenDoc.refreshToken))
+     );
+
+     // 결과 집계
+     results.forEach((result, index) => {
+       if (result.status === 'fulfilled') {
+         successCount++;
+       } else {
+         failCount++;
+         console.error(`🔥 [STARTUP-ERROR] for mallId=${allTokens[index].mallId}:`, result.reason.message);
+       }
+     });
+
+     const summary = { total: allTokens.length, success: successCount, fail: failCount };
+     console.log('🔥 [STARTUP] Finished force refresh.', summary);
+
+   } catch (err) {
+      console.error('[STARTUP-FATAL] Force refresh process failed:', err);
+   }
+}
 // ================================================================
 // 6) 서버 시작
 // ================================================================
 initDb()
-  .then(() => {
-    // 2. 스케줄러 등록: 매시간 정각에 runTokenRefreshScheduler 함수 실행
-    // cron 표현식: '분 시 일 월 요일'
-    // '0 * * * *' -> 매시간 0분에 실행
-    cron.schedule('0 * * * *', runTokenRefreshScheduler);
-    console.log('▶️ Cron job for token refresh scheduled to run every hour.');
+  .then(async () => { // async 추가
+    // 1. 서버 시작 시 모든 토큰을 한번 즉시 갱신
+    console.log('▶️ Server starting... Running initial token refresh for all malls.');
+    await forceRefreshAllTokens(); // await를 사용해 순차적 실행 보장
+
+    // 2. 2시간마다 주기적으로 갱신하는 스케줄러 등록
+    // cron 표현식: '0 */2 * * *' -> 매 2시간마다 0분에 실행
+    cron.schedule('0 */2 * * *', runTokenRefreshScheduler);
+    console.log('▶️ Cron job scheduled to run every 2 hours.');
 
     app.listen(PORT, () => {
       console.log(`▶️ Server running at ${BACKEND_URL} (port ${PORT})`);
     });
   })
   .catch(err => {
-    console.error('❌ 초기화 실패:', err);
+    console.error('❌ Initialization failed:', err);
     process.exit(1);
   });
