@@ -1383,7 +1383,7 @@ initDb()
     // cron.schedule('0 */2 * * *', runTokenRefreshScheduler);
 
     cron.schedule('*/30 * * * *', runTokenRefreshScheduler);
-    console.log('▶️ Cron job scheduled to run every 30 minutes.');
+    console.log('▶️ 30qns 리플래시 재생성');
 
     app.listen(PORT, () => {
       console.log(`▶️ Server running at ${BACKEND_URL} (port ${PORT})`);
