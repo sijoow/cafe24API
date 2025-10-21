@@ -1330,47 +1330,39 @@ async function runTokenRefreshScheduler() {
     console.error('[CRON-FATAL] Scheduler run failed:', err);
   }
 }
-// ▼▼▼▼▼ 모든 토큰 강제 갱신 함수 (서버 시작 시 실행) ▼▼▼▼▼
+
+// ▼▼▼▼▼ 모든 토큰 강제 갱신 함수 (안전한 순차 실행 버전) ▼▼▼▼▼
 async function forceRefreshAllTokens() {
    console.log('🔥 [STARTUP] Starting a forced refresh for ALL tokens...');
    let successCount = 0;
-   let failCount = 0;
-
+   let failCount = 0; 
    try {
      // refreshToken이 존재하는 모든 토큰을 DB에서 찾음
      const allTokens = await db.collection('token').find({
        refreshToken: { $ne: null }
-     }).toArray();
-
+     }).toArray();  
      if (allTokens.length === 0) {
        console.log('🔥 [STARTUP] No tokens found to refresh.');
        return;
-     }
-
-     console.log(`🔥 [STARTUP] Found ${allTokens.length} tokens. Attempting refresh...`);
-
-     // 모든 토큰 갱신을 병렬로 시도하고 결과를 기다립니다.
-     const results = await Promise.allSettled(
-      allTokens.map(tokenDoc => refreshAccessToken(tokenDoc.mallId, tokenDoc.refreshToken))
-     );
-
-     // 결과 집계
-     results.forEach((result, index) => {
-       if (result.status === 'fulfilled') {
+     }  
+     console.log(`🔥 [STARTUP] Found ${allTokens.length} tokens. Attempting refresh sequentially...`);  
+     // 병렬 처리(Promise.allSettled) 대신, 안전한 for...of 루프로 하나씩 순서대로 실행
+     for (const tokenDoc of allTokens) {
+       try {
+         await refreshAccessToken(tokenDoc.mallId, tokenDoc.refreshToken);
          successCount++;
-       } else {
+       } catch (e) {
          failCount++;
-         console.error(`🔥 [STARTUP-ERROR] for mallId=${allTokens[index].mallId}:`, result.reason.message);
+         console.error(`🔥 [STARTUP-ERROR] for mallId=${tokenDoc.mallId}:`, e.message);
        }
-     });
-
+     }  
      const summary = { total: allTokens.length, success: successCount, fail: failCount };
-     console.log('🔥 [STARTUP] Finished force refresh.', summary);
-
+     console.log('🔥 [STARTUP] Finished force refresh.', summary);  
    } catch (err) {
-      console.error('[STARTUP-FATAL] Force refresh process failed:', err);
+    console.error('[STARTUP-FATAL] Force refresh process failed:', err);
    }
 }
+
 // ================================================================
 // 6) 서버 시작
 // ================================================================
