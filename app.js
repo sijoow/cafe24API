@@ -1,7 +1,7 @@
 // app.js (완전본)
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
-
+const cron = require('node-cron');
 const express = require('express');
 //데이터수정
 
@@ -104,7 +104,6 @@ function buildAuthorizeUrl(mallId) {
   });
   return `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
 }
-
 // ===== 토큰 리프레시 =====
 async function refreshAccessToken(mallId, refreshToken) {
   const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
@@ -121,20 +120,25 @@ async function refreshAccessToken(mallId, refreshToken) {
     }
   });
 
-  await db.collection('token').updateOne(
-    { mallId },
-    { $set: {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        obtainedAt: new Date(),
-        expiresIn: data.expires_in,
-        raw_refresh_response: data
-      }
-    }
-  );
+  // ▼▼▼ expiresAt 계산 로직 추가 ▼▼▼
+  const newExpiresIn = data.expires_in;
+  const newExpiresAt = new Date(Date.now() + newExpiresIn * 1000);
 
-  console.log(`[TOKEN REFRESH] mallId=${mallId}`);
-  return data.access_token;
+   await db.collection('token').updateOne(
+     { mallId },
+     { $set: {
+         accessToken: data.access_token,
+         refreshToken: data.refresh_token,
+         obtainedAt: new Date(),
+         expiresIn: newExpiresIn, // 수정
+         expiresAt: newExpiresAt, // 추가
+         raw_refresh_response: data
+       }
+     }
+   );
+   // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  
+   console.log(`[TOKEN REFRESH] mallId=${mallId}`);
+   return data.access_token;
 }
 
 // ===== 에러/재설치 헬퍼 =====
@@ -214,57 +218,56 @@ app.get('/install/:mallId', (req, res) => {
   console.log('[INSTALL REDIRECT]', url);
   res.redirect(url);
 });
-
 // ================================================================
 // 2) OAuth 콜백 (code -> token 저장) 및 프론트 리다이렉트
 // ================================================================
 app.get('/auth/callback', async (req, res) => {
-  const { code, state: mallId, error, error_description } = req.query;
-
-  if (error) {
-    console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, error_description);
-    return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
-  }
-  if (!code || !mallId) {
+   const { code, state: mallId, error, error_description } = req.query; 
+   if (error) {
+     console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, error_description);
+     return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
+   }
+   if (!code || !mallId) {
     return res.status(400).send('code 또는 mallId가 없습니다.');
-  }
-
-  try {
-    const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: `${BACKEND_URL}/auth/callback`
-    }).toString();
-
-    const { data } = await axios.post(tokenUrl, body, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${creds}`
-      }
-    });
-
-    await db.collection('token').updateOne(
-      { mallId },
-      { $set: {
-          mallId,
-          accessToken: data.access_token,
-          refreshToken: data.refresh_token,
-          obtainedAt: new Date(),
-          expiresIn: data.expires_in,
-          raw: data
-        }
-      },
-      { upsert: true }
-    );
-
-    console.log(`[AUTH CALLBACK] installed mallId=${mallId}`);
-    return res.redirect(`${FRONTEND_URL}/?mall_id=${encodeURIComponent(mallId)}`);
-  } catch (err) {
-    console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
-    return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
-  }
+   }  
+   try {
+     const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+     const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+     const body = new URLSearchParams({
+       grant_type: 'authorization_code',
+       code,
+       redirect_uri: `${BACKEND_URL}/auth/callback`
+     }).toString(); 
+     const { data } = await axios.post(tokenUrl, body, {
+       headers: {
+         'Content-Type': 'application/x-www-form-urlencoded',
+         'Authorization': `Basic ${creds}`
+       }
+     });  
+     // ▼▼▼ expiresAt 계산 로직 추가 ▼▼▼
+     const expiresIn = data.expires_in;
+     const expiresAt = new Date(Date.now() + expiresIn * 1000); 
+     await db.collection('token').updateOne(
+       { mallId },
+       { $set: {
+           mallId,
+           accessToken: data.access_token,
+           refreshToken: data.refresh_token,
+           obtainedAt: new Date(),
+           expiresIn: expiresIn, // 수정
+           expiresAt: expiresAt, // 추가
+           raw: data
+         }
+       },
+       { upsert: true }
+     );
+     // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲  
+     console.log(`[AUTH CALLBACK] installed mallId=${mallId}`);
+     return res.redirect(`${FRONTEND_URL}/?mall_id=${encodeURIComponent(mallId)}`);
+   } catch (err) {
+     console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
+     return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
+   }
 });
 
 
@@ -1289,11 +1292,55 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
+
+// ▼▼▼▼▼ 백그라운드 토큰 갱신 스케줄러 ▼▼▼▼▼
+async function runTokenRefreshScheduler() {
+  console.log('🔄 Starting background token refresh job...');
+
+  // 1시간 안에 만료되는 토큰을 찾기 위한 시간 계산
+  const soonToExpireDate = new Date(Date.now() + 60 * 60 * 1000); // 현재시간 + 1시간
+
+  try {
+    // DB에서 expiresAt 필드가 있고, 1시간 내로 만료되는 모든 토큰 문서를 찾음
+    const expiringTokens = await db.collection('token').find({
+      expiresAt: { $ne: null, $lt: soonToExpireDate }
+    }).toArray();
+
+    if (expiringTokens.length === 0) {
+      console.log('🔄 No tokens need refreshing at this time.');
+      return;
+    }
+
+    console.log(`🔄 Found ${expiringTokens.length} tokens to refresh.`);
+
+    // 각 토큰에 대해 갱신 작업 수행
+    for (const tokenDoc of expiringTokens) {
+      try {
+        console.log(`[CRON] Refreshing token for mallId=${tokenDoc.mallId}...`);
+        await refreshAccessToken(tokenDoc.mallId, tokenDoc.refreshToken);
+      } catch (e) {
+        // 특정 몰의 토큰 갱신이 실패하더라도 다른 몰에 영향을 주지 않도록 개별 처리
+        console.error(`[CRON-ERROR] Failed to refresh for mallId=${tokenDoc.mallId}:`, e.message);
+      }
+    }
+    console.log('🔄 Background token refresh job finished.');
+
+  } catch (err) {
+    console.error('[CRON-FATAL] Scheduler run failed:', err);
+  }
+}
+
 // ================================================================
 // 6) 서버 시작
 // ================================================================
 initDb()
   .then(() => {
+    // 2. 스케줄러 등록: 매시간 정각에 runTokenRefreshScheduler 함수 실행
+    // cron 표현식: '분 시 일 월 요일'
+    // '0 * * * *' -> 매시간 0분에 실행
+    cron.schedule('0 * * * *', runTokenRefreshScheduler);
+    console.log('▶️ Cron job for token refresh scheduled to run every hour.');
+
     app.listen(PORT, () => {
       console.log(`▶️ Server running at ${BACKEND_URL} (port ${PORT})`);
     });
