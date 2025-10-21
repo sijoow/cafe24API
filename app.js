@@ -104,44 +104,51 @@ function buildAuthorizeUrl(mallId) {
   });
   return `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
 }
-// ===== 토큰 리프레시 =====
+
+
+// ===== 토큰 리프레시 (디버깅 로그 추가 버전) =====
 async function refreshAccessToken(mallId, refreshToken) {
    const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
    const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
    const params = new URLSearchParams({
      grant_type: 'refresh_token',
      refresh_token: refreshToken
-   }).toString(); 
+   }).toString();
+
    const { data } = await axios.post(url, params, {
      headers: {
        'Content-Type': 'application/x-www-form-urlencoded',
        'Authorization': `Basic ${creds}`
      }
-   });  
+   });
+
+  // ▼▼▼▼▼ 디버깅을 위해 이 로그를 추가했습니다 ▼▼▼▼▼
+  console.log(`[CAFE24 RAW RESPONSE] for mallId=${mallId}:`, JSON.stringify(data, null, 2));
+  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
    const newExpiresIn = data.expires_in;
    const newExpiresAt = new Date(Date.now() + newExpiresIn * 1000);
 
-  await db.collection('token').updateOne(
+   await db.collection('token').updateOne(
    { mallId },
    { $set: {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    obtainedAt: new Date(),
-    expiresIn: newExpiresIn,
-    expiresAt: newExpiresAt,
-    raw_refresh_response: data
+       accessToken: data.access_token,
+       refreshToken: data.refresh_token,
+       obtainedAt: new Date(),
+       expiresIn: newExpiresIn,
+       expiresAt: newExpiresAt,
+       raw_refresh_response: data
      }
    }
-  );
+   );
 
-  // ▼▼▼ 로그 출력 방식 수정 ▼▼▼
-  console.log(`[TOKEN REFRESH] mallId=${mallId}`);
-  // toLocaleString 대신, 표준 형식인 toISOString()을 사용해 로그를 남깁니다.
-  console.log(`✅ [DB UPDATED] mallId=${mallId}, new expiry: ${newExpiresAt.toISOString()}`);
-  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+   console.log(`[TOKEN REFRESH] mallId=${mallId}`);
+   console.log(`✅ [DB UPDATED] mallId=${mallId}, new expiry: ${newExpiresAt.toISOString()}`);
 
-  return data.access_token;
+   return data.access_token;
 }
+
+
 // ===== 에러/재설치 헬퍼 =====
 function installRequired(mallId) {
   const err = new Error('INSTALL_REQUIRED');
