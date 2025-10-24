@@ -288,7 +288,8 @@
 
   async function initializePage() {
     try {
-      const response = await fetch(`${API_BASE}/api/${mallId}/eventTemple/${pageId}`);
+      // ✅ [수정] API 경로를 'eventTemple'에서 'events'로 변경
+      const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}`);
       if (!response.ok) throw new Error('Event data fetch failed');
       const ev = await response.json();
       
