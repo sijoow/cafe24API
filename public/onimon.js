@@ -208,7 +208,7 @@
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
       
       // ✅ [수정] 그리드 사이즈(cols)에 따라 폰트 크기 동적 계산
-      const titleFontSize = `${20 - cols}px`; // 2x2 -> 18px, 3x3 -> 17px, 4x4 -> 16px
+      const titleFontSize = `${19 - cols}px`; // 2x2 -> 18px, 3x3 -> 17px, 4x4 -> 16px
       const originalPriceFontSize = `${16 - cols}px`; // 2x2 -> 14px, 3x3 -> 13px, 4x4 -> 12px
       const salePriceFontSize = `${18 - cols}px`; // 2x2 -> 16px, 3x3 -> 15px, 4x4 -> 14px
       
