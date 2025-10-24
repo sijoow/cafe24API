@@ -291,6 +291,10 @@
         display: inline-block;
         width: 100%;
       }
+      .prd_coupon{
+        display:inline-block;
+        width:100%;
+      }
     }
   `;
   document.head.appendChild(style);
