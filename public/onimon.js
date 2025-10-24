@@ -23,6 +23,7 @@
   // ────────────────────────────────────────────────────────────────
   // 2) 공통 헬퍼
   // ────────────────────────────────────────────────────────────────
+  const storagePrefix = `widgetCache_${pageId}_v2_`;
   function escapeHtml(s = '') { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   function toBool(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
   function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
@@ -168,24 +169,37 @@
   // ────────────────────────────────────────────────────────────────
   // 4) 상품 데이터 로드 및 렌더링
   // ────────────────────────────────────────────────────────────────
+  // ✅ [수정] 요청하신 새로운 fetchProducts 함수로 교체
   async function fetchProducts(directNosAttr, category, limit = 300) {
-      if (directNosAttr) {
-          const ids = directNosAttr.split(',').map(s => s.trim()).filter(Boolean);
-          if (ids.length === 0) return [];
-          const results = await Promise.all(ids.map(no =>
-            fetchWithRetry(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`).then(r => r.json())
-          ));
-          return results.map(p => (p && p.product_no) ? p : null).filter(Boolean);
-      } else if (category) {
-          const prodUrl = `${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`;
-          const prods = await fetchWithRetry(prodUrl).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.products || []));
-          return prods;
-      }
-      return [];
+    const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
+    
+    if (directNosAttr) {
+      const ids = directNosAttr.split(',').map(s => s.trim()).filter(Boolean);
+      if (ids.length === 0) return [];
+      const results = await Promise.all(ids.map(no =>
+        fetchWithRetry(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`, fetchOpts).then(r => r.json())
+      ));
+      return results.map(p => (p && p.product_no) ? p : {}).map(p => ({
+        product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
+        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small,
+        sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
+        decoration_icon_url: p.decoration_icon_url || null
+      }));
+    } else if (category) {
+      const prodUrl = `${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`;
+      const rawProducts = await fetchWithRetry(prodUrl, fetchOpts).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.products || []));
+      return rawProducts.map(p => (typeof p === 'object' ? p : {})).map(p => ({
+        product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
+        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small,
+        sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
+        decoration_icon_url: p.decoration_icon_url || null
+      }));
+    }
+    return [];
   }
 
   async function loadPanel(ul) {
-    const cols = parseInt(ul.dataset.gridSize, 10) || 2; // Default to 2 if not set
+    const cols = parseInt(ul.dataset.gridSize, 10) || 2;
     const spinner = document.createElement('div');
     spinner.className = 'grid-spinner';
     ul.parentNode.insertBefore(spinner, ul);
@@ -207,10 +221,9 @@
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
       
-      // ✅ [수정] 그리드 사이즈(cols)에 따라 폰트 크기 동적 계산
-      const titleFontSize = `${19 - cols}px`; // 2x2 -> 18px, 3x3 -> 17px, 4x4 -> 16px
-      const originalPriceFontSize = `${16 - cols}px`; // 2x2 -> 14px, 3x3 -> 13px, 4x4 -> 12px
-      const salePriceFontSize = `${18 - cols}px`; // 2x2 -> 16px, 3x3 -> 15px, 4x4 -> 14px
+      const titleFontSize = `${20 - cols}px`;
+      const originalPriceFontSize = `${16 - cols}px`;
+      const salePriceFontSize = `${18 - cols}px`;
       
       const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
       const parseNumber = v => {
@@ -243,14 +256,19 @@
           const priceText = formatKRW(origPrice);
           const saleText = isSale ? formatKRW(salePrice) : null;
           const couponText = isCoupon ? formatKRW(benefitPrice) : null;
+          
+          const listImg = p.list_image;
+          const mediumImg = p.image_medium || listImg;
+          
+          const mouseEvents = mediumImg !== listImg ? `onmouseover="this.src='${mediumImg}'" onmouseout="this.src='${listImg}'"` : '';
   
           return `
-            <li style="overflow: hidden; background: #fff;">
+            <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}">
                 <div style="aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
-                  ${p.list_image ? `<img src="${p.list_image}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
+                  ${listImg ? `<img src="${listImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" ${mouseEvents} />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
                 </div>
-                <div style="padding-top:10px;min-height: 90px;">
+                <div style="padding: 12px; min-height: 90px;">
                   <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
                   <div class="prd_price_container" style="margin-top: 4px;">
                     ${isCoupon ? `
