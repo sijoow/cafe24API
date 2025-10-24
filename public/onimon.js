@@ -286,6 +286,12 @@
     .tabs_${pageId} button.active { font-weight: 600; }
     .prd_price_container .original_price { text-decoration: line-through; color: #999; display: block; font-weight: 400;padding-bottom:2px; }
     .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
+    @media (max-width: 400px) {
+      .sale_price {
+        display: inline-block;
+        width: 100%;
+      }
+    }
   `;
   document.head.appendChild(style);
 
