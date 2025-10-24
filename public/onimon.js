@@ -183,38 +183,37 @@
       }
       return [];
   }
-
-  // ✅ [수정] 로딩 스피너 지연 로직 추가
+// ✅ [수정] 로딩 스피너 지연 로직 추가
   async function loadPanel(ul) {
-    const cols = parseInt(ul.dataset.gridSize, 10) || 2;
-    let spinner = null;
-    
-    // 2초 후에 스피너를 표시하도록 타이머 설정
-    const spinnerTimeout = setTimeout(() => {
-      spinner = document.createElement('div');
-      spinner.className = 'grid-spinner';
-      ul.parentNode.insertBefore(spinner, ul);
-    }, 2000); // 2초 (2000ms)
-  
-    try {
-      const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
-      renderProducts(ul, products, cols);
-    } catch (err) {
-      console.error('상품 로드 실패:', err);
-      const errDiv = document.createElement('div');
-      errDiv.style.textAlign = 'center';
-      errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
-      errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
-      ul.parentNode.insertBefore(errDiv, ul);
-    } finally {
-      // 상품 로딩이 2초 안에 끝나면 스피너가 표시되지 않도록 타이머 제거
-      clearTimeout(spinnerTimeout);
-      // 만약 스피너가 표시되었다면 제거
-      if (spinner) {
-        spinner.remove();
-      }
-    }
-  }
+      const cols = parseInt(ul.dataset.gridSize, 10) || 2;
+      let spinner = null;
+      
+      // 2초 후에 스피너를 표시하도록 타이머 설정
+      const spinnerTimeout = setTimeout(() => {
+        spinner = document.createElement('div');
+        spinner.className = 'grid-spinner';
+        ul.parentNode.insertBefore(spinner, ul);
+      }, 2000); // 2초 (2000ms)
+    
+      try {
+        const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
+        renderProducts(ul, products, cols);
+      } catch (err) {
+        console.error('상품 로드 실패:', err);
+        const errDiv = document.createElement('div');
+        errDiv.style.textAlign = 'center';
+        errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
+        errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
+        ul.parentNode.insertBefore(errDiv, ul);
+      } finally {
+        // 상품 로딩이 2초 안에 끝나면 스피너가 표시되지 않도록 타이머 제거
+        clearTimeout(spinnerTimeout);
+        // 만약 스피너가 표시되었다면 제거
+        if (spinner) {
+          spinner.remove();
+        }
+      }
+    }
 
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
