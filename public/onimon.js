@@ -23,7 +23,6 @@
   // ────────────────────────────────────────────────────────────────
   // 2) 공통 헬퍼
   // ────────────────────────────────────────────────────────────────
-  const storagePrefix = `widgetCache_${pageId}_`;
   function escapeHtml(s = '') { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   function toBool(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
   function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
@@ -186,7 +185,7 @@
   }
 
   async function loadPanel(ul) {
-    const cols = parseInt(ul.dataset.gridSize, 10) || 1;
+    const cols = parseInt(ul.dataset.gridSize, 10) || 2; // Default to 2 if not set
     const spinner = document.createElement('div');
     spinner.className = 'grid-spinner';
     ul.parentNode.insertBefore(spinner, ul);
@@ -207,6 +206,11 @@
 
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
+      
+      // ✅ [수정] 그리드 사이즈(cols)에 따라 폰트 크기 동적 계산
+      const titleFontSize = `${20 - cols}px`; // 2x2 -> 18px, 3x3 -> 17px, 4x4 -> 16px
+      const originalPriceFontSize = `${16 - cols}px`; // 2x2 -> 14px, 3x3 -> 13px, 4x4 -> 12px
+      const salePriceFontSize = `${18 - cols}px`; // 2x2 -> 16px, 3x3 -> 15px, 4x4 -> 14px
       
       const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
       const parseNumber = v => {
@@ -240,7 +244,6 @@
           const saleText = isSale ? formatKRW(salePrice) : null;
           const couponText = isCoupon ? formatKRW(benefitPrice) : null;
   
-          // ✅ [수정] 상품명과 가격 폰트 사이즈를 고정 값으로 변경
           return `
             <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}">
@@ -248,23 +251,23 @@
                   ${p.list_image ? `<img src="${p.list_image}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
                 </div>
                 <div style="padding: 12px; min-height: 90px;">
-                  <div class="prd_name" style="font-weight: 500; font-size: 18px; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
+                  <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
                   <div class="prd_price_container" style="margin-top: 4px;">
                     ${isCoupon ? `
                       <div class="coupon_wrapper">
-                        <span class="original_price">${isSale ? saleText : priceText}</span>
-                        ${displayPercent > 0 ? `<span class="prd_coupon_percent">${displayPercent}%</span>` : ''}
-                        <span class="prd_coupon" style="font-weight: bold; font-size: 16px;">${couponText}</span>
+                        <span class="original_price" style="font-size: ${originalPriceFontSize};">${isSale ? saleText : priceText}</span>
+                        ${displayPercent > 0 ? `<span class="prd_coupon_percent" style="font-size: ${salePriceFontSize};">${displayPercent}%</span>` : ''}
+                        <span class="prd_coupon" style="font-weight: bold; font-size: ${salePriceFontSize};">${couponText}</span>
                       </div>
                     ` : isSale ? `
                       <div class="prd_price">
-                        <span class="original_price">${priceText}</span>
-                        ${displayPercent > 0 ? `<span class="sale_percent">${displayPercent}%</span>` : ''}
-                        <span class="sale_price" style="font-weight: bold; font-size: 16px;">${saleText}</span>
+                        <span class="original_price" style="font-size: ${originalPriceFontSize};">${priceText}</span>
+                        ${displayPercent > 0 ? `<span class="sale_percent" style="font-size: ${salePriceFontSize};">${displayPercent}%</span>` : ''}
+                        <span class="sale_price" style="font-weight: bold; font-size: ${salePriceFontSize};">${saleText}</span>
                       </div>
                     ` : `
                       <div class="prd_price">
-                        <span style="font-weight: bold; font-size: 16px;">${priceText}</span>
+                        <span style="font-weight: bold; font-size: ${salePriceFontSize};">${priceText}</span>
                       </div>
                     `}
                   </div>
@@ -275,15 +278,14 @@
   }
 
   const style = document.createElement('style');
-  // ✅ [수정] style 태그에 폰트 사이즈 정의 추가
   style.textContent = `
     .grid-spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #1890ff; border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto; }
     @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
     .tabs_${pageId} { display: flex; gap: 8px; max-width: 800px; margin: 16px auto; }
     .tabs_${pageId} button { flex: 1; padding: 8px; font-size: 16px; border: 1px solid #d9d9d9; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tabs_${pageId} button.active { font-weight: 600; }
-    .prd_price_container .original_price { text-decoration: line-through; color: #999; font-size: 14px; display: block; font-weight: 400; }
-    .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; font-size: 16px; }
+    .prd_price_container .original_price { text-decoration: line-through; color: #999; display: block; font-weight: 400; }
+    .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
   `;
   document.head.appendChild(style);
 
