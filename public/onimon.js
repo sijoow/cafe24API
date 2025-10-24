@@ -241,12 +241,12 @@
           const couponText = isCoupon ? formatKRW(benefitPrice) : null;
   
           return `
-            <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
+            <li style="overflow: hidden; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}">
                 <div style="aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
                   ${p.list_image ? `<img src="${p.list_image}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
                 </div>
-                <div style="padding: 12px; min-height: 90px;">
+                <div style="padding: 8px; min-height: 90px;">
                   <div class="prd_name" style="font-weight: 500; font-size: 16px; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
                   <div class="prd_price_container" style="margin-top: 4px;">
                     ${isCoupon ? `
@@ -283,6 +283,7 @@
     .prd_price_container .original_price { text-decoration: line-through; color: #999; font-size: 13px; display: block; font-weight: 400; }
     .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
     .prd_price_container .sale_price, .prd_price_container .prd_coupon { font-weight: bold; }
+    .main_Grid_${pageId}{width:98%;}
   `;
   document.head.appendChild(style);
 
