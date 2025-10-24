@@ -245,12 +245,12 @@
           const couponText = isCoupon ? formatKRW(benefitPrice) : null;
   
           return `
-            <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
+            <li style="overflow: hidden; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}">
                 <div style="aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
                   ${p.list_image ? `<img src="${p.list_image}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
                 </div>
-                <div style="padding: 12px; min-height: 90px;">
+                <div style="padding-top:10px;min-height: 90px;">
                   <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
                   <div class="prd_price_container" style="margin-top: 4px;">
                     ${isCoupon ? `
