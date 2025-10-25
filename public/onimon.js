@@ -305,6 +305,8 @@ async function loadPanel(ul) {
         display:inline-block;
         width:100%;
       }
+      .prd_price{line-height:1.2}
+      .prd_price_container .original_price{padding-bottom:0px;}
     }
   `;
   document.head.appendChild(style);
