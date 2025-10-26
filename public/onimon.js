@@ -272,16 +272,19 @@
           const saleText = isSale ? formatKRW(salePrice) : null;
           const couponText = isCoupon ? formatKRW(benefitPrice) : null;
           
-          const listImg = p.list_image;
-          const mediumImg = p.image_medium || listImg;
+          const initialImg = p.image_medium || p.list_image;
+          const hoverImg = p.tiny_image || p.image_small;
           
-          const mouseEvents = mediumImg && listImg && mediumImg !== listImg ? `onmouseover="this.querySelector('img').src='${mediumImg}'" onmouseout="this.querySelector('img').src='${listImg}'"` : '';
+          const mouseEvents = hoverImg && initialImg && hoverImg !== initialImg 
+            ? `onmouseover="this.querySelector('img').src='${hoverImg}'" onmouseout="this.querySelector('img').src='${initialImg}'"` 
+            : '';
   
           return `
             <li style="overflow: hidden; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
-                <div style="aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
-                  ${listImg ? `<img src="${listImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
+                <div style="position: relative; aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
+                  ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
+                  ${p.decoration_icon_url ? `<div class="prd_icon_wrapper"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
                 </div>
                 <div style="padding-top:10px; min-height: 90px;">
                   <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
