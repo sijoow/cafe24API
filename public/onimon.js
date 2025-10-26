@@ -5,7 +5,7 @@
   let script = document.currentScript;
   if (!script || !script.dataset.pageId) {
     script = Array.from(document.getElementsByTagName('script')).find(s =>
-      /onimon\.js|widget\.js/.test(s.src) && s.dataset.pageId
+      /onimon\.js/.test(s.src) && s.dataset.pageId
     );
   }
   if (!script || !script.dataset.pageId || !script.dataset.mallId) {
@@ -13,521 +13,375 @@
     return;
   }
 
-  const API_BASE = script.dataset.apiBase;
+  const API_BASE = script.dataset.apiBase || '';
   const pageId = script.dataset.pageId;
   const mallId = script.dataset.mallId;
-  const tabCount = parseInt(script.dataset.tabCount || '0', 10);
-  const activeColor = script.dataset.activeColor || '#1890ff';
   const couponNos = script.dataset.couponNos || '';
   const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
   const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
-  const directNos = script.dataset.directNos || '';
-  const ignoreText = script.dataset.ignoreText === '1';
-  const autoplayAll = script.dataset.autoplayAll === '1';
-  const loopAll = script.dataset.loopAll === '1';
-
-  // API preconnect
-  if (API_BASE) {
-    const link = document.createElement('link');
-    link.rel = 'preconnect';
-    link.href = API_BASE;
-    link.crossOrigin = 'anonymous';
-    document.head.appendChild(link);
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  // 1) 유틸/트래킹
-  // ────────────────────────────────────────────────────────────────
-  const ua = navigator.userAgent;
-  const device = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : 'PC';
-  const visitorId = (() => {
-    const key = 'appVisitorId';
-    let id = localStorage.getItem(key);
-    if (!id) {
-      id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
-      localStorage.setItem(key, id);
-    }
-    return id;
-  })();
-
-  const pad = n => String(n).padStart(2, '0');
-  function today() {
-    const d = new Date();
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  }
-  function shouldTrack() {
-    if (/[?&]track=true/.test(location.search)) return true;
-    const key = `tracked_${pageId}_${visitorId}_${today()}`;
-    if (sessionStorage.getItem(key)) return false;
-    sessionStorage.setItem(key, '1');
-    return true;
-  }
-  function track(payload) {
-    fetch(`${API_BASE}/api/${mallId}/track`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).catch(() => {});
-  }
-  if (shouldTrack()) {
-    track({ pageId, pageUrl: location.pathname, visitorId, type: 'view', device, referrer: document.referrer || 'direct', timestamp: new Date().toISOString() });
-  } else {
-    track({ pageId, pageUrl: location.pathname, visitorId, type: 'revisit', device, referrer: document.referrer || 'direct', timestamp: new Date().toISOString() });
-  }
-  document.body.addEventListener('click', (e) => {
-    const el = e.target.closest('[data-track-click]');
-    if (!el) return;
-    const elementType = el.dataset.trackClick;
-    const payload = { pageId, pageUrl: location.pathname, visitorId, type: 'click', element: elementType, device, referrer: document.referrer || 'direct', timestamp: new Date().toISOString() };
-    if (elementType === 'product') {
-      const productNo = el.dataset.productNo;
-      if (productNo) payload.productNo = productNo;
-    }
-    track(payload);
-  });
 
   // ────────────────────────────────────────────────────────────────
   // 2) 공통 헬퍼
   // ────────────────────────────────────────────────────────────────
-  const storagePrefix = `widgetCache_${pageId}_v2_`;
-  function escapeHtml(s = '') {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-  function parseYouTubeId(input) {
-    if (!input) return null;
-    const str = String(input).trim();
-    if (/^[\w-]{11}$/.test(str)) return str;
-    try {
-      const url = new URL(str);
-      const host = url.hostname.replace('www.', '');
-      if (host === 'youtu.be') return url.pathname.slice(1);
-      if (host.includes('youtube.com')) {
-        const v = url.searchParams.get('v');
-        if (v) return v;
-        const m = url.pathname.match(/\/(embed|shorts)\/([\w-]{11})/);
-        if (m) return m[2];
-      }
-    } catch (_) {
-      const m = str.match(/src=["']([^"']+)["']/i);
-      if (m) return parseYouTubeId(m[1]);
-    }
-    return null;
-  }
-  function toBool(v) {
-    return v === true || v === 'true' || v === 1 || v === '1' || v === 'on';
-  }
-  
+  function escapeHtml(s = '') { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function toBool(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
   function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
-    return fetch(url, opts).then(res => {
-      if (res.status === 429 && retries > 0) {
-        return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
-      }
-      if (!res.ok) throw res;
-      return res;
-    });
+      return fetch(url, opts).then(res => {
+          if (res.status === 429 && retries > 0) {
+              return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
+          }
+          if (!res.ok) throw res;
+          return res;
+      });
   }
-  
+  function buildYouTubeSrc(id, autoplay = false, loop = false) {
+      const params = new URLSearchParams({ autoplay: autoplay ? '1' : '0', mute: autoplay ? '1' : '0', playsinline: '1', rel: 0, modestbranding: 1, enablejsapi: 1 });
+      if (loop) { params.set('loop', '1'); params.set('playlist', id); }
+      return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+  }
+
   // ────────────────────────────────────────────────────────────────
-  // 3) 블록 렌더(텍스트/이미지/영상)
+  // 3) 블록 렌더링 함수들
   // ────────────────────────────────────────────────────────────────
   function getRootContainer() {
     let root = document.getElementById('evt-root');
-    if (!root) root = document.getElementById('evt-images');
     if (!root) {
       root = document.createElement('div');
       root.id = 'evt-root';
-      document.body.insertBefore(root, document.body.firstChild);
+      script.parentNode.insertBefore(root, script);
     }
-    const textDiv = document.getElementById('evt-text');
-    if (textDiv) textDiv.innerHTML = '';
     root.innerHTML = '';
     return root;
   }
 
-  function renderBlocks(blocks) {
-    const root = getRootContainer();
-    blocks.forEach((b) => {
-      const type = b.type || 'image';
-      if (type === 'text') {
-        if (ignoreText) return;
-        const st = b.style || {};
-        const wrapper = document.createElement('div');
-        wrapper.style.textAlign = st.align || 'center';
-        wrapper.style.marginTop = `${st.mt ?? 16}px`;
-        wrapper.style.marginBottom = `${st.mb ?? 16}px`;
-        const inner = document.createElement('div');
-        inner.style.fontSize = `${st.fontSize || 18}px`;
-        inner.style.fontWeight = st.fontWeight || 'normal';
-        inner.style.color = st.color || '#333';
-        inner.innerHTML = escapeHtml(b.text || '').replace(/\n/g, '<br/>');
-        wrapper.appendChild(inner);
-        root.appendChild(wrapper);
-        return;
+  function renderImageBlock(block, root) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:relative; margin:0 auto; width:100%; max-width:800px; font-size:0;';
+    const img = document.createElement('img');
+    img.src = block.src;
+    img.style.cssText = 'max-width:100%; height:auto; display:block; margin:0 auto;';
+    wrap.appendChild(img);
+    (block.regions || []).forEach(r => {
+      const l = (r.xRatio * 100).toFixed(2), t = (r.yRatio * 100).toFixed(2), w = (r.wRatio * 100).toFixed(2), h = (r.hRatio * 100).toFixed(2);
+      if (r.coupon) {
+        const btn = document.createElement('button');
+        btn.dataset.couponNo = r.coupon;
+        btn.onclick = () => window.downloadCoupon(r.coupon);
+        btn.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; border:none; cursor:pointer; background:transparent;`;
+        wrap.appendChild(btn);
+      } else if (r.href) {
+        const a = document.createElement('a');
+        a.href = /^https?:\/\//i.test(r.href) ? r.href : `https://${r.href}`;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; display:block;`;
+        wrap.appendChild(a);
       }
-      if (type === 'video') {
-        const ratio = b.ratio || { w: 16, h: 9 };
-        const yid = b.youtubeId || parseYouTubeId(b.src);
-        if (!yid) return;
-        const willAutoplay = autoplayAll || toBool(b.autoplay);
-        const willLoop = loopAll || toBool(b.loop) || willAutoplay;
-        const qs = new URLSearchParams({ autoplay: willAutoplay ? '1' : '0', mute: willAutoplay ? '1' : '0', playsinline: '1', rel: '0', modestbranding: '1' });
-        if (willLoop) {
-          qs.set('loop', '1');
-          qs.set('playlist', yid);
-        }
-        const src = `https://www.youtube.com/embed/${yid}?${qs.toString()}`;
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'position:relative; width:100%; max-width:800px; margin:0 auto;';
-        if ('aspectRatio' in wrap.style) {
-          wrap.style.aspectRatio = `${ratio.w}/${ratio.h}`;
-          const iframe = document.createElement('iframe');
-          iframe.src = src;
-          iframe.title = `youtube-${yid}`;
-          iframe.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; border:0;';
-          iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
-          iframe.setAttribute('allowfullscreen', '');
-          wrap.appendChild(iframe);
-          root.appendChild(wrap);
-          return;
-        }
-        const innerBox = document.createElement('div');
-        innerBox.style.cssText = `position:relative; width:100%; padding-top:${(ratio.h / ratio.w) * 100}%;`;
-        const iframe = document.createElement('iframe');
-        iframe.src = src;
-        iframe.title = `youtube-${yid}`;
-        iframe.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; border:0;';
-        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
-        iframe.setAttribute('allowfullscreen', '');
-        innerBox.appendChild(iframe);
-        wrap.appendChild(innerBox);
-        root.appendChild(wrap);
-        return;
-      }
-      // IMAGE
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'position:relative; margin:0 auto; width:100%; max-width:800px;';
-      const img = document.createElement('img');
-      img.src = b.src;
-      img.style.cssText = 'max-width:100%; height:auto; display:block; margin:0 auto;';
-      wrap.appendChild(img);
-      (b.regions || []).forEach(r => {
-        const l = (r.xRatio * 100).toFixed(2), t = (r.yRatio * 100).toFixed(2), w = (r.wRatio * 100).toFixed(2), h = (r.hRatio * 100).toFixed(2);
-        if (r.coupon) {
-          const btn = document.createElement('button');
-          btn.dataset.trackClick = 'coupon';
-          btn.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; border:none; cursor:pointer; opacity:0;`;
-          btn.addEventListener('click', () => downloadCoupon(r.coupon));
-          wrap.appendChild(btn);
-        } else if (r.href) {
-          const a = document.createElement('a');
-          a.dataset.trackClick = 'url';
-          a.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; display:block; text-decoration:none; cursor:pointer;`;
-          a.setAttribute('data-href', r.href);
-          a.href = /^https?:\/\//.test(r.href) ? r.href : `https://${r.href}`;
-          a.target = '_blank';
-          a.rel = 'noreferrer';
-          wrap.appendChild(a);
-        }
-      });
-      root.appendChild(wrap);
     });
-  }
-  // ────────────────────────────────────────────────────────────────
-  // 4) 상품 그리드
-  // ────────────────────────────────────────────────────────────────
-  async function loadPanel(ul) {
-    const cols = parseInt(ul.dataset.gridSize, 10) || 1;
-    const cacheKey = ul.dataset.directNos ? `direct_${ul.dataset.directNos}` : (ul.dataset.cate ? `cat_${ul.dataset.cate}` : null);
-    if (!cacheKey) return;
-    const storageKey = storagePrefix + cacheKey;
-    const CACHE_DURATION = 30 * 60 * 1000; // 30분 캐시 유효기간
-
-    try {
-      const stored = localStorage.getItem(storageKey);
-      if (stored) {
-        const { timestamp, data } = JSON.parse(stored);
-        if (Date.now() - timestamp < CACHE_DURATION) {
-          renderProducts(ul, data, cols);
-          fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count)
-            .then(freshData => {
-              if (JSON.stringify(data) !== JSON.stringify(freshData)) {
-                console.log('[widget.js] 상품 정보가 변경되어 업데이트합니다.', cacheKey);
-                renderProducts(ul, freshData, cols);
-                localStorage.setItem(storageKey, JSON.stringify({ timestamp: Date.now(), data: freshData }));
-              }
-            }).catch(console.warn);
-          return;
-        }
-      }
-    } catch (e) {
-      console.warn('[widget.js] 캐시 파싱 오류', e);
-    }
-
-    const spinner = document.createElement('div');
-    spinner.className = 'grid-spinner';
-    ul.parentNode.insertBefore(spinner, ul);
-
-    const showError = () => {
-      spinner.remove();
-      const errDiv = document.createElement('div');
-      errDiv.style.textAlign = 'center';
-      errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
-      errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
-      ul.parentNode.insertBefore(errDiv, ul);
-    };
-
-    try {
-      const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
-      localStorage.setItem(storageKey, JSON.stringify({ timestamp: Date.now(), data: products }));
-      renderProducts(ul, products, cols);
-    } catch (err) {
-      showError();
-    } finally {
-      spinner.remove();
-    }
+    root.appendChild(wrap);
   }
   
+  function renderTextBlock(block, root) {
+    const st = block.style || {};
+    const wrapper = document.createElement('div');
+    wrapper.style.textAlign = st.align || 'center';
+    wrapper.style.marginTop = `${st.mt ?? 16}px`;
+    wrapper.style.marginBottom = `${st.mb ?? 16}px`;
+    const inner = document.createElement('div');
+    inner.style.fontSize = `${st.fontSize || 18}px`;
+    inner.style.fontWeight = st.fontWeight || 'normal';
+    inner.style.color = st.color || '#333';
+    inner.innerHTML = escapeHtml(block.text || '').replace(/\n/g, '<br/>');
+    wrapper.appendChild(inner);
+    root.appendChild(wrapper);
+  }
+
+  function renderVideoBlock(block, root) {
+      const ratio = block.ratio || { w: 16, h: 9 };
+      if (!block.youtubeId) return;
+      const src = buildYouTubeSrc(block.youtubeId, toBool(block.autoplay), toBool(block.loop));
+      const wrap = document.createElement('div');
+      wrap.style.cssText = `position:relative; width:100%; max-width:800px; margin:16px auto; aspect-ratio:${ratio.w}/${ratio.h};`;
+      const iframe = document.createElement('iframe');
+      iframe.src = src;
+      iframe.title = `youtube-${block.youtubeId}`;
+      iframe.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; border:0;';
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+      iframe.setAttribute('allowfullscreen', '');
+      wrap.appendChild(iframe);
+      root.appendChild(wrap);
+  }
+
+  function renderProductBlock(block, root) {
+    const groupWrapper = document.createElement('div');
+    groupWrapper.className = 'product-group-wrapper';
+    
+    if (block.layoutType === 'tabs') {
+        const activeColor = block.activeColor || '#1890ff';
+        const tabsContainer = document.createElement('div');
+        tabsContainer.className = `tabs_${pageId}`;
+        (block.tabs || []).forEach((t, i) => {
+            const btn = document.createElement('button');
+            if (i === 0) {
+                btn.className = 'active';
+                btn.style.backgroundColor = activeColor;
+                btn.style.color = '#fff';
+                btn.style.borderColor = activeColor;
+            }
+            btn.onclick = () => window.showTab(`${block.id || pageId}-tab-${i}`, btn, activeColor);
+            btn.textContent = t.title || `탭 ${i+1}`;
+            tabsContainer.appendChild(btn);
+        });
+        groupWrapper.appendChild(tabsContainer);
+
+        (block.tabs || []).forEach((t, i) => {
+            const panel = document.createElement('div');
+            panel.id = `${block.id || pageId}-tab-${i}`;
+            panel.className = `tab-content_${pageId}`;
+            panel.style.display = i === 0 ? 'block' : 'none';
+            const ul = document.createElement('ul');
+            ul.className = `main_Grid_${pageId}`;
+            ul.dataset.gridSize = block.gridSize;
+            if (block.registerMode === 'direct') {
+                const directNos = (block.tabDirectProducts?.[i] || []).map(p => p.product_no).join(',');
+                ul.dataset.directNos = directNos;
+            } else { ul.dataset.cate = t.sub || t.root; }
+            panel.appendChild(ul);
+            groupWrapper.appendChild(panel);
+        });
+    } else { // single
+        const widgetDiv = document.createElement('div');
+        widgetDiv.className = 'product_list_widget';
+        const ul = document.createElement('ul');
+        ul.className = `main_Grid_${pageId}`;
+        ul.dataset.gridSize = block.gridSize;
+        if (block.registerMode === 'direct') {
+            const directNos = (block.directProducts || []).map(p => p.product_no).join(',');
+            ul.dataset.directNos = directNos;
+        } else { ul.dataset.cate = block.sub || block.root; }
+        widgetDiv.appendChild(ul);
+        groupWrapper.appendChild(widgetDiv);
+    }
+    root.appendChild(groupWrapper);
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // 4) 상품 데이터 로드 및 렌더링
+  // ────────────────────────────────────────────────────────────────
   async function fetchProducts(directNosAttr, category, limit = 300) {
     const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
-    const ulDirect = directNosAttr || directNos;
-
-    if (ulDirect) {
-      const ids = ulDirect.split(',').map(s => s.trim()).filter(Boolean);
+    
+    if (directNosAttr) {
+      const ids = directNosAttr.split(',').map(s => s.trim()).filter(Boolean);
+      if (ids.length === 0) return [];
       const results = await Promise.all(ids.map(no =>
         fetchWithRetry(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`, fetchOpts).then(r => r.json())
       ));
       return results.map(p => (p && p.product_no) ? p : {}).map(p => ({
         product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
-        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small,
+        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small, tiny_image: p.tiny_image,
         sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
         decoration_icon_url: p.decoration_icon_url || null
       }));
     } else if (category) {
       const prodUrl = `${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`;
-      const [rawProducts] = await Promise.all([
-        fetchWithRetry(prodUrl, fetchOpts).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.products || [])),
-      ]);
+      const rawProducts = await fetchWithRetry(prodUrl, fetchOpts).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.products || []));
       return rawProducts.map(p => (typeof p === 'object' ? p : {})).map(p => ({
         product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
-        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small,
+        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small, tiny_image: p.tiny_image,
         sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
         decoration_icon_url: p.decoration_icon_url || null
       }));
     }
     return [];
   }
-  
-  // ────────────────────────────────────────────────────────────────
-  // 5) 상품 렌더링
-  // ────────────────────────────────────────────────────────────────
-  function renderProducts(ul, products, cols) {
-    ul.style.display = 'grid';
-    ul.style.gridTemplateColumns = `repeat(${cols},1fr)`;
-    ul.style.gap = '20px';
-    ul.style.maxWidth = '800px';
-    ul.style.margin = '0 auto';
+
+  async function loadPanel(ul) {
+    const cols = parseInt(ul.dataset.gridSize, 10) || 2;
+    let spinner = null;
     
-    function formatKRW(val) {
-      if (typeof val === 'number') return `${val.toLocaleString('ko-KR')}원`;
-      const num = parseFloat(String(val).replace(/[^0-9.]/g, '')) || 0;
-      return `${num.toLocaleString('ko-KR')}원`;
+    const spinnerTimer = setTimeout(() => {
+      spinner = document.createElement('div');
+      spinner.className = 'grid-spinner';
+      if (ul.parentNode) {
+        ul.parentNode.insertBefore(spinner, ul);
+      }
+    }, 2000);
+
+    try {
+      const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
+      renderProducts(ul, products, cols);
+    } catch (err) {
+      console.error('상품 로드 실패:', err);
+      if (ul.parentNode) {
+        const errDiv = document.createElement('div');
+        errDiv.style.textAlign = 'center';
+        errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
+        errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
+        ul.parentNode.insertBefore(errDiv, ul);
+      }
+    } finally {
+      clearTimeout(spinnerTimer);
+      if (spinner) {
+        spinner.remove();
+      }
     }
-    
-    ul.innerHTML = products.map(p => {
-      const originalPriceNum = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, ''));
-      const salePriceNum = parseFloat(String(p.sale_price || '').replace(/[^0-9.]/g, '')) || null;
-      const couponPriceNum = parseFloat(String(p.benefit_price || '').replace(/[^0-9.]/g, '')) || null;
-      
-      let finalPriceNum = originalPriceNum;
-      if (salePriceNum != null && salePriceNum < finalPriceNum) {
-        finalPriceNum = salePriceNum;
-      }
-      if (couponPriceNum != null && couponPriceNum < finalPriceNum) {
-        finalPriceNum = couponPriceNum;
-      }
-      
-      const hasDiscount = finalPriceNum < originalPriceNum;
-      
-      let displayPercent = null;
-      if (hasDiscount && originalPriceNum > 0) {
-        if (finalPriceNum === couponPriceNum && p.benefit_percentage > 0) {
-          displayPercent = p.benefit_percentage;
-        } else {
-          displayPercent = Math.round(((originalPriceNum - finalPriceNum) / originalPriceNum) * 100);
-        }
-      }
-      
-      const originalPriceText = formatKRW(originalPriceNum);
-      const finalPriceText = formatKRW(finalPriceNum);
-      
-      const mediumImg = p.image_medium || p.list_image;
-      const smallImg = p.image_small;
-      
-      const mouseEvents = smallImg && mediumImg && smallImg !== mediumImg
-        ? `onmouseover="this.querySelector('img').src='${smallImg}'" onmouseout="this.querySelector('img').src='${mediumImg}'"`
-        : '';
-      
-      return `
-      <li style="list-style:none;">
-        <a href="/product/detail.html?product_no=${p.product_no}" class="prd_link" style="text-decoration:none;color:inherit;" data-track-click="product" data-product-no="${p.product_no}" target="_blank" rel="noopener noreferrer" ${mouseEvents}>
-          <div class="prd_img_container" style="position:relative;">
-            <img src="${mediumImg}" alt="${escapeHtml(p.product_name)}" style="width:100%;display:block;" />
-            ${p.decoration_icon_url ? `<div class="prd_icon_wrapper"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
-          </div>
-          <div class="prd_desc" style="font-size:14px;color:#666;padding:4px 0;display:none">${p.summary_description || ''}</div>
-          <div class="prd_name">${p.product_name}</div>
-        </a>
-        <div class="prd_price_area">
-          ${
-            hasDiscount
-            ? `<div class="price_wrapper vertical_layout">
-                <div class="original_price_line">
-                  <span class="original_price">${originalPriceText}</span>
-                </div>
-                <div class="final_price_line">
-                  ${(displayPercent && displayPercent > 0) ? `<strong class="discount_percent">${displayPercent}%</strong>` : ''}
-                  <span class="final_price">${finalPriceText}</span>
-                </div>
-              </div>`
-            : `<div class="price_wrapper">
-                <span class="final_price">${originalPriceText}</span>
-              </div>`
-          }
-        </div>
-      </li>`;
-    }).join('');
   }
+
+  function renderProducts(ul, products, cols) {
+      ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
+      
+      const titleFontSize = `${20 - cols}px`;
+      const originalPriceFontSize = `${16 - cols}px`;
+      const salePriceFontSize = `${18 - cols}px`;
+      
+      const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
+      const parseNumber = v => {
+          if (v == null) return null;
+          if (typeof v === 'number' && isFinite(v)) return v;
+          const n = parseFloat(String(v).replace(/[^\d.-]/g, ''));
+          return isFinite(n) ? n : null;
+      };
+
+      ul.innerHTML = products.map(p => {
+          const origPrice = parseNumber(p.price) || 0;
+          const salePrice = parseNumber(p.sale_price);
+          const benefitPrice = parseNumber(p.benefit_price);
   
-  // ────────────────────────────────────────────────────────────────
-  // 6) CSS 주입
-  // ────────────────────────────────────────────────────────────────
+          const isSale = salePrice != null && salePrice < origPrice;
+          const isCoupon = benefitPrice != null && benefitPrice < (isSale ? salePrice : origPrice);
+          
+          let displayPercent = null;
+          if (isCoupon) {
+              const basePriceForCoupon = isSale ? salePrice : origPrice;
+              if (basePriceForCoupon > 0 && benefitPrice >= 0) {
+                displayPercent = Math.round((basePriceForCoupon - benefitPrice) / basePriceForCoupon * 100);
+              }
+          } else if (isSale) {
+              if (origPrice > 0) {
+                displayPercent = Math.round((origPrice - salePrice) / origPrice * 100);
+              }
+          }
+  
+          const priceText = formatKRW(origPrice);
+          const saleText = isSale ? formatKRW(salePrice) : null;
+          const couponText = isCoupon ? formatKRW(benefitPrice) : null;
+          
+          const initialImg = p.image_medium || p.list_image;
+          const hoverImg = p.tiny_image || p.image_small;
+          
+          const mouseEvents = hoverImg && initialImg && hoverImg !== initialImg 
+            ? `onmouseover="this.querySelector('img').src='${hoverImg}'" onmouseout="this.querySelector('img').src='${initialImg}'"` 
+            : '';
+  
+          return `
+            <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
+              <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
+                <div style="position: relative; aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
+                  ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
+                  ${p.decoration_icon_url ? `<div style="position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; z-index: 2;"><img src="${p.decoration_icon_url}" alt="icon" style="width: 100%; height: auto;" /></div>` : ''}
+                </div>
+                <div style="padding: 12px; min-height: 90px;">
+                  <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
+                  <div class="prd_price_container" style="margin-top: 4px;">
+                    ${isCoupon ? `
+                      <div class="coupon_wrapper">
+                        <span class="original_price" style="font-size: ${originalPriceFontSize};">${isSale ? saleText : priceText}</span>
+                        ${displayPercent > 0 ? `<span class="prd_coupon_percent" style="font-size: ${salePriceFontSize};">${displayPercent}%</span>` : ''}
+                        <span class="prd_coupon" style="font-weight: bold; font-size: ${salePriceFontSize};">${couponText}</span>
+                      </div>
+                    ` : isSale ? `
+                      <div class="prd_price">
+                        <span class="original_price" style="font-size: ${originalPriceFontSize};">${priceText}</span>
+                        ${displayPercent > 0 ? `<span class="sale_percent" style="font-size: ${salePriceFontSize};">${displayPercent}%</span>` : ''}
+                        <span class="sale_price" style="font-weight: bold; font-size: ${salePriceFontSize};">${saleText}</span>
+                      </div>
+                    ` : `
+                      <div class="prd_price">
+                        <span style="font-weight: bold; font-size: ${salePriceFontSize};">${priceText}</span>
+                      </div>
+                    `}
+                  </div>
+                </div>
+              </a>
+            </li>`;
+      }).join('');
+  }
+
   const style = document.createElement('style');
   style.textContent = `
-    .grid-spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid ${activeColor}; border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto; }
+    .grid-spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #1890ff; border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto; }
     @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
-    .product_list_widget{padding:20px 0;width:95%;margin:0 auto;}
-    .main_Grid_${pageId}{padding-top:10px;padding-bottom:30px; row-gap:50px!important;width:95%;}
-    .main_Grid_${pageId} li { color:#000; }
-    .main_Grid_${pageId} img { padding-bottom:10px; }
-    .main_Grid_${pageId} .prd_name {font-weight: 500; padding-bottom: 4px; font-size:16px;line-height:1.2;}
-    .main_Grid_${pageId} .prd_desc { padding-bottom:3px; font-size:14px; color:#666; }
-    .tabs_${pageId} { display: grid; gap: 8px; max-width: 800px; margin: 16px auto; width:95%; grid-template-columns: repeat(${tabCount},1fr); }
-    .tabs_${pageId} button { padding: 8px; font-size: 16px; border: none; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tabs_${pageId} button.active { background-color:${activeColor}; color:#fff; }
-    .prd_price_area { margin-top: 2px; }
-    .original_price_line .original_price { font-size: 14px; color: #bbb; text-decoration: line-through; }
-    .final_price_line { display: flex; align-items: center; margin-top: 2px; }
-    .final_price_line .discount_percent { font-size: 15px; font-weight: bold; color: #ff4d4f; margin-right: 6px; }
-    .final_price_line .final_price { font-size: 15px; font-weight: bold; color: #000; }
-    .price_wrapper:not(.vertical_layout) .final_price { font-size: 16px; font-weight: 500; }
-  
-    .prd_icon_wrapper {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      z-index: 2;
-      width: 40px;
-      height: 40px;
-    }
-    .prd_icon_wrapper img {
-      width: 100%;
-      height: auto;
-    }
-  
-    @media (max-width: 400px) {
-        .prd_name{font-size:15px!important;}
-      .tabs_${pageId}{ width:95%; margin:0 auto;margin-top:20px; font-weight:bold; }
-      .tabs_${pageId} button{ font-size:14px; }
-      .main_Grid_${pageId}{ width:95%; margin:0 auto; row-gap:30px!important; }
-      .main_Grid_${pageId} .prd_desc{ font-size:12px; padding-bottom:5px; }
-      .final_price_line .discount_percent,
-      .final_price_line .final_price { font-size: 15px; }
-    }`;
+    .tabs_${pageId} { display: flex; gap: 8px; max-width: 800px; margin: 16px auto; }
+    .tabs_${pageId} button { flex: 1; padding: 8px; font-size: 16px; border: 1px solid #d9d9d9; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tabs_${pageId} button.active { font-weight: 600; }
+    .prd_price_container .original_price { text-decoration: line-through; color: #999; display: block; font-weight: 400; }
+    .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
+    .coupon_wrapper{line-height:1.4;}
+    .prd_price_container{line-height:1.4;}
+  `;
   document.head.appendChild(style);
-  
-  // ────────────────────────────────────────────────────────────────
-  // 7) 메인 초기화 및 전역 함수
-  // ────────────────────────────────────────────────────────────────
+
   async function initializePage() {
     try {
       const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}`);
       if (!response.ok) throw new Error('Event data fetch failed');
       const ev = await response.json();
       
-      const rawBlocks = Array.isArray(ev?.content?.blocks) && ev.content.blocks.length ? ev.content.blocks : (ev.images || []).map(img => ({ type: 'image', src: img.src, regions: img.regions || [] }));
-      const blocks = rawBlocks.map(b => {
-        const t = b.type || 'image';
-        if (t === 'video') return { type: 'video', youtubeId: b.youtubeId || parseYouTubeId(b.src), ratio: (b.ratio && b.ratio.w && b.ratio.h) ? b.ratio : { w: 16, h: 9 }, autoplay: toBool(b.autoplay), loop: toBool(b.loop) };
-        if (t === 'text') return { type: 'text', text: b.text || '', style: b.style || {} };
-        return { type: 'image', src: b.src, regions: (b.regions || []).map(r => ({ xRatio: r.xRatio, yRatio: r.yRatio, wRatio: r.wRatio, hRatio: r.hRatio, href: r.href, coupon: r.coupon })) };
-      });
-      renderBlocks(blocks);
-      document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
+      const root = getRootContainer();
+
+      if (ev.content && Array.isArray(ev.content.blocks)) {
+          ev.content.blocks.forEach(block => {
+              switch(block.type) {
+                  case 'image': renderImageBlock(block, root); break;
+                  case 'video': renderVideoBlock(block, root); break;
+                  case 'text': renderTextBlock(block, root); break;
+                  case 'product_group': renderProductBlock(block, root); break;
+                  default: break;
+              }
+          });
+          document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
+      } else { // 구버전 데이터 처리
+          (ev.images || []).forEach(img => renderImageBlock({ type: 'image', ...img }, root));
+          const productBlock = { type: 'product_group', ...ev.classification, gridSize: ev.gridSize, layoutType: ev.layoutType, id: pageId };
+          renderProductBlock(productBlock, root);
+          document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
+      }
+
     } catch (err) {
       console.error('EVENT LOAD ERROR', err);
     }
   }
-  
-  window.showTab = (id, btn) => {
-    document.querySelectorAll(`.tab-content_${pageId}`).forEach(el => el.style.display = 'none');
-    document.querySelectorAll(`.tabs_${pageId} button`).forEach(b => b.classList.remove('active'));
-    const panel = document.getElementById(id);
-    if (panel) panel.style.display = 'block';
-    if (btn) btn.classList.add('active');
+
+  window.showTab = (id, btn, activeColor = '#1890ff') => {
+      const parent = btn.closest('.tabs_' + pageId);
+      if (!parent) return;
+      parent.querySelectorAll('button').forEach(b => {
+          b.classList.remove('active');
+          b.style.backgroundColor = '#f5f5f5';
+          b.style.color = '#333';
+          b.style.borderColor = '#d9d9d9';
+      });
+      
+      btn.classList.add('active');
+      btn.style.backgroundColor = activeColor;
+      btn.style.color = '#fff';
+      btn.style.borderColor = activeColor;
+
+      const contentParent = parent.parentElement;
+      contentParent.querySelectorAll('.tab-content_' + pageId).forEach(el => {
+          if (el.id === id) { el.style.display = 'block'; } 
+          else { el.style.display = 'none'; }
+      });
   };
-  window.downloadCoupon = coupons => {
-    const list = Array.isArray(coupons) ? coupons : [coupons];
-    list.forEach(cpn => {
-      const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${cpn}`;
-      window.open(url + `&opener_url=${encodeURIComponent(location.href)}`, '_blank');
-    });
+
+  window.downloadCoupon = (coupons) => {
+      const list = String(coupons || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (list.length === 0) return;
+      const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${encodeURIComponent(list.join(','))}`;
+      window.open(url + `&opener_url=${encodeURIComponent(location.href)}`);
   };
-  
-  // ────────────────────────────────────────────────────────────────
-  // 8) 탭-링크 핸들러
-  // ────────────────────────────────────────────────────────────────
-  (function attachTabHandler() {
-    const SCROLL_OFFSET = 200;
-    function scrollToElementOffset(el) {
-      if (!el) return;
-      const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - SCROLL_OFFSET);
-      window.scrollTo({ top, behavior: 'smooth' });
-    }
-    function tryScrollPanel(tabId) {
-      let attempts = 0;
-      const timer = setInterval(() => {
-        const panel = document.getElementById(tabId);
-        if (panel || ++attempts >= 6) {
-          clearInterval(timer);
-          if (panel) scrollToElementOffset(panel);
-        }
-      }, 80);
-    }
-    function normalizeTabId(raw) {
-      if (!raw) return null;
-      raw = String(raw).trim().replace(/^#/, '');
-      const m = raw.match(/^tab[:\s\-]?(\d+)$/i);
-      return m ? 'tab-' + m[1] : (/^tab-\d+$/i.test(raw) ? raw : null);
-    }
-    document.addEventListener('click', function (ev) {
-      const el = ev.target.closest('a[data-href]');
-      if (!el) return;
-      const raw = el.getAttribute('data-href');
-      const tabId = normalizeTabId(raw);
-      if (!tabId) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      const btn = document.querySelector(`.tabs_${pageId} button[onclick*="'${tabId}'"]`);
-      if (typeof window.showTab === 'function') {
-        window.showTab(tabId, btn);
-        tryScrollPanel(tabId);
-      }
-    }, { passive: false });
-  })();
-  
-  // ────────────────────────────────────────────────────────────────
-  // 9) 페이지 초기화
-  // ────────────────────────────────────────────────────────────────
+
   initializePage();
-  
+
 })(); // end IIFE
