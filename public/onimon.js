@@ -236,9 +236,9 @@
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
       
-      const titleFontSize = `${20 - cols}px`;
-      const originalPriceFontSize = `${16 - cols}px`;
-      const salePriceFontSize = `${18 - cols}px`;
+      const titleFontSize = `${17 - cols}px`;
+      const originalPriceFontSize = `${15 - cols}px`;
+      const salePriceFontSize = `${16 - cols}px`;
       
       const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
       const parseNumber = v => {
@@ -278,7 +278,7 @@
           const mouseEvents = mediumImg && listImg && mediumImg !== listImg ? `onmouseover="this.querySelector('img').src='${mediumImg}'" onmouseout="this.querySelector('img').src='${listImg}'"` : '';
   
           return `
-            <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
+            <li style="overflow: hidden; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
                 <div style="aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
                   ${listImg ? `<img src="${listImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
@@ -319,6 +319,8 @@
     .tabs_${pageId} button.active { font-weight: 600; }
     .prd_price_container .original_price { text-decoration: line-through; color: #999; display: block; font-weight: 400; }
     .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
+    .coupon_wrapper{line-height:1.2;}
+    .prd_price_container{line-height:1.2;}
   `;
   document.head.appendChild(style);
 
