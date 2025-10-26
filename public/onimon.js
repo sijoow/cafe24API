@@ -236,9 +236,9 @@
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
       
-      const titleFontSize = `${17 - cols}px`;
-      const originalPriceFontSize = `${15 - cols}px`;
-      const salePriceFontSize = `${16 - cols}px`;
+      const titleFontSize = `${18 - cols}px`;
+      const originalPriceFontSize = `${16 - cols}px`;
+      const salePriceFontSize = `${17 - cols}px`;
       
       const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
       const parseNumber = v => {
@@ -319,8 +319,8 @@
     .tabs_${pageId} button.active { font-weight: 600; }
     .prd_price_container .original_price { text-decoration: line-through; color: #999; display: block; font-weight: 400; }
     .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
-    .coupon_wrapper{line-height:1.2;}
-    .prd_price_container{line-height:1.2;}
+    .coupon_wrapper{line-height:1.4;}
+    .prd_price_container{line-height:1.4;}
   `;
   document.head.appendChild(style);
 
