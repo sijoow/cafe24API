@@ -179,7 +179,7 @@
       ));
       return results.map(p => (p && p.product_no) ? p : {}).map(p => ({
         product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
-        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small,
+        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small, tiny_image: p.tiny_image,
         sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
         decoration_icon_url: p.decoration_icon_url || null
       }));
@@ -188,7 +188,7 @@
       const rawProducts = await fetchWithRetry(prodUrl, fetchOpts).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.products || []));
       return rawProducts.map(p => (typeof p === 'object' ? p : {})).map(p => ({
         product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
-        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small,
+        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small, tiny_image: p.tiny_image,
         sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
         decoration_icon_url: p.decoration_icon_url || null
       }));
@@ -196,12 +196,10 @@
     return [];
   }
 
-  // ✅ [수정] loadPanel 함수 수정
   async function loadPanel(ul) {
     const cols = parseInt(ul.dataset.gridSize, 10) || 2;
     let spinner = null;
     
-    // 2초 후에 스피너를 표시하는 타이머 설정
     const spinnerTimer = setTimeout(() => {
       spinner = document.createElement('div');
       spinner.className = 'grid-spinner';
@@ -223,10 +221,7 @@
         ul.parentNode.insertBefore(errDiv, ul);
       }
     } finally {
-      // 데이터 로드가 완료되면 타이머를 취소합니다.
-      // (2초가 지나기 전에 로드가 완료되면 스피너는 나타나지 않습니다)
       clearTimeout(spinnerTimer);
-      // 만약 스피너가 이미 생성되었다면 (로딩이 2초 이상 걸렸다면) 제거합니다.
       if (spinner) {
         spinner.remove();
       }
@@ -236,9 +231,9 @@
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
       
-      const titleFontSize = `${18 - cols}px`;
-      const originalPriceFontSize = `${16 - cols}px`;
-      const salePriceFontSize = `${17 - cols}px`;
+      const titleFontSize = `${18 - (cols - 2)}px`;
+      const originalPriceFontSize = `${14 - (cols - 2)}px`;
+      const salePriceFontSize = `${16 - (cols - 2)}px`;
       
       const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
       const parseNumber = v => {
@@ -272,18 +267,22 @@
           const saleText = isSale ? formatKRW(salePrice) : null;
           const couponText = isCoupon ? formatKRW(benefitPrice) : null;
           
-          const listImg = p.list_image;
-          const mediumImg = p.image_medium || listImg;
+          // ✅ [수정] 호버 로직을 위한 이미지 변수 정의
+          const initialImg = p.image_medium || p.list_image;
+          const hoverImg = p.tiny_image || p.image_small;
           
-          const mouseEvents = mediumImg && listImg && mediumImg !== listImg ? `onmouseover="this.querySelector('img').src='${mediumImg}'" onmouseout="this.querySelector('img').src='${listImg}'"` : '';
+          const mouseEvents = hoverImg && initialImg && hoverImg !== initialImg 
+            ? `onmouseover="this.querySelector('img').src='${hoverImg}'" onmouseout="this.querySelector('img').src='${initialImg}'"` 
+            : '';
   
           return `
-            <li style="overflow: hidden; background: #fff;">
+            <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
-                <div style="aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
-                  ${listImg ? `<img src="${listImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
+                <div style="position: relative; aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
+                  ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
+                  ${p.decoration_icon_url ? `<div class="prd_icon_wrapper"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
                 </div>
-                <div style="padding-top:10px; min-height: 90px;">
+                <div style="padding: 12px; min-height: 90px;">
                   <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
                   <div class="prd_price_container" style="margin-top: 4px;">
                     ${isCoupon ? `
@@ -321,6 +320,8 @@
     .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
     .coupon_wrapper{line-height:1.4;}
     .prd_price_container{line-height:1.4;}
+    .prd_icon_wrapper { position: absolute; top: 10px; right: 10px; z-index: 2; width: 40px; height: 40px; }
+    .prd_icon_wrapper img { width: 100%; height: auto; }
   `;
   document.head.appendChild(style);
 
