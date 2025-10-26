@@ -238,7 +238,7 @@
       
       const titleFontSize = `${18 - cols}px`;
       const originalPriceFontSize = `${16 - cols}px`;
-      const salePriceFontSize = `${17 - cols}px`;
+      const salePriceFontSize = `${18 - cols}px`;
       
       const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
       const parseNumber = v => {
@@ -282,7 +282,7 @@
           return `
             <li style="overflow: hidden; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
-                <div style="position: relative; aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
+                <div style="position: relative;width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
                   ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
                   ${p.decoration_icon_url ? `<div class="prd_icon_wrapper"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
                 </div>
