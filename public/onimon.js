@@ -1,283 +1,552 @@
-;(function () {
-  // ────────────────────────────────────────────────────────────────
-  // 0) 스크립트/설정값
-  // ────────────────────────────────────────────────────────────────
-  let script = document.currentScript;
-  if (!script || !script.dataset.pageId) {
-    script = Array.from(document.getElementsByTagName('script')).find(s =>
-      /onimon\.js|widget\.js/.test(s.src) && s.dataset.pageId
-    );
-  }
-  if (!script || !script.dataset.pageId || !script.dataset.mallId) {
-    console.warn('⚠️ onimon.js: mallId/pageId 누락');
-    return;
-  }
+// app.js (완전본)
+require('dotenv').config();
+process.env.TZ = 'Asia/Seoul';
+const cron = require('node-cron');
+const express = require('express');
+//데이터수정
 
-  const API_BASE = script.dataset.apiBase;
-  const pageId = script.dataset.pageId;
-  const mallId = script.dataset.mallId;
-  const tabCount = parseInt(script.dataset.tabCount || '0', 10);
-  const activeColor = script.dataset.activeColor || '#1890ff';
-  const couponNos = script.dataset.couponNos || '';
-  const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
-  const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
+const path = require('path');
+const fs = require('fs');
+const cors = require('cors');
+const compression = require('compression');
+const bodyParser = require('body-parser');
+const axios = require('axios');
+const multer = require('multer');
+const dayjs = require('dayjs');
+const utc = require('dayjs/plugin/utc');
+const tz = require('dayjs/plugin/timezone');
+const { MongoClient, ObjectId } = require('mongodb');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
-  // ────────────────────────────────────────────────────────────────
-  // 2) 공통 헬퍼
-  // ────────────────────────────────────────────────────────────────
-  function escapeHtml(s = '') { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-  function toBool(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
-  function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
-      return fetch(url, opts).then(res => {
-          if (res.status === 429 && retries > 0) {
-              return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
+dayjs.extend(utc);
+dayjs.extend(tz);
+
+// ===== ENV =====
+const {
+  MONGODB_URI,
+  DB_NAME,
+  CAFE24_CLIENT_ID,
+  CAFE24_CLIENT_SECRET,
+  CAFE24_API_VERSION,
+  FRONTEND_URL,
+  BACKEND_URL,
+  CAFE24_SCOPES,
+  UNINSTALL_TOKEN,
+  PORT = 5000,
+  R2_ACCESS_KEY,
+  R2_SECRET_KEY,
+  R2_BUCKET_NAME,
+  R2_ENDPOINT,
+  R2_REGION = 'us-east-1',
+  R2_PUBLIC_BASE,
+} = process.env;
+
+// ENV 체크 (필수값이 없으면 프로세스 종료)
+function ensureEnv(key) {
+  if (!process.env[key]) {
+    console.error(`❌ Missing ENV: ${key}`);
+    process.exit(1);
+  }
+}
+['MONGODB_URI','DB_NAME','CAFE24_CLIENT_ID','CAFE24_CLIENT_SECRET','FRONTEND_URL','BACKEND_URL','CAFE24_SCOPES','CAFE24_API_VERSION'].forEach(ensureEnv);
+
+const app = express();
+app.use(cors());
+app.use(compression());
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 요청 로거
+app.use((req, _res, next) => {
+  console.log(new Date().toISOString(), req.method, req.originalUrl, Object.keys(req.query || {}).length ? req.query : '');
+  next();
+});
+
+// ===== MongoDB 연결 =====
+let db;
+async function initDb() {
+  const client = new MongoClient(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+  await client.connect();
+  db = client.db(DB_NAME);
+  await db.collection('token').createIndex({ mallId: 1 }, { unique: true });
+  console.log('▶️ MongoDB connected to', DB_NAME);
+}
+
+// ===== Multer (파일 업로드 임시저장) =====
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
+});
+const upload = multer({ storage });
+
+// ===== R2 (S3 호환) 클라이언트 =====
+const s3Client = new S3Client({
+  region: R2_REGION,
+  endpoint: R2_ENDPOINT,
+  credentials: {
+    accessKeyId: R2_ACCESS_KEY,
+    secretAccessKey: R2_SECRET_KEY,
+  },
+  forcePathStyle: true,
+});
+
+// ===== OAuth URL 빌더 =====
+function buildAuthorizeUrl(mallId) {
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id:     CAFE24_CLIENT_ID,
+    redirect_uri:  `${BACKEND_URL}/auth/callback`,
+    scope:         CAFE24_SCOPES,
+    state:         mallId,
+  });
+  return `https://${mallId}.cafe24api.com/api/v2/oauth/authorize?${params.toString()}`;
+}
+
+// ===== 토큰 리프레시 (최종 수정본) =====
+async function refreshAccessToken(mallId, refreshToken) {
+  const url = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+  const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken
+  }).toString();
+
+  const { data } = await axios.post(url, params, {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${creds}`
+    }
+  });
+
+  const newExpiresAt = new Date(data.expires_at);
+  const newExpiresIn = Math.round((newExpiresAt.getTime() - Date.now()) / 1000);
+
+  await db.collection('token').updateOne(
+    { mallId },
+    { $set: {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        obtainedAt: new Date(),
+        expiresIn: newExpiresIn,
+        expiresAt: newExpiresAt,
+        raw_refresh_response: data
+      }
+    }
+  );
+
+  console.log(`[TOKEN REFRESH] mallId=${mallId}`);
+  console.log(`✅ [DB UPDATED] mallId=${mallId}, new expiry: ${newExpiresAt.toISOString()}`);
+
+  return data.access_token;
+}
+
+// ===== 에러/재설치 헬퍼 =====
+function installRequired(mallId) {
+  const err = new Error('INSTALL_REQUIRED');
+  err.installRequired = true;
+  err.payload = { installed: false, mallId, installUrl: buildAuthorizeUrl(mallId) };
+  return err;
+}
+
+function replyInstallGuard(res, err, fallbackMsg, statusWhenUnknown = 500) {
+  if (err?.installRequired) {
+    return res.status(409).json(err.payload);
+  }
+  const code = err.response?.status || statusWhenUnknown;
+  return res.status(code).json({
+    message: fallbackMsg,
+    error: err.message,
+    provider: err.response?.data || null
+  });
+}
+
+// ===== Cafe24 API 요청 헬퍼 (토큰 자동 리프레시, 실패 시 token 정리) =====
+async function apiRequest(mallId, method, url, data = {}, params = {}) {
+  const doc = await db.collection('token').findOne({ mallId });
+  if (!doc) throw installRequired(mallId);
+
+  try {
+    const resp = await axios({
+      method, url, data, params,
+      headers: {
+        Authorization: `Bearer ${doc.accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Cafe24-Api-Version': CAFE24_API_VERSION
+      }
+    });
+    return resp.data;
+  } catch (err) {
+    const status = err.response?.status;
+
+    if (status === 401 && doc.refreshToken) {
+      try {
+        const newAccess = await refreshAccessToken(mallId, doc.refreshToken);
+        const retry = await axios({
+          method, url, data, params,
+          headers: {
+            Authorization: `Bearer ${newAccess}`,
+            'Content-Type': 'application/json',
+            'X-Cafe24-Api-Version': CAFE24_API_VERSION
           }
-          if (!res.ok) throw res;
-          return res;
-      });
-  }
-  function buildYouTubeSrc(id, autoplay = false, loop = false) {
-      const params = new URLSearchParams({ autoplay: autoplay ? '1' : '0', mute: autoplay ? '1' : '0', playsinline: '1', rel: 0, modestbranding: 1, enablejsapi: 1 });
-      if (loop) { params.set('loop', '1'); params.set('playlist', id); }
-      return `https://www.youtube.com/embed/${id}?${params.toString()}`;
-  }
-  
-  // ────────────────────────────────────────────────────────────────
-  // 3) 블록 렌더링 함수들
-  // ────────────────────────────────────────────────────────────────
-  function getRootContainer() {
-    let root = document.getElementById('evt-root');
-    if (!root) {
-      root = document.createElement('div');
-      root.id = 'evt-root';
-      script.parentNode.insertBefore(root, script);
-    }
-    root.innerHTML = '';
-    return root;
-  }
-
-  function renderImageBlock(block, root) { /* ... 이전과 동일 ... */ }
-  function renderTextBlock(block, root) { /* ... 이전과 동일 ... */ }
-  function renderVideoBlock(block, root) { /* ... 이전과 동일 ... */ }
-  function renderProductBlock(block, root) { /* ... 이전과 동일 ... */ }
-
-  // ────────────────────────────────────────────────────────────────
-  // 4) 상품 데이터 로드 및 렌더링
-  // ────────────────────────────────────────────────────────────────
-  // ✅ [수정] 요청하신 새로운 fetchProducts 함수로 교체
-  async function fetchProducts(directNosAttr, category, limit = 300) {
-    const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
-    
-    if (directNosAttr) {
-      const ids = directNosAttr.split(',').map(s => s.trim()).filter(Boolean);
-      if (ids.length === 0) return [];
-      const results = await Promise.all(ids.map(no =>
-        fetchWithRetry(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`, fetchOpts).then(r => r.json())
-      ));
-      return results.map(p => (p && p.product_no) ? p : {}).map(p => ({
-        product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
-        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small, tiny_image: p.tiny_image,
-        sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
-        decoration_icon_url: p.decoration_icon_url || null
-      }));
-    } else if (category) {
-      const prodUrl = `${API_BASE}/api/${mallId}/categories/${category}/products?limit=${limit}${couponQSAppend}`;
-      const rawProducts = await fetchWithRetry(prodUrl, fetchOpts).then(r => r.json()).then(json => Array.isArray(json) ? json : (json.products || []));
-      return rawProducts.map(p => (typeof p === 'object' ? p : {})).map(p => ({
-        product_no: p.product_no, product_name: p.product_name, summary_description: p.summary_description || '', price: p.price,
-        list_image: p.list_image, image_medium: p.image_medium, image_small: p.image_small, tiny_image: p.tiny_image,
-        sale_price: p.sale_price || null, benefit_price: p.benefit_price || null, benefit_percentage: p.benefit_percentage || null,
-        decoration_icon_url: p.decoration_icon_url || null
-      }));
-    }
-    return [];
-  }
-
-  async function loadPanel(ul) {
-    const cols = parseInt(ul.dataset.gridSize, 10) || 2;
-    let spinner = null;
-    
-    const spinnerTimer = setTimeout(() => {
-      spinner = document.createElement('div');
-      spinner.className = 'grid-spinner';
-      if (ul.parentNode) {
-        ul.parentNode.insertBefore(spinner, ul);
+        });
+        return retry.data;
+      } catch (_e) {
+        await db.collection('token').deleteOne({ mallId });
+        throw installRequired(mallId);
       }
-    }, 2000);
+    }
 
+    if (status === 401 || status === 403) {
+      await db.collection('token').deleteOne({ mallId });
+      throw installRequired(mallId);
+    }
+
+    throw err;
+  }
+}
+
+// ================================================================
+// 1) 설치 시작 (프론트/외부에서 호출 가능)
+// ================================================================
+app.get('/install/:mallId', (req, res) => {
+  const { mallId } = req.params;
+  const url = buildAuthorizeUrl(mallId);
+  console.log('[INSTALL REDIRECT]', url);
+  res.redirect(url);
+});
+
+// ================================================================
+// 2) OAuth 콜백 (code -> token 저장) 및 프론트 리다이렉트
+// ================================================================
+app.get('/auth/callback', async (req, res) => {
+    const { code, state: mallId, error, error_description } = req.query; 
+    if (error) {
+      console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, error_description);
+      return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
+    }
+    if (!code || !mallId) {
+     return res.status(400).send('code 또는 mallId가 없습니다.');
+    }   
     try {
-      const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
-      renderProducts(ul, products, cols);
-    } catch (err) {
-      console.error('상품 로드 실패:', err);
-      if (ul.parentNode) {
-        const errDiv = document.createElement('div');
-        errDiv.style.textAlign = 'center';
-        errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
-        errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
-        ul.parentNode.insertBefore(errDiv, ul);
-      }
-    } finally {
-      clearTimeout(spinnerTimer);
-      if (spinner) {
-        spinner.remove();
-      }
-    }
-  }
-
-  // ✅ [수정] renderProducts 함수에 마우스 오버 기능 적용
-  function renderProducts(ul, products, cols) {
-      ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
-      
-      const titleFontSize = `${20 - cols}px`;
-      const originalPriceFontSize = `${16 - cols}px`;
-      const salePriceFontSize = `${18 - cols}px`;
-      
-      const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
-      const parseNumber = v => {
-          if (v == null) return null;
-          if (typeof v === 'number' && isFinite(v)) return v;
-          const n = parseFloat(String(v).replace(/[^\d.-]/g, ''));
-          return isFinite(n) ? n : null;
-      };
-
-      ul.innerHTML = products.map(p => {
-          const origPrice = parseNumber(p.price) || 0;
-          const salePrice = parseNumber(p.sale_price);
-          const benefitPrice = parseNumber(p.benefit_price);
-  
-          const isSale = salePrice != null && salePrice < origPrice;
-          const isCoupon = benefitPrice != null && benefitPrice < (isSale ? salePrice : origPrice);
-          
-          let displayPercent = null;
-          if (isCoupon) {
-              const basePriceForCoupon = isSale ? salePrice : origPrice;
-              if (basePriceForCoupon > 0 && benefitPrice >= 0) {
-                displayPercent = Math.round((basePriceForCoupon - benefitPrice) / basePriceForCoupon * 100);
-              }
-          } else if (isSale) {
-              if (origPrice > 0) {
-                displayPercent = Math.round((origPrice - salePrice) / origPrice * 100);
-              }
+      const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+      const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+      const body = new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: `${BACKEND_URL}/auth/callback`
+      }).toString(); 
+      const { data } = await axios.post(tokenUrl, body, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${creds}`
+        }
+      });   
+      const expiresIn = data.expires_in;
+      const expiresAt = new Date(Date.now() + expiresIn * 1000); 
+      await db.collection('token').updateOne(
+        { mallId },
+        { $set: {
+            mallId,
+            accessToken: data.access_token,
+            refreshToken: data.refresh_token,
+            obtainedAt: new Date(),
+            expiresIn: expiresIn,
+            expiresAt: expiresAt,
+            raw: data
           }
-  
-          const priceText = formatKRW(origPrice);
-          const saleText = isSale ? formatKRW(salePrice) : null;
-          const couponText = isCoupon ? formatKRW(benefitPrice) : null;
-          
-          const initialImg = p.image_medium || p.list_image;
-          const hoverImg = p.tiny_image || p.image_small; // tiny가 우선, 없으면 small
-          
-          const mouseEvents = hoverImg && initialImg && hoverImg !== initialImg 
-            ? `onmouseover="this.querySelector('img').src='${hoverImg}'" onmouseout="this.querySelector('img').src='${initialImg}'"` 
-            : '';
-  
-          return `
-            <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
-              <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
-                <div style="position: relative; aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
-                  ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
-                  ${p.decoration_icon_url ? `<div style="position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; z-index: 2;"><img src="${p.decoration_icon_url}" alt="icon" style="width: 100%; height: auto;" /></div>` : ''}
-                </div>
-                <div style="padding: 12px; min-height: 90px;">
-                  <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
-                  <div class="prd_price_container" style="margin-top: 4px;">
-                    ${isCoupon ? `
-                      <div class="coupon_wrapper">
-                        <span class="original_price" style="font-size: ${originalPriceFontSize};">${isSale ? saleText : priceText}</span>
-                        ${displayPercent > 0 ? `<span class="prd_coupon_percent" style="font-size: ${salePriceFontSize};">${displayPercent}%</span>` : ''}
-                        <span class="prd_coupon" style="font-weight: bold; font-size: ${salePriceFontSize};">${couponText}</span>
-                      </div>
-                    ` : isSale ? `
-                      <div class="prd_price">
-                        <span class="original_price" style="font-size: ${originalPriceFontSize};">${priceText}</span>
-                        ${displayPercent > 0 ? `<span class="sale_percent" style="font-size: ${salePriceFontSize};">${displayPercent}%</span>` : ''}
-                        <span class="sale_price" style="font-weight: bold; font-size: ${salePriceFontSize};">${saleText}</span>
-                      </div>
-                    ` : `
-                      <div class="prd_price">
-                        <span style="font-weight: bold; font-size: ${salePriceFontSize};">${priceText}</span>
-                      </div>
-                    `}
-                  </div>
-                </div>
-              </a>
-            </li>`;
-      }).join('');
-  }
-
-  const style = document.createElement('style');
-  style.textContent = `
-    .grid-spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #1890ff; border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto; }
-    @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
-    .tabs_${pageId} { display: flex; gap: 8px; max-width: 800px; margin: 16px auto; }
-    .tabs_${pageId} button { flex: 1; padding: 8px; font-size: 16px; border: 1px solid #d9d9d9; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tabs_${pageId} button.active { font-weight: 600; }
-    .prd_price_container .original_price { text-decoration: line-through; color: #999; display: block; font-weight: 400; }
-    .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
-  `;
-  document.head.appendChild(style);
-
-  async function initializePage() {
-    try {
-      const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}`);
-      if (!response.ok) throw new Error('Event data fetch failed');
-      const ev = await response.json();
-      
-      const root = getRootContainer();
-
-      if (ev.content && Array.isArray(ev.content.blocks)) {
-          ev.content.blocks.forEach(block => {
-              switch(block.type) {
-                  case 'image': renderImageBlock(block, root); break;
-                  case 'video': renderVideoBlock(block, root); break;
-                  case 'text': renderTextBlock(block, root); break;
-                  case 'product_group': renderProductBlock(block, root); break;
-                  default: break;
-              }
-          });
-          document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
-      } else { // 구버전 데이터 처리
-          (ev.images || []).forEach(img => renderImageBlock({ type: 'image', ...img }, root));
-          const productBlock = { type: 'product_group', ...ev.classification, gridSize: ev.gridSize, layoutType: ev.layoutType, id: pageId };
-          renderProductBlock(productBlock, root);
-          document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
-      }
-
+        },
+        { upsert: true }
+      );
+      console.log(`[AUTH CALLBACK] installed mallId=${mallId}`);
+      return res.redirect(`${FRONTEND_URL}/?mall_id=${encodeURIComponent(mallId)}`);
     } catch (err) {
-      console.error('EVENT LOAD ERROR', err);
+      console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
+      return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
     }
+});
+
+// ================================================================
+// 3) 앱 삭제(언인스톨) 웹훅 엔드포인트
+// ================================================================
+app.post('/cafe24/uninstalled', async (req, res) => {
+  try {
+    if (UNINSTALL_TOKEN && req.query.token !== UNINSTALL_TOKEN) {
+      return res.status(401).json({ ok: false, error: 'invalid token' });
+    }
+    const mallId = req.body?.mall_id || req.body?.mallId || req.query.mall_id || req.query.mallId;
+    if (!mallId) return res.status(400).json({ ok: false, error: 'mall_id required' });
+
+    const result = await db.collection('token').deleteOne({ mallId });
+    console.log(`[UNINSTALL] token deletedCount=${result.deletedCount} for mallId=${mallId}`);
+
+    try { await db.collection(`visits_${mallId}`).drop(); } catch (e) { /* ignore */ }
+    try { await db.collection(`clicks_${mallId}`).drop(); } catch (e) { /* ignore */ }
+    try { await db.collection(`prdClick_${mallId}`).drop(); } catch (e) { /* ignore */ }
+    try { await db.collection('events').deleteMany({ mallId }); } catch (e) { /* ignore */ }
+
+    console.log(`[UNINSTALL CLEANUP] mallId=${mallId} done`);
+    return res.json({ ok: true, deletedCount: result.deletedCount });
+  } catch (e) {
+    console.error('[UNINSTALL ERROR]', e);
+    return res.status(500).json({ ok: false, error: e.message });
   }
+});
 
-  window.showTab = (id, btn, activeColor = '#1890ff') => {
-      const parent = btn.closest('.tabs_' + pageId);
-      if (!parent) return;
-      parent.querySelectorAll('button').forEach(b => {
-          b.classList.remove('active');
-          b.style.backgroundColor = '#f5f5f5';
-          b.style.color = '#333';
-          b.style.borderColor = '#d9d9d9';
+// ================================================================
+// 4) 공용/디버그 API
+// ================================================================
+app.get('/api/:mallId/ping', (_req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
+app.get('/api/:mallId/mall', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    const doc = await db.collection('token').findOne({ mallId });
+    if (doc?.accessToken) {
+      return res.json({
+        installed: true,
+        mallId,
+        userId: doc.userId || null,
+        userName: doc.userName || null
       });
-      
-      btn.classList.add('active');
-      btn.style.backgroundColor = activeColor;
-      btn.style.color = '#fff';
-      btn.style.borderColor = activeColor;
+    }
+    const installUrl = buildAuthorizeUrl(mallId);
+    console.log(`[INSTALL NEEDED] mallId=${mallId} -> ${installUrl}`);
+    return res.json({ installed: false, mallId, installUrl });
+  } catch (err) {
+    console.error('[MALL INFO ERROR]', err);
+    return res.status(500).json({ error: 'mall info fetch failed' });
+  }
+});
 
-      const contentParent = parent.parentElement;
-      contentParent.querySelectorAll('.tab-content_' + pageId).forEach(el => {
-          if (el.id === id) { el.style.display = 'block'; } 
-          else { el.style.display = 'none'; }
-      });
-  };
+// ================================================================
+// 5) 기능 엔드포인트들
+// ================================================================
 
-  window.downloadCoupon = (coupons) => {
-      const list = String(coupons || '').split(',').map(s => s.trim()).filter(Boolean);
-      if (list.length === 0) return;
-      const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${encodeURIComponent(list.join(','))}`;
-      window.open(url + `&opener_url=${encodeURIComponent(location.href)}`);
-  };
+// 이미지 업로드 (Multer -> R2/S3)
+app.post('/api/:mallId/uploads/image', upload.single('file'), async (req, res) => {
+  try {
+    const { mallId } = req.params;
+    const { filename, path: localPath, mimetype } = req.file;
+    const key = `uploads/${mallId}/${filename}`;
 
-  initializePage();
+    await s3Client.send(new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: key,
+      Body: fs.createReadStream(localPath),
+      ContentType: mimetype,
+      ACL: 'public-read'
+    }));
 
-})(); // end IIFE
+    fs.unlink(localPath, () => {});
+    const url = `${R2_PUBLIC_BASE}/${key}`;
+    res.json({ url });
+  } catch (err) {
+    console.error('[IMAGE UPLOAD ERROR]', err);
+    res.status(500).json({ error: '이미지 업로드 실패' });
+  }
+});
+
+// Events - 생성
+app.post('/api/:mallId/events', async (req, res) => {
+  const { mallId } = req.params;
+  const payload = req.body;
+
+  if (!payload.title || typeof payload.title !== 'string') {
+    return res.status(400).json({ error: '제목(title)을 입력해주세요.' });
+  }
+  
+  try {
+    const now = new Date();
+    const doc = {
+      mallId,
+      title: payload.title.trim(),
+      content: payload.content || {},
+      images: payload.images || [],
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const result = await db.collection('events').insertOne(doc);
+    res.json({ _id: result.insertedId, ...doc });
+  } catch (err) {
+    console.error('[CREATE EVENT ERROR]', err);
+    res.status(500).json({ error: '이벤트 생성에 실패했습니다.' });
+  }
+});
+
+// Events - 목록
+app.get('/api/:mallId/events', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    const list = await db.collection('events').find({ mallId }).sort({ createdAt: -1 }).toArray();
+    res.json(list);
+  } catch (err) {
+    console.error('[GET EVENTS ERROR]', err);
+    res.status(500).json({ error: '이벤트 목록 조회에 실패했습니다.' });
+  }
+});
+
+// Events - 단건
+app.get('/api/:mallId/events/:id', async (req, res) => {
+  const { mallId, id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
+  try {
+    const ev = await db.collection('events').findOne({ _id: new ObjectId(id), mallId });
+    if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
+    res.json(ev);
+  } catch (err) {
+    console.error('[GET EVENT ERROR]', err);
+    res.status(500).json({ error: '이벤트 조회에 실패했습니다.' });
+  }
+});
+
+// Events - 수정
+app.put('/api/:mallId/events/:id', async (req, res) => {
+  const { mallId, id } = req.params;
+  const payload = req.body;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
+  
+  const update = { updatedAt: new Date() };
+  if (payload.title) update.title = payload.title.trim();
+  if (payload.content) update.content = payload.content;
+  if (Array.isArray(payload.images)) update.images = payload.images;
+
+  try {
+    const result = await db.collection('events').updateOne({ _id: new ObjectId(id), mallId }, { $set: update });
+    if (result.matchedCount === 0) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
+    const updated = await db.collection('events').findOne({ _id: new ObjectId(id) });
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    console.error('[UPDATE EVENT ERROR]', err);
+    res.status(500).json({ error: '이벤트 수정에 실패했습니다.' });
+  }
+});
+
+// Events - 삭제
+app.delete('/api/:mallId/events/:id', async (req, res) => {
+  const { mallId, id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
+  try {
+    const { deletedCount } = await db.collection('events').deleteOne({ _id: new ObjectId(id), mallId });
+    if (!deletedCount) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[DELETE EVENT ERROR]', err);
+    res.status(500).json({ error: '이벤트 삭제에 실패했습니다.' });
+  }
+});
+
+// Categories - all
+app.get('/api/:mallId/categories/all', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    const all = [];
+    let offset = 0, limit = 100;
+    while (true) {
+      const url = `https://${mallId}.cafe24api.com/api/v2/admin/categories`;
+      const { categories = [] } = await apiRequest(mallId, 'GET', url, {}, { limit, offset });
+      if (!categories.length) break;
+      all.push(...categories);
+      offset += categories.length;
+    }
+    res.json(all);
+  } catch (err) {
+    console.error('[CATEGORIES ERROR]', err);
+    return replyInstallGuard(res, err, '전체 카테고리 조회 실패');
+  }
+});
+
+// Coupons - all
+app.get('/api/:mallId/coupons', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    const all = [];
+    let offset = 0, limit = 100;
+    while (true) {
+      const url = `https://${mallId}.cafe24api.com/api/v2/admin/coupons`;
+      const { coupons = [] } = await apiRequest(mallId, 'GET', url, {}, { shop_no: 1, limit, offset });
+      if (!coupons.length) break;
+      all.push(...coupons);
+      offset += coupons.length;
+    }
+    res.json(all);
+  } catch (err) {
+    console.error('[COUPONS ERROR]', err);
+    return replyInstallGuard(res, err, '쿠폰 조회 실패');
+  }
+});
+
+// Products - 전체
+app.get('/api/:mallId/products', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    const { limit = 100, offset = 0, product_name } = req.query;
+    const url = `https://${mallId}.cafe24api.com/api/v2/admin/products`;
+    const params = { shop_no: 1, limit, offset };
+    if (product_name) params.product_name = product_name;
+    
+    const data = await apiRequest(mallId, 'GET', url, {}, params);
+    const slim = (data.products || []).map(p => ({
+      product_no: p.product_no,
+      product_name: p.product_name,
+      price: p.price,
+      list_image: p.list_image
+    }));
+    res.json({ products: slim });
+  } catch (err) {
+    console.error('[GET PRODUCTS ERROR]', err.response?.data || err.message);
+    return replyInstallGuard(res, err, '전체 상품 조회 실패');
+  }
+});
+
+// Product - 단건
+app.get('/api/:mallId/products/:product_no', async (req, res) => {
+  const { mallId, product_no } = req.params;
+  try {
+    const shop_no = 1;
+    const productFields = 'product_no,product_name,price,list_image,medium_image,small_image,tiny_image,decoration_icon_url';
+    const prodUrl = `https://${mallId}.cafe24api.com/api/v2/admin/products/${product_no}`;
+    const prodData = await apiRequest(mallId, 'GET', prodUrl, {}, { shop_no, fields: productFields });
+    const p = prodData.product;
+    if (!p) return res.status(404).json({ error: '상품을 찾을 수 없습니다.' });
+
+    res.json({
+      product_no: p.product_no,
+      product_name: p.product_name,
+      price: p.price,
+      list_image: p.list_image,
+      image_medium: p.medium_image,
+      image_small: p.small_image,
+      tiny_image: p.tiny_image,
+      decoration_icon_url: p.decoration_icon_url || null,
+    });
+  } catch (err) {
+    console.error('[GET PRODUCT ERROR]', err.response?.data || err.message);
+    return replyInstallGuard(res, err, '단일 상품 조회 실패');
+  }
+});
+
+// ================================================================
+// 6) 서버 시작
+// ================================================================
+initDb()
+  .then(async () => {
+    console.log('▶️ Server starting... Running initial token refresh for all malls.');
+    await forceRefreshAllTokens();
+
+    cron.schedule('*/30 * * * *', runTokenRefreshScheduler);
+    console.log('▶️ 30분마다 토큰 리프레시 스케줄러가 실행됩니다.');
+
+    app.listen(PORT, () => {
+      console.log(`▶️ Server running at ${BACKEND_URL} (port ${PORT})`);
+    });
+  })
+  .catch(err => {
+    console.error('❌ Initialization failed:', err);
+    process.exit(1);
+  });
