@@ -111,7 +111,7 @@
       wrap.appendChild(iframe);
       root.appendChild(wrap);
   }
- n 
+
   function renderProductBlock(block, root) {
     const groupWrapper = document.createElement('div');
     groupWrapper.className = 'product-group-wrapper';
@@ -120,7 +120,7 @@
         const activeColor = block.activeColor || '#1890ff';
         const tabsContainer = document.createElement('div');
         tabsContainer.className = `tabs_${pageId}`;
-        (block.tabs || []).forEach((t, i) => { n 
+        (block.tabs || []).forEach((t, i) => {
             const btn = document.createElement('button');
             if (i === 0) {
                 btn.className = 'active';
@@ -196,33 +196,49 @@
     return [];
   }
 
+  // ✅ [수정] loadPanel 함수 수정
   async function loadPanel(ul) {
     const cols = parseInt(ul.dataset.gridSize, 10) || 2;
-    const spinner = document.createElement('div');
-    spinner.className = 'grid-spinner';
-    ul.parentNode.insertBefore(spinner, ul);
+    let spinner = null;
+    
+    // 2초 후에 스피너를 표시하는 타이머 설정
+    const spinnerTimer = setTimeout(() => {
+      spinner = document.createElement('div');
+      spinner.className = 'grid-spinner';
+      if (ul.parentNode) {
+        ul.parentNode.insertBefore(spinner, ul);
+      }
+    }, 2000);
+
     try {
       const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
       renderProducts(ul, products, cols);
     } catch (err) {
       console.error('상품 로드 실패:', err);
-      const errDiv = document.createElement('div');
-      errDiv.style.textAlign = 'center';
-      errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
-      errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
-      ul.parentNode.insertBefore(errDiv, ul);
+      if (ul.parentNode) {
+        const errDiv = document.createElement('div');
+        errDiv.style.textAlign = 'center';
+        errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
+        errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
+        ul.parentNode.insertBefore(errDiv, ul);
+      }
     } finally {
-      spinner.remove();
+      // 데이터 로드가 완료되면 타이머를 취소합니다.
+      // (2초가 지나기 전에 로드가 완료되면 스피너는 나타나지 않습니다)
+      clearTimeout(spinnerTimer);
+      // 만약 스피너가 이미 생성되었다면 (로딩이 2초 이상 걸렸다면) 제거합니다.
+      if (spinner) {
+        spinner.remove();
+      }
     }
   }
 
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
       
-      // ✅ [수정] 그리드 사이즈(cols)에 따라 폰트 크기 동적 계산
-      const titleFontSize = `${17 - (cols - 2)}px`;
-      const originalPriceFontSize = `${14 - (cols - 2)}px`;
-      const salePriceFontSize = `${16 - (cols - 2)}px`;
+      const titleFontSize = `${20 - cols}px`;
+      const originalPriceFontSize = `${16 - cols}px`;
+      const salePriceFontSize = `${18 - cols}px`;
       
       const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
       const parseNumber = v => {
