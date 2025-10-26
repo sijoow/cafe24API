@@ -219,7 +219,7 @@
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
       
-      const titleFontSize = `${20 - cols}px`;
+      const titleFontSize = `${18 - cols}px`;
       const originalPriceFontSize = `${16 - cols}px`;
       const salePriceFontSize = `${18 - cols}px`;
       
