@@ -231,9 +231,9 @@
   function renderProducts(ul, products, cols) {
       ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
       
-      const titleFontSize = `${20 - cols}px`;
+      const titleFontSize = `${18 - cols}px`;
       const originalPriceFontSize = `${16 - cols}px`;
-      const salePriceFontSize = `${18 - cols}px`;
+      const salePriceFontSize = `${17 - cols}px`;
       
       const formatKRW = val => `${(Number(val) || 0).toLocaleString('ko-KR')}원`;
       const parseNumber = v => {
@@ -275,13 +275,13 @@
             : '';
   
           return `
-            <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
+            <li style="overflow: hidden; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
                 <div style="position: relative; aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
                   ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
-                  ${p.decoration_icon_url ? `<div style="position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; z-index: 2;"><img src="${p.decoration_icon_url}" alt="icon" style="width: 100%; height: auto;" /></div>` : ''}
+                  ${p.decoration_icon_url ? `<div class="prd_icon_wrapper"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
                 </div>
-                <div style="padding: 12px; min-height: 90px;">
+                <div style="padding-top:10px; min-height: 90px;">
                   <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
                   <div class="prd_price_container" style="margin-top: 4px;">
                     ${isCoupon ? `
@@ -319,6 +319,8 @@
     .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
     .coupon_wrapper{line-height:1.4;}
     .prd_price_container{line-height:1.4;}
+    .prd_icon_wrapper { position: absolute; top: 10px; right: 10px; z-index: 2; width: 40px; height: 40px; }
+    .prd_icon_wrapper img { width: 100%; height: auto; }
   `;
   document.head.appendChild(style);
 
