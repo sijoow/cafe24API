@@ -283,7 +283,7 @@
             <li style="overflow: hidden; background: #fff;">
               <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
                 <div style="position: relative; aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
-                  ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
+                  ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
                   ${p.decoration_icon_url ? `<div class="prd_icon_wrapper"><img src="${p.decoration_icon_url}" alt="icon" /></div>` : ''}
                 </div>
                 <div style="padding-top:10px; min-height: 90px;">
