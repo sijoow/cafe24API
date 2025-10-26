@@ -258,13 +258,13 @@
           const listImg = p.list_image;
           const mediumImg = p.image_medium || listImg;
           
-          const mouseEvents = mediumImg && listImg && mediumImg !== listImg ? `onmouseover="this.src='${mediumImg}'" onmouseout="this.src='${listImg}'"` : '';
+          const mouseEvents = mediumImg && listImg && mediumImg !== listImg ? `onmouseover="this.querySelector('img').src='${mediumImg}'" onmouseout="this.querySelector('img').src='${listImg}'"` : '';
   
           return `
             <li style="overflow: hidden; border: 1px solid #e8e8e8; background: #fff;">
-              <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}">
+              <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
                 <div style="aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
-                  ${listImg ? `<img src="${listImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" ${mouseEvents} />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
+                  ${listImg ? `<img src="${listImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%; height:100%; object-fit:cover;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
                 </div>
                 <div style="padding: 12px; min-height: 90px;">
                   <div class="prd_name" style="font-weight: 500; font-size: ${titleFontSize}; line-height: 1.2;">${escapeHtml(p.product_name || '')}</div>
