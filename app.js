@@ -1486,6 +1486,17 @@ app.get('/api/:mallId/settings', async (req, res) => {
   });
   // ✨✨✨ END: 여기까지 추가 고객 링크 주소 저장부분✨✨✨
 
+app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  try {
+    // visits_{mallId} 컬렉션에서 pageId가 일치하는 문서들의 pageUrl 필드 값을 중복 없이 가져옵니다.
+    const urls = await db.collection(`visits_${mallId}`).distinct('pageUrl', { pageId });
+    res.json(urls);
+  } catch (err) {
+    console.error('[URLS DISTINCT ERROR]', err);
+    res.status(500).json({ error: 'URL 목록 조회에 실패했습니다.' });
+  }
+});
 
 // ================================================================
 // 6) 서버 시작
