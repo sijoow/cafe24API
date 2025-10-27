@@ -1498,6 +1498,19 @@ app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
   }
 });
 
+// Analytics - distinct urls (특정 이벤트가 설치된 고유 URL 목록 조회)
+app.get('/api/:mallId/analytics/:pageId/urls', async (req, res) => {
+  const { mallId, pageId } = req.params;
+  try {
+    // visits_{mallId} 컬렉션에서 pageId가 일치하는 문서들의 pageUrl 필드 값을 중복 없이 가져옵니다.
+    const urls = await db.collection(`visits_${mallId}`).distinct('pageUrl', { pageId });
+    res.json(urls);
+  } catch (err) {
+    console.error('[URLS DISTINCT ERROR]', err);
+    res.status(500).json({ error: 'URL 목록 조회에 실패했습니다.' });
+  }
+});
+
 // ================================================================
 // 6) 서버 시작
 // ================================================================
