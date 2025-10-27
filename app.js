@@ -1315,6 +1315,8 @@ app.get('/api/:mallId/analytics/:pageId/product-performance', async (req, res) =
   }
 });
 
+//이벤트 연결 링크 추가 하기
+
 
 // ▼▼▼▼▼ 백그라운드 토큰 갱신 스케줄러 ▼▼▼▼▼
 async function runTokenRefreshScheduler() {
@@ -1384,6 +1386,50 @@ async function forceRefreshAllTokens() {
     console.error('[STARTUP-FATAL] Force refresh process failed:', err);
    }
 }
+
+
+// ✨✨✨ START: 여기에 새 코드를 추가하세요 ✨✨✨
+// Events - eventLinkName만 수정
+app.put('/api/:mallId/events/:id/link', async (req, res) => {
+    const { mallId, id } = req.params;
+    const { eventLinkName } = req.body;
+  
+    // 유효성 검사
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
+    }
+    // eventLinkName이 undefined이면 클라이언트에서 값을 보내지 않은 것이므로 에러 처리
+    if (eventLinkName === undefined) {
+      return res.status(400).json({ error: 'eventLinkName 값을 보내주세요.' });
+    }
+  
+    try {
+      // DB 업데이트: eventLinkName과 updatedAt 필드만 수정
+      const updateResult = await db.collection('eventsLinkName').findOneAndUpdate(
+        { _id: new ObjectId(id), mallId },
+        { 
+          $set: { 
+            eventLinkName: eventLinkName,
+            updatedAt: new Date() 
+          } 
+        },
+        { returnDocument: 'after' } // 업데이트된 후의 문서를 반환
+      );
+  
+      // 업데이트할 문서를 찾지 못한 경우
+      if (!updateResult.value) {
+        return res.status(404).json({ error: '해당 이벤트를 찾을 수 없습니다.' });
+      }
+  
+      // 성공 시, 업데이트된 전체 이벤트 객체를 반환
+      res.json(updateResult.value);
+  
+    } catch (err) {
+      console.error('[UPDATE EVENT LINK NAME ERROR]', err);
+      res.status(500).json({ error: '이벤트 링크 이름 수정에 실패했습니다.' });
+    }
+  });
+  // ✨✨✨ END: 여기까지 추가 ✨✨✨
 
 // ================================================================
 // 6) 서버 시작
