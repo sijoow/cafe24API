@@ -1369,6 +1369,64 @@ async function forceRefreshAllTokens() {
    }
 }
 
+// ✨✨✨ START: 이 코드 블록만 추가하시면 됩니다. ✨✨✨
+
+// Settings - 몰 설정 조회 (홈페이지 주소 등)
+app.get('/api/:mallId/settings', async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    // 'settings' 컬렉션에서 해당 mallId의 문서를 찾습니다.
+    const settings = await db.collection('settings').findOne({ mallId });
+    // 설정이 없으면 기본값을 반환합니다.
+    res.json(settings || { mallId, siteBaseUrl: '' });
+  } catch (err) {
+    console.error('[GET SETTINGS ERROR]', err);
+    res.status(500).json({ error: '설정 조회에 실패했습니다.' });
+  }
+});
+
+// Settings - 몰 설정 수정 (홈페이지 주소 등)
+app.put('/api/:mallId/settings', async (req, res) => {
+  const { mallId } = req.params;
+  const { siteBaseUrl } = req.body;
+
+  // siteBaseUrl 값이 요청에 포함되었는지 확인합니다.
+  if (siteBaseUrl === undefined) {
+    return res.status(400).json({ error: 'siteBaseUrl 값을 보내주세요.' });
+  }
+
+  try {
+    // 'settings' 컬렉션에서 해당 mallId의 문서를 찾아 업데이트합니다.
+    // upsert: true 옵션으로 문서가 없으면 새로 생성합니다.
+    const updateResult = await db.collection('settings').findOneAndUpdate(
+      { mallId },
+      { 
+        $set: { 
+          siteBaseUrl: siteBaseUrl,
+          updatedAt: new Date() 
+        },
+        $setOnInsert: {
+            mallId: mallId,
+            createdAt: new Date()
+        }
+      },
+      { 
+        upsert: true,
+        returnDocument: 'after' 
+      }
+    );
+    
+    // 업데이트된 문서를 클라이언트에 반환합니다.
+    res.json(updateResult.value);
+
+  } catch (err) {
+    console.error('[UPDATE SETTINGS ERROR]', err);
+    res.status(500).json({ error: '설정 저장에 실패했습니다.' });
+  }
+});
+
+// ✨✨✨ END: 여기까지 추가 ✨✨✨
+
 // ================================================================
 // 6) 서버 시작
 // ================================================================
