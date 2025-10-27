@@ -327,7 +327,7 @@
     
             return `
               <li style="overflow: hidden; background: #fff;">
-                <a href="/product/detail.html?product_no=${p.product_no}" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
+                <a href="/product/detail.html?product_no=${p.product_no}" target="_blank" style="text-decoration:none; color:inherit;" data-track-click="product" data-product-no="${p.product_no}" ${mouseEvents}>
                   <div style="position: relative;width: 100%; display: flex; align-items: center; justify-content: center; background: #f8f9fa;">
                     ${initialImg ? `<img src="${initialImg}" alt="${escapeHtml(p.product_name||'')}" style="width:100%;" />` : `<span style="font-size:40px; color:#d9d9d9;">⛶</span>`}
                     ${iconHtml ? `<div class="prd_icons">${iconHtml}</div>` : ''}
