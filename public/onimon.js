@@ -381,7 +381,6 @@
         pointer-events: none;
       }
       .prd_icon {
-        height: 24px;
         width: auto;
       }
     `;
