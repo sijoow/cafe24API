@@ -436,6 +436,12 @@
       .prd_icon {
         width: auto;
       }
+
+    @media (max-width: 400px) {
+      .coupon_wrapper{line-height:1.3;}
+      .prd_price_container{line-height:1.3;}
+    }
+      
     `;
     document.head.appendChild(style);
   
