@@ -98,7 +98,7 @@ function buildAuthorizeUrl(mallId) {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
-    redirect_uri:  `${BACKEND_URL}/auth/callback`,
+    redirect_uri:  `https://onimon.shop/auth/callback`,
     scope:         CAFE24_SCOPES,
     state:         mallId,
   });
@@ -1462,7 +1462,7 @@ initDb()
     console.log('▶️ 30qns 리플래시 재생성');
 
     app.listen(PORT, () => {
-      console.log(`▶️ Server running at ${BACKEND_URL} (port ${PORT})`);
+      console.log(`▶️ Server running at  (port ${PORT})`);
     });
   })
   .catch(err => {
