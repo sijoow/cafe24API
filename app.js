@@ -98,7 +98,7 @@ function buildAuthorizeUrl(mallId) {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
-    redirect_uri:  `https://onimon.shop/auth/callback`,
+    redirect_uri: `${BACKEND_URL}/auth/callback`,
     scope:         CAFE24_SCOPES,
     state:         mallId,
   });
@@ -228,80 +228,76 @@ app.get('/install/:mallId', (req, res) => {
 // ================================================================
 // 2) OAuth 콜백 (code -> token 저장) 및 프론트 리다이렉트
 // ================================================================
+// ================================================================
 app.get('/auth/callback', async (req, res) => {
-        const { code, state: mallId, error, error_description } = req.query; 
-        if (error) {
-            console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, error_description);
-            return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
-        }
-        if (!code || !mallId) {
-            return res.status(400).send('code 또는 mallId가 없습니다.');
-        } 
-        try {
-            const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
-            const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
-            const body = new URLSearchParams({
-                grant_type: 'authorization_code',
-                code,
-                redirect_uri: `https://onimon.shop/auth/callback`
-            }).toString(); 
-            const { data } = await axios.post(tokenUrl, body, {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Authorization': `Basic ${creds}`
-                }
-            });     
-            
-            const expiresIn = data.expires_in;
-            const expiresAt = new Date(Date.now() + expiresIn * 1000); 
-            
-            // 토큰 정보를 DB에 저장합니다.
-            await db.collection('token').updateOne(
-               { mallId },
-               { $set: {
-                 mallId,
-                 accessToken: data.access_token,
-                 refreshToken: data.refresh_token,
-                 obtainedAt: new Date(),
-                 expiresIn: expiresIn,
-                 expiresAt: expiresAt,
-                 raw: data
-                }
-               },
-               { upsert: true }
-             );
-             
-             console.log(`[AUTH CALLBACK] installed mallId=${mallId}`);
-    
-          // =========================================================
-          // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 수정된 리다이렉트 로직 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-          // =========================================================
-          try {
-              // 1. 'settings' 컬렉션에서 해당 mallId의 설정을 찾습니다.
-              const settings = await db.collection('settings').findOne({ mallId });
-    
-              // 2. 설정에 저장된 siteBaseUrl이 있으면 그 주소를 사용하고, 없으면 기본 FRONTEND_URL을 사용합니다.
-              const finalRedirectUrl = settings?.siteBaseUrl ? settings.siteBaseUrl : FRONTEND_URL;
-              
-              console.log(`[AUTH REDIRECT] Redirecting mallId=${mallId} to ${finalRedirectUrl}`);
-              
-              // 3. 최종 결정된 주소로 사용자를 이동시킵니다.
-              return res.redirect(`${finalRedirectUrl}?mall_id=${encodeURIComponent(mallId)}`);
-    
-          } catch (dbError) {
-              console.error(`[AUTH CALLBACK] DB에서 설정을 찾는 중 에러 발생 (mallId: ${mallId}):`, dbError);
-              // DB 조회 중 문제가 발생하면, 안전하게 기본 관리자 페이지로 보냅니다.
-              return res.redirect(`${FRONTEND_URL}/?mall_id=${encodeURIComponent(mallId)}&error=settings_lookup_failed`);
+     const { code, state: mallId, error, error_description } = req.query; 
+     if (error) {
+       console.error('[AUTH CALLBACK ERROR FROM PROVIDER]', error, error_description);
+      return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(error)}&mall_id=${encodeURIComponent(mallId || '')}`);
+     }
+     if (!code || !mallId) {
+      return res.status(400).send('code 또는 mallId가 없습니다.');
+     } 
+     try {
+         const tokenUrl = `https://${mallId}.cafe24api.com/api/v2/oauth/token`;
+         const creds = Buffer.from(`${CAFE24_CLIENT_ID}:${CAFE24_CLIENT_SECRET}`).toString('base64');
+         const body = new URLSearchParams({
+          grant_type: 'authorization_code',
+           code,
+           redirect_uri: `${BACKEND_URL}/auth/callback` // ✅ .env 변수 사용
+         }).toString(); 
+         const { data } = await axios.post(tokenUrl, body, {
+          headers: {
+           'Content-Type': 'application/x-www-form-urlencoded',
+           'Authorization': `Basic ${creds}`
           }
-          // =========================================================
-          // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-          // =========================================================
+         });  
+
+         const expiresIn = data.expires_in;
+         const expiresAt = new Date(Date.now() + expiresIn * 1000); 
+
+         // 토큰 정보를 DB에 저장합니다.
+         await db.collection('token').updateOne(
+         { mallId },
+         { $set: {
+         mallId,
+         accessToken: data.access_token,
+         refreshToken: data.refresh_token,
+         obtainedAt: new Date(),
+         expiresIn: expiresIn,
+         expiresAt: expiresAt,
+         raw: data
+          }
+         },
+         { upsert: true }
+         );
+         
+         console.log(`[AUTH CALLBACK] installed mallId=${mallId}`);
+     
+      // =========================================================
+      // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 수정된 최종 리다이렉트 로직 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+      // =========================================================
+
+           // 1. .env에서 프론트엔드 URL을 가져옵니다. (예: https://my-react-app.com)
+           const frontendBaseUrl = process.env.FRONTEND_URL; 
+   
+           // 2. 프론트엔드의 "관문" 페이지인 /redirect 경로를 목적지로 설정합니다.
+           const finalRedirectUrl = `${frontendBaseUrl}/redirect?mall_id=${encodeURIComponent(mallId)}`;
+   
+           console.log(`[AUTH REDIRECT] Sending user to frontend gatekeeper: ${finalRedirectUrl}`);
+
+           // 3. 사용자의 브라우저를 프론트엔드의 /redirect 경로로 보냅니다.
+           return res.redirect(finalRedirectUrl);
     
-        } catch (err) {
-            console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
-            return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
-        }
-    });
+      // =========================================================
+      // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+      // =========================================================
+
+     } catch (err) {
+      console.error('[AUTH CALLBACK ERROR]', err.response?.data || err.message || err);
+      return res.status(500).send('토큰 교환 중 오류가 발생했습니다.');
+     }
+ });
 
 
 // ▼▼▼▼▼ 디버깅을 위해 이 코드를 추가 ▼▼▼▼▼
@@ -1468,7 +1464,7 @@ app.put('/api/:mallId/settings', async (req, res) => {
     res.status(500).json({ error: '설정 저장에 실패했습니다.' });
   }
 });
-https://onimon.shop/
+
 // ✨✨✨ END: 여기까지 추가 ✨✨✨
 
 // ================================================================
