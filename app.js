@@ -98,7 +98,7 @@ function buildAuthorizeUrl(mallId) {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     CAFE24_CLIENT_ID,
-    redirect_uri:  `${BACKEND_URL}/auth/callback`,
+    redirect_uri:  `https://onimon.shop//auth/callback`,
     scope:         CAFE24_SCOPES,
     state:         mallId,
   });
