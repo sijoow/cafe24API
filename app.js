@@ -243,7 +243,7 @@ app.get('/auth/callback', async (req, res) => {
      const body = new URLSearchParams({
        grant_type: 'authorization_code',
        code,
-       redirect_uri: `${BACKEND_URL}/auth/callback`
+       redirect_uri: `https://onimon.shop/auth/callback`
      }).toString(); 
      const { data } = await axios.post(tokenUrl, body, {
        headers: {
