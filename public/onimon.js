@@ -99,8 +99,8 @@
       if (!root) {
         root = document.createElement('div');
         root.id = 'evt-root';
-        // ✨ [핵심 변경] 초기 상태를 숨김(none)으로 설정하여 로딩 중 깜빡임/노출 방지
-        root.style.display = 'none'; 
+        // ✨ [변경점] 초기 상태를 숨김으로 설정하여 로딩 중 노출 방지 및 실패 시 완전 숨김 처리
+        root.style.display = 'none';
         script.parentNode.insertBefore(root, script);
       }
       root.innerHTML = '';
@@ -245,6 +245,7 @@
       if (directNosAttr) {
         const ids = directNosAttr.split(',').map(s => s.trim()).filter(Boolean);
         if (ids.length === 0) return [];
+        // fetch 실패 시 catch로 넘기기 위해 Promise.all 사용
         const results = await Promise.all(ids.map(no =>
           fetchWithRetry(`${API_BASE}/api/${mallId}/products/${no}${couponQSStart}`, fetchOpts).then(r => r.json())
         ));
@@ -260,15 +261,14 @@
     async function loadPanel(ul) {
       const cols = parseInt(ul.dataset.gridSize, 10) || 2;
       
-      // 화면이 숨겨진 상태이므로 스피너 UI 제거 및 순수 데이터 로딩만 수행
       try {
         const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
         renderProducts(ul, products, cols);
         return true; 
       } catch (err) {
-        console.error('상품 로드 실패:', err);
-        // ✨ [핵심 변경] 에러 발생 시(기간 만료 등) catch하지 않고 에러를 던져서 Promise.all이 실패하게 함
-        throw err; 
+        // ✨ [변경점] 에러 발생 시(기간 만료 등) 여기서 처리하지 않고 throw 하여 전체 로직에서 감지하도록 함
+        console.error('loadPanel error:', err);
+        throw err;
       }
     }
   
@@ -426,10 +426,10 @@
         if (!response.ok) throw new Error('Event data fetch failed');
         const ev = await response.json();
         
-        // 1. 컨테이너 생성 (CSS display: none으로 안보이게 시작)
+        // 1. 컨테이너 생성 (display: none으로 숨김 상태)
         const root = getRootContainer();
   
-        // 2. 구조(이미지, 비디오, 빈 상품목록 등) 렌더링 - 하지만 화면엔 아직 안 보임
+        // 2. 블록 구조(이미지 등) 먼저 DOM에 그리기
         if (ev.content && Array.isArray(ev.content.blocks)) {
             ev.content.blocks.forEach(block => {
                 switch(block.type) {
@@ -446,27 +446,27 @@
             renderProductBlock(productBlock, root);
         }
   
-        // 3. ✨ [핵심 로직] 모든 상품 로딩 Promise를 수집
+        // 3. ✨ [변경점] 모든 상품 로딩 Promise를 수집하여 완료 대기
         const productPromises = [];
         document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
             productPromises.push(loadPanel(ul));
         });
 
-        // 4. 모든 로딩이 완료될 때까지 대기
+        // 4. 상품 로딩 결과에 따라 전체 표시 여부 결정
         Promise.all(productPromises)
             .then(() => {
                 // 성공: 기간 만료 등이 없으므로 전체 화면 표시
                 root.style.display = 'block';
             })
             .catch((err) => {
-                // 실패: 기간 만료 또는 권한 에러 발생 시 DOM 전체 삭제 (이미지 포함)
-                console.error('상품 로드 실패(기간만료 등)로 인해 배너를 표시하지 않습니다.');
+                // 실패: 기간 만료 또는 권한 에러 등 발생 시 DOM 전체 삭제 (이미지 포함)
+                console.error('상품 로드 실패(기간만료 등)로 인해 배너를 표시하지 않습니다.', err);
                 root.remove();
             });
   
       } catch (err) {
         console.error('EVENT LOAD ERROR', err);
-        // 이벤트 설정 자체를 못 불러온 경우에도 삭제
+        // 설정 로드 실패 시에도 삭제
         const root = document.getElementById('evt-root');
         if (root) root.remove(); 
       }
