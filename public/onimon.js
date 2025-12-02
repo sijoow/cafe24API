@@ -20,7 +20,6 @@
     const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
     const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
   
-    
     // ────────────────────────────────────────────────────────────────
     // 1) 유틸/트래킹
     // ────────────────────────────────────────────────────────────────
@@ -72,7 +71,6 @@
       track(payload);
     });
   
-  
     // ────────────────────────────────────────────────────────────────
     // 2) 공통 헬퍼
     // ────────────────────────────────────────────────────────────────
@@ -101,6 +99,8 @@
       if (!root) {
         root = document.createElement('div');
         root.id = 'evt-root';
+        // ✨ [핵심 변경] 초기 상태를 숨김(none)으로 설정하여 로딩 중 깜빡임/노출 방지
+        root.style.display = 'none'; 
         script.parentNode.insertBefore(root, script);
       }
       root.innerHTML = '';
@@ -224,7 +224,6 @@
     async function fetchProducts(directNosAttr, category, limit = 300) {
       const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
       
-      // ✨ API에서 반환하는 상품 객체에 아이콘 관련 필드를 추가합니다.
       const mapProductData = p => ({
         product_no: p.product_no,
         product_name: p.product_name,
@@ -233,17 +232,16 @@
         list_image: p.list_image,
         image_medium: p.image_medium,
         image_small: p.image_small,
-        image_thumbnail: p.tiny_image, // tiny_image -> image_thumbnail로 변경
+        image_thumbnail: p.tiny_image, 
         sale_price: p.sale_price || null,
         benefit_price: p.benefit_price || null,
         benefit_percentage: p.benefit_percentage || null,
         decoration_icon_url: p.decoration_icon_url || null,
-        // ✨ 아이콘 필드 추가
         icons: p.icons || null,
         additional_icons: p.additional_icons || [],
         product_tags: p.product_tags || ''
       });
-
+  
       if (directNosAttr) {
         const ids = directNosAttr.split(',').map(s => s.trim()).filter(Boolean);
         if (ids.length === 0) return [];
@@ -261,33 +259,16 @@
   
     async function loadPanel(ul) {
       const cols = parseInt(ul.dataset.gridSize, 10) || 2;
-      let spinner = null;
       
-      const spinnerTimer = setTimeout(() => {
-        spinner = document.createElement('div');
-        spinner.className = 'grid-spinner';
-        if (ul.parentNode) {
-          ul.parentNode.insertBefore(spinner, ul);
-        }
-      }, 2000);
-  
+      // 화면이 숨겨진 상태이므로 스피너 UI 제거 및 순수 데이터 로딩만 수행
       try {
         const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
         renderProducts(ul, products, cols);
+        return true; 
       } catch (err) {
         console.error('상품 로드 실패:', err);
-        if (ul.parentNode) {
-          const errDiv = document.createElement('div');
-          errDiv.style.textAlign = 'center';
-          errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
-          errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
-          ul.parentNode.insertBefore(errDiv, ul);
-        }
-      } finally {
-        clearTimeout(spinnerTimer);
-        if (spinner) {
-          spinner.remove();
-        }
+        // ✨ [핵심 변경] 에러 발생 시(기간 만료 등) catch하지 않고 에러를 던져서 Promise.all이 실패하게 함
+        throw err; 
       }
     }
   
@@ -306,9 +287,8 @@
             return isFinite(n) ? n : null;
         };
   
-        // ✨ 상품 태그-아이콘 매핑 (선택 사항)
         const TAG_ICON_MAP = {};
-
+  
         ul.innerHTML = products.map(p => {
             const origPrice = parseNumber(p.price) || 0;
             const salePrice = parseNumber(p.sale_price);
@@ -333,18 +313,16 @@
             const saleText = isSale ? formatKRW(salePrice) : null;
             const couponText = isCoupon ? formatKRW(benefitPrice) : null;
             
-            // 이미지 호버를 위한 이미지 소스 설정
             const initialImg = p.image_medium || p.list_image;
-            const hoverImg = p.image_thumbnail || p.image_small; // tiny_image -> image_thumbnail로 변경
+            const hoverImg = p.image_thumbnail || p.image_small; 
             
             const mouseEvents = hoverImg && initialImg && hoverImg !== initialImg 
               ? `onmouseover="this.querySelector('img').src='${hoverImg}'" onmouseout="this.querySelector('img').src='${initialImg}'"` 
               : '';
               
-            // ✨ 아이콘 HTML 생성 로직
             let iconHtml = '';
             const renderedUrls = new Set();
-
+  
             if (p.decoration_icon_url && !renderedUrls.has(p.decoration_icon_url)) {
               iconHtml += `<img src="${p.decoration_icon_url}" alt="icon" class="prd_icon" />`;
               renderedUrls.add(p.decoration_icon_url);
@@ -414,8 +392,6 @@
   
     const style = document.createElement('style');
     style.textContent = `
-      .grid-spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #1890ff; border-radius: 50%; animation: spin_${pageId} 1s linear infinite; margin: 20px auto; }
-      @keyframes spin_${pageId} { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg);} }
       .tabs_${pageId} { display: flex; gap: 8px; max-width: 800px; margin: 16px auto; }
       .tabs_${pageId} button { flex: 1; padding: 8px; font-size: 16px; border: 1px solid #d9d9d9; background: #f5f5f5; color: #333; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .tabs_${pageId} button.active { font-weight: 600; }
@@ -423,7 +399,6 @@
       .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
       .coupon_wrapper{line-height:1.5;}
       .prd_price_container{line-height:1.5;}
-      /* ✨ 아이콘 스타일 추가 */
       .prd_icons {
         position: absolute;
         top: 8px;
@@ -436,13 +411,12 @@
       .prd_icon {
         width: auto;
       }
-
+  
     @media (max-width: 400px) {
       .coupon_wrapper{line-height:1.3;}
       .prd_price_container{line-height:1.3;}
-	  .main_Grid_${pageId}{width:96%;margin:0 auto}
+      .main_Grid_${pageId}{width:96%;margin:0 auto}
     }
-      
     `;
     document.head.appendChild(style);
   
@@ -452,8 +426,10 @@
         if (!response.ok) throw new Error('Event data fetch failed');
         const ev = await response.json();
         
+        // 1. 컨테이너 생성 (CSS display: none으로 안보이게 시작)
         const root = getRootContainer();
   
+        // 2. 구조(이미지, 비디오, 빈 상품목록 등) 렌더링 - 하지만 화면엔 아직 안 보임
         if (ev.content && Array.isArray(ev.content.blocks)) {
             ev.content.blocks.forEach(block => {
                 switch(block.type) {
@@ -464,16 +440,35 @@
                     default: break;
                 }
             });
-            document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
-        } else { // 구버전 데이터 처리
+        } else {
             (ev.images || []).forEach(img => renderImageBlock({ type: 'image', ...img }, root));
             const productBlock = { type: 'product_group', ...ev.classification, gridSize: ev.gridSize, layoutType: ev.layoutType, id: pageId };
             renderProductBlock(productBlock, root);
-            document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
         }
+  
+        // 3. ✨ [핵심 로직] 모든 상품 로딩 Promise를 수집
+        const productPromises = [];
+        document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => {
+            productPromises.push(loadPanel(ul));
+        });
+
+        // 4. 모든 로딩이 완료될 때까지 대기
+        Promise.all(productPromises)
+            .then(() => {
+                // 성공: 기간 만료 등이 없으므로 전체 화면 표시
+                root.style.display = 'block';
+            })
+            .catch((err) => {
+                // 실패: 기간 만료 또는 권한 에러 발생 시 DOM 전체 삭제 (이미지 포함)
+                console.error('상품 로드 실패(기간만료 등)로 인해 배너를 표시하지 않습니다.');
+                root.remove();
+            });
   
       } catch (err) {
         console.error('EVENT LOAD ERROR', err);
+        // 이벤트 설정 자체를 못 불러온 경우에도 삭제
+        const root = document.getElementById('evt-root');
+        if (root) root.remove(); 
       }
     }
   
