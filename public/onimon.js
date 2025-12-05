@@ -447,53 +447,61 @@ async function fetchProducts(directNosAttr, category, limit = 300) {
       
     `;
     document.head.appendChild(style);
-  
-    async function initializePage() {
-      try {
-        // 👇👇👇 URL에 is_active=true 추가하여 기간 만료/토큰 만료 체크
-        const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}?is_active=true`);
-        
-        // 🚨 409 (token 만료/설치 필요) 또는 404 (기간 만료) 응답 시 노출 차단
-        if (response.status === 409) {
-          console.error('EVENT LOAD ERROR: ❌ App token required/expired (409).');
-          const errorData = await response.json();
-          console.log('Redirecting to:', errorData.installUrl);
-          // 필요하다면 여기서 관리자에게 재설치 유도
-          return; // 이미지/상품 렌더링 중단
-        }
-        if (response.status === 404) {
-          console.warn('EVENT LOAD WARNING: ⚠️ Event not found or expired (404).');
-          return; // 이미지/상품 렌더링 중단 (백엔드에서 기간 만료 시 404를 반환하도록 수정했음)
-        }
-        if (!response.ok) throw new Error(`Event data fetch failed with status ${response.status}`);
-        // 👆👆👆
+  // onimon.js 내 initializePage 함수 수정 (2025-12-05 14:20:48 로그에 맞춰 URL에 is_active=true 추가)
+		async function initializePage() {
+			try {
+				// GET /api/tude/events/68f8d5caab557a196597df94?is_active=true 형태로 호출되어야 함
+				const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}?is_active=true`);
+				
+				// 🚨 409 (token 만료/설치 필요) 응답 시 노출 차단 로직 강화 🚨
+				if (response.status === 409) {
+					console.error('EVENT LOAD ERROR: ❌ App token required/expired (409). Not rendering content.');
+					// 409 응답 시, 이벤트를 로드하는 모든 로직을 중단합니다.
+					// 이미지를 포함한 어떤 내용도 렌더링하지 않습니다.
+					return;
+				}
+				
+				// 404 (기간 만료) 응답 시 노출 차단
+				if (response.status === 404) {
+					console.warn('EVENT LOAD WARNING: ⚠️ Event not found or expired (404). Not rendering content.');
+					return;
+				}
 
-        const ev = await response.json();
-        
-        const root = getRootContainer();
-  
-        if (ev.content && Array.isArray(ev.content.blocks)) {
-            ev.content.blocks.forEach(block => {
-                switch(block.type) {
-                    case 'image': renderImageBlock(block, root); break;
-                    case 'video': renderVideoBlock(block, root); break;
-                    case 'text': renderTextBlock(block, root); break;
-                    case 'product_group': renderProductBlock(block, root); break;
-                    default: break;
-                }
-            });
-            document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
-        } else { // 구버전 데이터 처리
-            (ev.images || []).forEach(img => renderImageBlock({ type: 'image', ...img }, root));
-            const productBlock = { type: 'product_group', ...ev.classification, gridSize: ev.gridSize, layoutType: ev.layoutType, id: pageId };
-            renderProductBlock(productBlock, root);
-            document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
-        }
-  
-      } catch (err) {
-        console.error('EVENT LOAD ERROR', err);
-      }
-    }
+				// 409/404가 아닌, 기타 에러 또는 정상 응답이 아닐 때
+				if (!response.ok) throw new Error(`Event data fetch failed with status ${response.status}`);
+				
+				const ev = await response.json();
+				
+				const root = getRootContainer();
+
+				// 이하 렌더링 로직 (ev.content.blocks.forEach...)
+				if (ev.content && Array.isArray(ev.content.blocks)) {
+					ev.content.blocks.forEach(block => {
+						// block.type이 'image'이더라도, 이미 위에서 409를 걸렀으므로 렌더링됩니다.
+						// 409에서 return 하는 것이 핵심입니다.
+						switch(block.type) {
+							case 'image': renderImageBlock(block, root); break;
+							case 'video': renderVideoBlock(block, root); break;
+							case 'text': renderTextBlock(block, root); break;
+							case 'product_group': renderProductBlock(block, root); break;
+							default: break;
+						}
+					});
+					document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
+				} else {
+					// 구버전 데이터 처리 (동일하게 409에서 이미 return 되었어야 함)
+					(ev.images || []).forEach(img => renderImageBlock({ type: 'image', ...img }, root));
+					const productBlock = { type: 'product_group', ...ev.classification, gridSize: ev.gridSize, layoutType: ev.layoutType, id: pageId };
+					renderProductBlock(productBlock, root);
+					document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
+				}
+
+			} catch (err) {
+				console.error('EVENT LOAD CATCH ERROR', err);
+				// fetch 자체가 실패한 경우 (네트워크 등)
+			}
+		}
+
     window.showTab = (id, btn, activeColor = '#1890ff') => {
         const parent = btn.closest('.tabs_' + pageId);
         if (!parent) return;
