@@ -1,4 +1,4 @@
-// app.js (최종 수정본: 기간 체크만 적용, 토큰 강제 체크 제거)
+// app.js (최종 수정본: 기간 체크 및 토큰 만료 시 콘텐츠 필터링 적용)
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
 const cron = require('node-cron');
@@ -532,7 +532,7 @@ app.get('/api/:mallId/events', async (req, res) => {
   }
 });
 
-// Events - 단건 (토큰 강제 체크 로직 제거 및 기간 만료 체크 유지)
+// Events - 단건 (기간 만료 시 404, 토큰 만료 시 이미지/상품 데이터 제거)
 app.get('/api/:mallId/events/:id', async (req, res) => {
   const { mallId, id } = req.params;
   const { is_active } = req.query; // is_active 쿼리 파라미터 확인
@@ -540,28 +540,62 @@ app.get('/api/:mallId/events/:id', async (req, res) => {
   if (!ObjectId.isValid(id)) return res.status(400).json({ error: '잘못된 이벤트 ID입니다.' });
 
   try {
-    // 🚨 토큰 유효성 강제 체크 로직은 제거되었습니다. DB에서 이벤트 데이터만 조회합니다.
+    // 1. DB에서 이벤트 데이터 조회 (토큰과 무관)
     const ev = await db.collection('events').findOne({ _id: new ObjectId(id), mallId });
     if (!ev) return res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
 
-    // 3. 기간 유효성 체크 (is_active=true일 경우만)
+    // 2. 기간 유효성 체크 (is_active=true일 경우만)
     if (is_active === 'true') {
       const now = new Date();
       if (ev.startDate && ev.endDate) {
         const start = new Date(ev.startDate);
         const end = new Date(ev.endDate);
         
-        // 현재 시간이 시작일보다 작거나, 종료일보다 크거나 같으면 (기간 만료)
+        // 기간 만료 시 404 반환
         if (now < start || now >= end) {
-          console.log(`[EVENT ACCESS BLOCKED] mallId=${mallId}, id=${id}, reason: Not active (start=${start.toISOString()}, end=${end.toISOString()})`);
+          console.log(`[EVENT ACCESS BLOCKED] mallId=${mallId}, id=${id}, reason: Not active (expired/not started)`);
           return res.status(404).json({ error: '현재 기간에 유효한 이벤트를 찾을 수 없습니다.' });
         }
       }
     }
     
+    // 3. 토큰 유효성 확인 및 콘텐츠 제거 (이미지 및 상품 데이터 차단)
+    let isTokenValid = true;
+    try {
+        // Cafe24 API에 가벼운 요청을 보내 token 유효성 확인. 
+        // 유효하지 않으면 catch 블록으로 이동하며 토큰 갱신 시도 후, 실패 시 INSTALL_REQUIRED 발생.
+        await apiRequest(mallId, 'GET', `https://${mallId}.cafe24api.com/api/v2/admin/malls`, {}, { fields: 'mall_id' });
+    } catch (err) {
+        if (err?.installRequired) {
+            isTokenValid = false;
+        } else {
+            // 기타 알 수 없는 API 오류 발생 시에도 안전을 위해 콘텐츠 차단
+            console.error('[TOKEN CHECK UNEXPECTED API ERROR]', err);
+            isTokenValid = false;
+        }
+    }
+
+    if (!isTokenValid) {
+        console.warn(`[EVENT TOKEN INVALID] mallId=${mallId}. Sanitizing content: Removing images and products.`);
+        
+        // Sanitize event content: Remove all images/products
+        // 3-A. 이미지 필드 제거 (구 버전 호환성)
+        ev.images = []; 
+        
+        // 3-B. 블록 내 이미지 및 상품 관련 블록 제거 (신 버전)
+        if (ev.content && Array.isArray(ev.content.blocks)) {
+            ev.content.blocks = ev.content.blocks.filter(block => 
+                block.type !== 'image' && block.type !== 'product_group'
+            );
+        }
+    }
+    
+    // 4. 데이터 반환 (token 유효성 상관없이 200 OK)
     res.json(ev);
+
   } catch (err) {
     console.error('[GET EVENT ERROR]', err);
+    // MongoDB 에러 또는 기타 알 수 없는 에러 처리
     res.status(500).json({ error: '이벤트 조회에 실패했습니다.' });
   }
 });
