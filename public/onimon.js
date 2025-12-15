@@ -83,7 +83,7 @@
             if (res.status === 429 && retries > 0) {
                 return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
             }
-            if (!res.ok) throw res;
+            if (!res.ok) throw res; // Response 객체를 throw하여 catch에서 status 확인 가능하게 함
             return res;
         });
     }
@@ -274,6 +274,12 @@
         renderProducts(ul, products, cols);
       } catch (err) {
         console.error('상품 로드 실패:', err);
+
+        // ──────────────────────────────────────────────
+        // [수정된 부분] 409 에러 감지 및 처리
+        // ──────────────────────────────────────────────
+        const isConflict = err && err.status === 409;
+
         if (ul.parentNode) {
           const errDiv = document.createElement('div');
           errDiv.style.textAlign = 'center';
@@ -281,24 +287,22 @@
           errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
           ul.parentNode.insertBefore(errDiv, ul);
 
-          // ──────────────────────────────────────────────
-          // [추가된 로직] 즉시 숨김 + 2초 후 재시도
-          // ──────────────────────────────────────────────
-          const hideBanner = () => {
-             // 에러가 발생한 ul이 .product_list_widget 안에 있는지 확인
-             if (ul.closest('.product_list_widget')) {
+          // 409 에러이거나 해당 위젯 내부일 경우 배너 숨김 실행
+          if (isConflict || ul.closest('.product_list_widget')) {
+             const hideBanner = () => {
                 const target = document.getElementById('evt-images');
                 if (target) {
                     target.style.display = 'none';
                 }
-             }
-          };
-
-          // 1. 즉시 실행
-          hideBanner();
-
-          // 2. 2초 후 한번 더 실행 (타이밍 문제 대비)
-          setTimeout(hideBanner, 2000);
+             };
+             
+             // 1. 즉시 실행
+             hideBanner();
+             
+             // 2. 타이밍 이슈 대비 재실행
+             setTimeout(hideBanner, 1000); 
+             setTimeout(hideBanner, 2000);
+          }
         }
       } finally {
         clearTimeout(spinnerTimer);
