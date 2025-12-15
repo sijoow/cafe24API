@@ -224,7 +224,6 @@
     async function fetchProducts(directNosAttr, category, limit = 300) {
       const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
       
-      // ✨ API에서 반환하는 상품 객체에 아이콘 관련 필드를 추가합니다.
       const mapProductData = p => ({
         product_no: p.product_no,
         product_name: p.product_name,
@@ -283,11 +282,19 @@
           ul.parentNode.insertBefore(errDiv, ul);
 
           // ──────────────────────────────────────────────
-          // [추가된 로직] .product_list_widget 내부라면 evt-images 숨김
+          // [수정된 로직] ID로 찾도록 변경 (스크린샷 기반)
           // ──────────────────────────────────────────────
           if (ul.closest('.product_list_widget')) {
-            const evtImages = document.querySelectorAll('.evt-images');
-            evtImages.forEach(el => el.style.display = 'none');
+            // 1. ID로 찾기 (가장 확실함)
+            const evtImagesById = document.getElementById('evt-images');
+            if (evtImagesById) {
+                evtImagesById.style.display = 'none';
+            } 
+            // 2. 혹시 몰라 클래스로도 찾기 (안전장치)
+            else {
+                const evtImagesByClass = document.querySelectorAll('.evt-images');
+                evtImagesByClass.forEach(el => el.style.display = 'none');
+            }
           }
         }
       } finally {
