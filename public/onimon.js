@@ -282,20 +282,23 @@
           ul.parentNode.insertBefore(errDiv, ul);
 
           // ──────────────────────────────────────────────
-          // [수정된 로직] ID로 찾도록 변경 (스크린샷 기반)
+          // [추가된 로직] 즉시 숨김 + 2초 후 재시도
           // ──────────────────────────────────────────────
-          if (ul.closest('.product_list_widget')) {
-            // 1. ID로 찾기 (가장 확실함)
-            const evtImagesById = document.getElementById('evt-images');
-            if (evtImagesById) {
-                evtImagesById.style.display = 'none';
-            } 
-            // 2. 혹시 몰라 클래스로도 찾기 (안전장치)
-            else {
-                const evtImagesByClass = document.querySelectorAll('.evt-images');
-                evtImagesByClass.forEach(el => el.style.display = 'none');
-            }
-          }
+          const hideBanner = () => {
+             // 에러가 발생한 ul이 .product_list_widget 안에 있는지 확인
+             if (ul.closest('.product_list_widget')) {
+                const target = document.getElementById('evt-images');
+                if (target) {
+                    target.style.display = 'none';
+                }
+             }
+          };
+
+          // 1. 즉시 실행
+          hideBanner();
+
+          // 2. 2초 후 한번 더 실행 (타이밍 문제 대비)
+          setTimeout(hideBanner, 2000);
         }
       } finally {
         clearTimeout(spinnerTimer);
