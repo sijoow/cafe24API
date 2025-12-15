@@ -233,17 +233,16 @@
         list_image: p.list_image,
         image_medium: p.image_medium,
         image_small: p.image_small,
-        image_thumbnail: p.tiny_image, // tiny_image -> image_thumbnail로 변경
+        image_thumbnail: p.tiny_image,
         sale_price: p.sale_price || null,
         benefit_price: p.benefit_price || null,
         benefit_percentage: p.benefit_percentage || null,
         decoration_icon_url: p.decoration_icon_url || null,
-        // ✨ 아이콘 필드 추가
         icons: p.icons || null,
         additional_icons: p.additional_icons || [],
         product_tags: p.product_tags || ''
       });
-
+  
       if (directNosAttr) {
         const ids = directNosAttr.split(',').map(s => s.trim()).filter(Boolean);
         if (ids.length === 0) return [];
@@ -282,6 +281,14 @@
           errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
           errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
           ul.parentNode.insertBefore(errDiv, ul);
+
+          // ──────────────────────────────────────────────
+          // [추가된 로직] .product_list_widget 내부라면 evt-images 숨김
+          // ──────────────────────────────────────────────
+          if (ul.closest('.product_list_widget')) {
+            const evtImages = document.querySelectorAll('.evt-images');
+            evtImages.forEach(el => el.style.display = 'none');
+          }
         }
       } finally {
         clearTimeout(spinnerTimer);
@@ -306,9 +313,8 @@
             return isFinite(n) ? n : null;
         };
   
-        // ✨ 상품 태그-아이콘 매핑 (선택 사항)
         const TAG_ICON_MAP = {};
-
+  
         ul.innerHTML = products.map(p => {
             const origPrice = parseNumber(p.price) || 0;
             const salePrice = parseNumber(p.sale_price);
@@ -333,18 +339,16 @@
             const saleText = isSale ? formatKRW(salePrice) : null;
             const couponText = isCoupon ? formatKRW(benefitPrice) : null;
             
-            // 이미지 호버를 위한 이미지 소스 설정
             const initialImg = p.image_medium || p.list_image;
-            const hoverImg = p.image_thumbnail || p.image_small; // tiny_image -> image_thumbnail로 변경
+            const hoverImg = p.image_thumbnail || p.image_small;
             
             const mouseEvents = hoverImg && initialImg && hoverImg !== initialImg 
               ? `onmouseover="this.querySelector('img').src='${hoverImg}'" onmouseout="this.querySelector('img').src='${initialImg}'"` 
               : '';
               
-            // ✨ 아이콘 HTML 생성 로직
             let iconHtml = '';
             const renderedUrls = new Set();
-
+  
             if (p.decoration_icon_url && !renderedUrls.has(p.decoration_icon_url)) {
               iconHtml += `<img src="${p.decoration_icon_url}" alt="icon" class="prd_icon" />`;
               renderedUrls.add(p.decoration_icon_url);
@@ -423,7 +427,6 @@
       .prd_price_container .sale_percent, .prd_price_container .prd_coupon_percent { color: #ff4d4f; font-weight: bold; margin-right: 4px; }
       .coupon_wrapper{line-height:1.5;}
       .prd_price_container{line-height:1.5;}
-      /* ✨ 아이콘 스타일 추가 */
       .prd_icons {
         position: absolute;
         top: 8px;
@@ -436,11 +439,11 @@
       .prd_icon {
         width: auto;
       }
-
+  
     @media (max-width: 400px) {
       .coupon_wrapper{line-height:1.3;}
       .prd_price_container{line-height:1.3;}
-	  .main_Grid_${pageId}{width:96%;margin:0 auto}
+      .main_Grid_${pageId}{width:96%;margin:0 auto}
     }
       
     `;
@@ -508,4 +511,4 @@
   
     initializePage();
   
-  })(); // end IIFE
+  })();
