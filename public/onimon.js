@@ -78,6 +78,8 @@
     // ────────────────────────────────────────────────────────────────
     function escapeHtml(s = '') { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
     function toBool(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
+    
+    // ★ 에러 발생 시 response 객체를 throw 하여 catch에서 status 확인 가능하도록 수정
     function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
         return fetch(url, opts).then(res => {
             if (res.status === 429 && retries > 0) {
@@ -87,6 +89,7 @@
             return res;
         });
     }
+
     function buildYouTubeSrc(id, autoplay = false, loop = false) {
         const params = new URLSearchParams({ autoplay: autoplay ? '1' : '0', mute: autoplay ? '1' : '0', playsinline: '1', rel: 0, modestbranding: 1, enablejsapi: 1 });
         if (loop) { params.set('loop', '1'); params.set('playlist', id); }
@@ -217,6 +220,39 @@
       }
       root.appendChild(groupWrapper);
     }
+
+    // ────────────────────────────────────────────────────────────────
+    // ★ [핵심] 배너 완전 제거 함수 (DOM삭제 + CSS강제숨김)
+    // ────────────────────────────────────────────────────────────────
+    function nukeBanner() {
+        const targetId = 'evt-images';
+        const targetClass = 'evt-images';
+
+        // 1. CSS Injection (우선순위 최상으로 숨김 처리)
+        // 요소가 나중에 생기더라도 CSS가 먼저 있으면 안 보임
+        if (!document.getElementById('force-hide-banner')) {
+            const style = document.createElement('style');
+            style.id = 'force-hide-banner';
+            style.innerHTML = `
+                #${targetId}, .${targetClass} {
+                    display: none !important;
+                    opacity: 0 !important;
+                    visibility: hidden !important;
+                    height: 0 !important;
+                    overflow: hidden !important;
+                    pointer-events: none !important;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        // 2. DOM Removal (요소 자체를 삭제)
+        const elById = document.getElementById(targetId);
+        if (elById) elById.remove();
+
+        const elsByClass = document.querySelectorAll(`.${targetClass}`);
+        elsByClass.forEach(el => el.remove());
+    }
   
     // ────────────────────────────────────────────────────────────────
     // 4) 상품 데이터 로드 및 렌더링
@@ -276,32 +312,28 @@
         console.error('상품 로드 실패:', err);
 
         // ──────────────────────────────────────────────
-        // [강력한 수정] 에러 발생 시 CSS 스타일 강제 주입
+        // ★ [수정됨] 에러 발생 시(특히 409 만료) 배너 즉시 삭제
         // ──────────────────────────────────────────────
-        const isConflict = err && err.status === 409;
+        
+        // 409(Conflict/기간만료), 404(없음), 400(잘못된요청), 5xx(서버에러) 체크
+        const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
 
         if (ul.parentNode) {
           const errDiv = document.createElement('div');
           errDiv.style.textAlign = 'center';
-          errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
-          errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
+          errDiv.innerHTML = `<p style="color:#666; font-size:14px;">이벤트가 종료되었거나 정보를 불러올 수 없습니다.</p>`;
           ul.parentNode.insertBefore(errDiv, ul);
-
-          // 409 에러이거나 해당 위젯 내부일 경우
-          if (isConflict || ul.closest('.product_list_widget')) {
-             
-             // [NEW] 자바스크립트로 DOM을 찾는게 아니라, CSS 룰을 추가해서 원천 차단
-             // 이 방식은 요소가 늦게 로딩되어도 무조건 숨겨집니다.
-             if (!document.getElementById('force-hide-banner')) {
-                 const styleTag = document.createElement('style');
-                 styleTag.id = 'force-hide-banner';
-                 styleTag.innerHTML = `
-                    #evt-images { display: none !important; }
-                 `;
-                 document.head.appendChild(styleTag);
-             }
-          }
         }
+
+        // 에러가 났다면 일단 배너를 날립니다.
+        if (isCriticalError) {
+             nukeBanner();
+             // 타이밍 이슈 방지를 위해 시간차 공격
+             setTimeout(nukeBanner, 300);
+             setTimeout(nukeBanner, 1000);
+             setTimeout(nukeBanner, 2000);
+        }
+
       } finally {
         clearTimeout(spinnerTimer);
         if (spinner) {
