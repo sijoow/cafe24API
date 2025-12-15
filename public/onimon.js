@@ -83,7 +83,7 @@
             if (res.status === 429 && retries > 0) {
                 return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
             }
-            if (!res.ok) throw res; // Response 객체를 throw하여 catch에서 status 확인 가능하게 함
+            if (!res.ok) throw res; 
             return res;
         });
     }
@@ -276,7 +276,7 @@
         console.error('상품 로드 실패:', err);
 
         // ──────────────────────────────────────────────
-        // [수정된 부분] 409 에러 감지 및 처리
+        // [강력한 수정] 에러 발생 시 CSS 스타일 강제 주입
         // ──────────────────────────────────────────────
         const isConflict = err && err.status === 409;
 
@@ -287,21 +287,19 @@
           errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
           ul.parentNode.insertBefore(errDiv, ul);
 
-          // 409 에러이거나 해당 위젯 내부일 경우 배너 숨김 실행
+          // 409 에러이거나 해당 위젯 내부일 경우
           if (isConflict || ul.closest('.product_list_widget')) {
-             const hideBanner = () => {
-                const target = document.getElementById('evt-images');
-                if (target) {
-                    target.style.display = 'none';
-                }
-             };
              
-             // 1. 즉시 실행
-             hideBanner();
-             
-             // 2. 타이밍 이슈 대비 재실행
-             setTimeout(hideBanner, 1000); 
-             setTimeout(hideBanner, 2000);
+             // [NEW] 자바스크립트로 DOM을 찾는게 아니라, CSS 룰을 추가해서 원천 차단
+             // 이 방식은 요소가 늦게 로딩되어도 무조건 숨겨집니다.
+             if (!document.getElementById('force-hide-banner')) {
+                 const styleTag = document.createElement('style');
+                 styleTag.id = 'force-hide-banner';
+                 styleTag.innerHTML = `
+                    #evt-images { display: none !important; }
+                 `;
+                 document.head.appendChild(styleTag);
+             }
           }
         }
       } finally {
