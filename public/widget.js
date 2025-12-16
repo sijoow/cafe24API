@@ -136,25 +136,38 @@
         if (res.status === 429 && retries > 0) {
           return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
         }
-        if (!res.ok) throw res;
+        if (!res.ok) throw res; // Error Status를 catch에서 잡기 위해 res 객체 throw
         return res;
       });
     }
-    
+
     // ────────────────────────────────────────────────────────────────
-    // 2-1) 새로고침 시 캐시 자동 삭제 잠깐 주석처리
+    // ★ [핵심] 이벤트 만료/에러 시 처리 함수
     // ────────────────────────────────────────────────────────────────
-    // (function clearCacheOnReload() {
-    //   try {
-    //     const navigationEntries = performance.getEntriesByType("navigation");
-    //     if (navigationEntries.length > 0 && navigationEntries[0].type === 'reload') {
-    //       console.log('[widget.js] 페이지 새로고침을 감지하여 캐시를 삭제합니다.');
-    //       invalidateProductCache();
-    //     }
-    //   } catch (e) {
-    //     console.warn('[widget.js] 새로고침 감지 중 오류:', e);
-    //   }
-    // })();
+    function handleExpiration() {
+        // evt-root 찾기 (widget.js는 evt-root나 evt-images를 사용)
+        let root = document.getElementById('evt-root') || document.getElementById('evt-images');
+        
+        // root가 없으면 body 맨 앞에 임시로 생성해서라도 메시지 표시
+        if (!root) {
+            root = document.createElement('div');
+            root.id = 'evt-root';
+            document.body.insertBefore(root, document.body.firstChild);
+        }
+
+        // 1. 내용물 싹 비우기 (이미지, 비디오, 상품 등 제거)
+        root.innerHTML = '';
+
+        // 2. 종료 안내 메시지 삽입
+        const errDiv = document.createElement('div');
+        errDiv.style.textAlign = 'center';
+        errDiv.style.padding = '100px 0';
+        errDiv.innerHTML = `
+           <div style="font-size:16px; color:#333; font-weight:bold; margin-bottom:8px;">이벤트가 종료되었습니다.</div>
+           <div style="font-size:13px; color:#888;">다음에 더 좋은 혜택으로 찾아뵙겠습니다.</div>
+        `;
+        root.appendChild(errDiv);
+    }
   
     // ────────────────────────────────────────────────────────────────
     // 3) 블록 렌더(텍스트/이미지/영상)
@@ -276,51 +289,55 @@
       const stored = localStorage.getItem(storageKey);
       if (stored) {
         const { timestamp, data } = JSON.parse(stored);
-        // 캐시가 유효기간 이내이면 즉시 렌더링
         if (Date.now() - timestamp < CACHE_DURATION) {
           renderProducts(ul, data, cols);
 
-          // 배경에서 조용히 최신 데이터 가져오기
           fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count)
             .then(freshData => {
-              // 데이터가 변경되었을 경우에만 화면을 다시 그리고 캐시 업데이트
               if (JSON.stringify(data) !== JSON.stringify(freshData)) {
                 console.log('[widget.js] 상품 정보가 변경되어 업데이트합니다.', cacheKey);
                 renderProducts(ul, freshData, cols);
                 localStorage.setItem(storageKey, JSON.stringify({ timestamp: Date.now(), data: freshData }));
               }
-            }).catch(console.warn); // 백그라운드 업데이트 실패는 조용히 처리
+            }).catch(console.warn);
 
-          return; // 즉시 렌더링 후 함수 종료
+          return; 
         }
       }
     } catch (e) {
       console.warn('[widget.js] 캐시 파싱 오류', e);
     }
 
-    // 2. 캐시가 없거나 만료된 경우: 로딩 스피너 보여주고 데이터 가져오기
+    // 2. 로딩 및 페치
     const spinner = document.createElement('div');
     spinner.className = 'grid-spinner';
     ul.parentNode.insertBefore(spinner, ul);
 
-    const showError = () => {
+    try {
+      const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
+      localStorage.setItem(storageKey, JSON.stringify({ timestamp: Date.now(), data: products }));
+      renderProducts(ul, products, cols);
+    } catch (err) {
+      // ──────────────────────────────────────────────────────
+      // [수정] 상품 로드 중 409 등 치명적 에러 발생 시 종료 처리
+      // ──────────────────────────────────────────────────────
+      const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
+      
+      if (isCriticalError) {
+        spinner.remove();
+        handleExpiration(); // 즉시 종료 처리
+        return;
+      }
+
+      // 일반 네트워크 오류 등은 기존대로 재시도 버튼 표시
       spinner.remove();
       const errDiv = document.createElement('div');
       errDiv.style.textAlign = 'center';
       errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
       errDiv.querySelector('button').onclick = () => { errDiv.remove(); loadPanel(ul); };
       ul.parentNode.insertBefore(errDiv, ul);
-    };
-
-    try {
-      const products = await fetchProducts(ul.dataset.directNos, ul.dataset.cate, ul.dataset.count);
-      // 타임스탬프와 함께 데이터 캐시
-      localStorage.setItem(storageKey, JSON.stringify({ timestamp: Date.now(), data: products }));
-      renderProducts(ul, products, cols);
-    } catch (err) {
-      showError();
     } finally {
-      spinner.remove();
+      if(spinner.parentNode) spinner.remove();
     }
   }
   
@@ -434,7 +451,7 @@
         </li>`;
       }).join('');
     }
-    
+  
     // ────────────────────────────────────────────────────────────────
     // 6) CSS 주입
     // ────────────────────────────────────────────────────────────────
@@ -490,7 +507,11 @@
     async function initializePage() {
       try {
         const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}`);
-        if (!response.ok) throw new Error('Event data fetch failed');
+        // ──────────────────────────────────────────────────────
+        // [수정] 이벤트 데이터 로드 중 409 등 에러 시 즉시 종료
+        // ──────────────────────────────────────────────────────
+        if (!response.ok) throw response; // response를 throw하여 catch에서 status 확인
+        
         const ev = await response.json();
         
         const rawBlocks = Array.isArray(ev?.content?.blocks) && ev.content.blocks.length ? ev.content.blocks : (ev.images || []).map(img => ({ type: 'image', src: img.src, regions: img.regions || [] }));
@@ -504,6 +525,11 @@
         document.querySelectorAll(`ul.main_Grid_${pageId}`).forEach(ul => loadPanel(ul));
       } catch (err) {
         console.error('EVENT LOAD ERROR', err);
+        // 에러 상태 확인
+        const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
+        if (isCriticalError) {
+             handleExpiration();
+        }
       }
     }
   
