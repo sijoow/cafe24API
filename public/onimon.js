@@ -20,6 +20,7 @@
     const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
     const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
   
+    
     // ────────────────────────────────────────────────────────────────
     // 1) 유틸/트래킹
     // ────────────────────────────────────────────────────────────────
@@ -71,22 +72,21 @@
       track(payload);
     });
   
+  
     // ────────────────────────────────────────────────────────────────
     // 2) 공통 헬퍼
     // ────────────────────────────────────────────────────────────────
     function escapeHtml(s = '') { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
     function toBool(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
-    
     function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
         return fetch(url, opts).then(res => {
             if (res.status === 429 && retries > 0) {
                 return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
             }
-            if (!res.ok) throw res; 
+            if (!res.ok) throw res;
             return res;
         });
     }
-
     function buildYouTubeSrc(id, autoplay = false, loop = false) {
         const params = new URLSearchParams({ autoplay: autoplay ? '1' : '0', mute: autoplay ? '1' : '0', playsinline: '1', rel: 0, modestbranding: 1, enablejsapi: 1 });
         if (loop) { params.set('loop', '1'); params.set('playlist', id); }
@@ -219,39 +219,54 @@
     }
 
     // ────────────────────────────────────────────────────────────────
-    // ★ [핵심] 배너 완전 제거 함수 (DOM삭제 + CSS강제숨김)
+    // ★ [최후의 수단] 배너 삭제 함수 (반복 실행)
     // ────────────────────────────────────────────────────────────────
     function nukeBanner() {
-        const targetId = 'evt-images';
-        const targetClass = 'evt-images';
+        const targetIds = ['#evt-images', '.evt-images']; // ID와 Class 모두 타겟
 
-        // 1. CSS Injection (이미지 태그까지 직접 타겟팅)
+        // 1. CSS 스타일 강제 주입 (헤더에 추가)
         if (!document.getElementById('force-hide-banner')) {
             const style = document.createElement('style');
             style.id = 'force-hide-banner';
-            // #evt-images 자체, 그 안의 모든 것(*), 그 안의 이미지(img) 전부 숨김
             style.innerHTML = `
-                #${targetId}, .${targetClass}, 
-                #${targetId} *, .${targetClass} *,
-                #${targetId} img, .${targetClass} img {
+                #evt-images, .evt-images {
                     display: none !important;
-                    opacity: 0 !important;
                     visibility: hidden !important;
+                    opacity: 0 !important;
                     height: 0 !important;
                     width: 0 !important;
                     overflow: hidden !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
                     pointer-events: none !important;
                 }
             `;
             document.head.appendChild(style);
         }
 
-        // 2. DOM Removal (요소 자체를 삭제)
-        const elById = document.getElementById(targetId);
-        if (elById) elById.remove();
+        // 2. DOM 요소 직접 찾아서 인라인 스타일 먹이고 삭제
+        targetIds.forEach(selector => {
+            const targets = document.querySelectorAll(selector);
+            targets.forEach(el => {
+                // 인라인 스타일로 display:none !important 강제 적용 (가장 강력함)
+                el.setAttribute('style', 'display: none !important; opacity: 0 !important; height: 0 !important;');
+                el.style.display = 'none';
+                
+                // DOM에서 제거
+                el.remove();
+            });
+        });
+    }
 
-        const elsByClass = document.querySelectorAll(`.${targetClass}`);
-        elsByClass.forEach(el => el.remove());
+    // 반복적으로 nukeBanner를 실행하는 함수 (3초간 0.1초 간격으로 계속 삭제 시도)
+    function startNukeLoop() {
+        nukeBanner(); // 즉시 실행
+        let count = 0;
+        const interval = setInterval(() => {
+            nukeBanner();
+            count++;
+            if (count > 30) clearInterval(interval); // 3초(30회) 후 중단
+        }, 100);
     }
   
     // ────────────────────────────────────────────────────────────────
@@ -311,25 +326,20 @@
       } catch (err) {
         console.error('상품 로드 실패:', err);
 
-        // ──────────────────────────────────────────────
-        // ★ 에러 발생 시(특히 409 만료) 배너 즉시 삭제 로직
-        // ──────────────────────────────────────────────
-        
+        // 에러 상태 체크 (409 만료, 404 없음, 기타 에러)
         const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
 
         if (ul.parentNode) {
           const errDiv = document.createElement('div');
           errDiv.style.textAlign = 'center';
-          errDiv.innerHTML = `<p style="color:#666; font-size:14px; margin: 20px 0;">이벤트가 종료되었거나 정보를 불러올 수 없습니다.</p>`;
+          errDiv.style.padding = '50px 0';
+          errDiv.innerHTML = `<p style="color:#666; font-size:14px; margin: 0;">이벤트가 종료되었거나 정보를 불러올 수 없습니다.</p>`;
           ul.parentNode.insertBefore(errDiv, ul);
         }
 
+        // 에러 발생 시 반복 삭제 시작
         if (isCriticalError) {
-             nukeBanner();
-             // 타이밍 이슈 방지 (연속 호출)
-             setTimeout(nukeBanner, 300);
-             setTimeout(nukeBanner, 1000);
-             setTimeout(nukeBanner, 2000);
+             startNukeLoop();
         }
 
       } finally {
