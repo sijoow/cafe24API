@@ -133,7 +133,6 @@
     
     function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
       return fetch(url, opts).then(res => {
-        // 429 에러 발생 시 재시도 로직 (재시도 횟수 소진 시 throw res)
         if (res.status === 429 && retries > 0) {
           return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
         }
@@ -143,23 +142,36 @@
     }
 
     // ────────────────────────────────────────────────────────────────
-    // ★ [핵심 1] 이벤트 만료(409) 시 처리 함수
+    // ★ [핵심 1] 이벤트 만료(409) 시 처리 함수 -> 이미지 교체
     // ────────────────────────────────────────────────────────────────
     function handleExpiration() {
         let root = document.getElementById('evt-root') || document.getElementById('evt-images');
+        
+        // root가 없으면 body 맨 앞에 임시로 생성
         if (!root) {
             root = document.createElement('div');
             root.id = 'evt-root';
             document.body.insertBefore(root, document.body.firstChild);
         }
+
+        // 1. 내용물 싹 비우기
         root.innerHTML = '';
-        const errDiv = document.createElement('div');
-        errDiv.style.textAlign = 'center';
-        errDiv.style.padding = '100px 0';
-        errDiv.innerHTML = `
-           <div style="font-size:16px; color:#333; font-weight:bold; margin-bottom:8px;">프로모션 올인원 사용기간이 종료되었습니다.</div>
+
+        // 2. 만료 이미지 컨테이너 생성
+        const imgWrap = document.createElement('div');
+        imgWrap.style.textAlign = 'center';
+        imgWrap.style.margin = '0 auto';
+        imgWrap.style.maxWidth = '800px'; // 기존 위젯 max-width와 맞춤
+        imgWrap.style.width = '100%';
+
+        // 3. 만료 이미지 삽입
+        imgWrap.innerHTML = `
+            <img src="https://pub-25b16c9ef8e146749bc48d4a80b1ad5e.r2.dev/onimon" 
+                 alt="이벤트 종료" 
+                 style="width: 100%; height: auto; display: block; margin: 0 auto;" />
         `;
-        root.appendChild(errDiv);
+        
+        root.appendChild(imgWrap);
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -339,7 +351,7 @@
         return;
       }
 
-      // 2. 409 등 치명적 에러 -> 만료 메시지
+      // 2. 409 등 치명적 에러 -> 만료 이미지
       const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
       if (isCriticalError) {
         if (spinner.parentNode) spinner.remove();
