@@ -163,8 +163,7 @@
         errDiv.style.textAlign = 'center';
         errDiv.style.padding = '100px 0';
         errDiv.innerHTML = `
-           <div style="font-size:16px; color:#333; font-weight:bold; margin-bottom:8px;">이벤트가 종료되었습니다.</div>
-           <div style="font-size:13px; color:#888;">다음에 더 좋은 혜택으로 찾아뵙겠습니다.</div>
+           <div style="font-size:16px; color:#333; font-weight:bold; margin-bottom:8px;">프로모션 올인원 사용기간이 종료되었습니다.</div>
         `;
         root.appendChild(errDiv);
     }
