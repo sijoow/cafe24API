@@ -133,6 +133,7 @@
     
     function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
       return fetch(url, opts).then(res => {
+        // 429 에러 발생 시 재시도 로직 (재시도 횟수 소진 시 throw res)
         if (res.status === 429 && retries > 0) {
           return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
         }
@@ -142,23 +143,16 @@
     }
 
     // ────────────────────────────────────────────────────────────────
-    // ★ [핵심] 이벤트 만료/에러 시 처리 함수
+    // ★ [핵심 1] 이벤트 만료(409) 시 처리 함수
     // ────────────────────────────────────────────────────────────────
     function handleExpiration() {
-        // evt-root 찾기 (widget.js는 evt-root나 evt-images를 사용)
         let root = document.getElementById('evt-root') || document.getElementById('evt-images');
-        
-        // root가 없으면 body 맨 앞에 임시로 생성해서라도 메시지 표시
         if (!root) {
             root = document.createElement('div');
             root.id = 'evt-root';
             document.body.insertBefore(root, document.body.firstChild);
         }
-
-        // 1. 내용물 싹 비우기 (이미지, 비디오, 상품 등 제거)
         root.innerHTML = '';
-
-        // 2. 종료 안내 메시지 삽입
         const errDiv = document.createElement('div');
         errDiv.style.textAlign = 'center';
         errDiv.style.padding = '100px 0';
@@ -166,6 +160,23 @@
            <div style="font-size:16px; color:#333; font-weight:bold; margin-bottom:8px;">프로모션 올인원 사용기간이 종료되었습니다.</div>
         `;
         root.appendChild(errDiv);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // ★ [핵심 2] 트래픽 초과(429) 시 처리 함수 (.onimonLayout 숨김)
+    // ────────────────────────────────────────────────────────────────
+    function handleTrafficLimit() {
+        // 1. .onimonLayout 클래스를 가진 요소 숨김
+        const layouts = document.querySelectorAll('.onimonLayout');
+        layouts.forEach(el => {
+            el.style.display = 'none';
+        });
+
+        // 2. 혹시 몰라 evt-root도 숨김 처리 (안전장치)
+        const root = document.getElementById('evt-root') || document.getElementById('evt-images');
+        if (root) {
+            root.style.display = 'none';
+        }
     }
   
     // ────────────────────────────────────────────────────────────────
@@ -318,18 +329,26 @@
       renderProducts(ul, products, cols);
     } catch (err) {
       // ──────────────────────────────────────────────────────
-      // [수정] 상품 로드 중 409 등 치명적 에러 발생 시 종료 처리
+      // [수정] 429(트래픽) 또는 409(만료) 에러 처리
       // ──────────────────────────────────────────────────────
-      const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
       
-      if (isCriticalError) {
-        spinner.remove();
-        handleExpiration(); // 즉시 종료 처리
+      // 1. 429 (트래픽 초과) -> 레이아웃 숨김
+      if (err.status === 429) {
+        if (spinner.parentNode) spinner.remove();
+        handleTrafficLimit();
         return;
       }
 
-      // 일반 네트워크 오류 등은 기존대로 재시도 버튼 표시
-      spinner.remove();
+      // 2. 409 등 치명적 에러 -> 만료 메시지
+      const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
+      if (isCriticalError) {
+        if (spinner.parentNode) spinner.remove();
+        handleExpiration(); 
+        return;
+      }
+
+      // 3. 일반 에러 -> 재시도 버튼
+      if (spinner.parentNode) spinner.remove();
       const errDiv = document.createElement('div');
       errDiv.style.textAlign = 'center';
       errDiv.innerHTML = `<p style="color:#f00;">상품 로드에 실패했습니다.</p><button style="padding:6px 12px;cursor:pointer;">다시 시도</button>`;
@@ -525,6 +544,10 @@
       } catch (err) {
         console.error('EVENT LOAD ERROR', err);
         // 에러 상태 확인
+        if (err.status === 429) {
+            handleTrafficLimit();
+            return;
+        }
         const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
         if (isCriticalError) {
              handleExpiration();
