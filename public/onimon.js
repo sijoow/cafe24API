@@ -20,10 +20,7 @@
     const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
     const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
   
-    
-    // ────────────────────────────────────────────────────────────────
-    // 1) 유틸/트래킹
-    // ────────────────────────────────────────────────────────────────
+    // ... (유틸/트래킹 함수 등은 그대로 유지) ...
     const ua = navigator.userAgent;
     const device = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : 'PC';
     const visitorId = (() => {
@@ -72,30 +69,26 @@
       track(payload);
     });
   
-  
-    // ────────────────────────────────────────────────────────────────
-    // 2) 공통 헬퍼
-    // ────────────────────────────────────────────────────────────────
     function escapeHtml(s = '') { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
     function toBool(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
+    
     function fetchWithRetry(url, opts = {}, retries = 3, backoff = 1000) {
         return fetch(url, opts).then(res => {
             if (res.status === 429 && retries > 0) {
                 return new Promise(r => setTimeout(r, backoff)).then(() => fetchWithRetry(url, opts, retries - 1, backoff * 2));
             }
-            if (!res.ok) throw res;
+            if (!res.ok) throw res; 
             return res;
         });
     }
+
     function buildYouTubeSrc(id, autoplay = false, loop = false) {
         const params = new URLSearchParams({ autoplay: autoplay ? '1' : '0', mute: autoplay ? '1' : '0', playsinline: '1', rel: 0, modestbranding: 1, enablejsapi: 1 });
         if (loop) { params.set('loop', '1'); params.set('playlist', id); }
         return `https://www.youtube.com/embed/${id}?${params.toString()}`;
     }
   
-    // ────────────────────────────────────────────────────────────────
-    // 3) 블록 렌더링 함수들
-    // ────────────────────────────────────────────────────────────────
+    // ... (렌더링 함수들) ...
     function getRootContainer() {
       let root = document.getElementById('evt-root');
       if (!root) {
@@ -219,59 +212,68 @@
     }
 
     // ────────────────────────────────────────────────────────────────
-    // ★ [최후의 수단] 배너 삭제 함수 (반복 실행)
+    // ★ [궁극기] MutationObserver: 실시간으로 감시해서 즉결 처형
     // ────────────────────────────────────────────────────────────────
-    function nukeBanner() {
-        const targetIds = ['#evt-images', '.evt-images']; // ID와 Class 모두 타겟
+    function startEternalDestruction() {
+        console.warn('⚡ ACTIVATING BANNER DESTRUCTION PROTOCOL ⚡');
 
-        // 1. CSS 스타일 강제 주입 (헤더에 추가)
-        if (!document.getElementById('force-hide-banner')) {
-            const style = document.createElement('style');
-            style.id = 'force-hide-banner';
-            style.innerHTML = `
-                #evt-images, .evt-images {
+        // 1. 스타일 태그 주입 (투명망토)
+        if (!document.getElementById('force-kill-css')) {
+            const s = document.createElement('style');
+            s.id = 'force-kill-css';
+            // 모든 속성을 !important로 덮어서 아예 존재감 자체를 없앰
+            s.innerHTML = `
+                #evt-images, .evt-images,
+                #evt-images *, .evt-images * {
                     display: none !important;
                     visibility: hidden !important;
                     opacity: 0 !important;
-                    height: 0 !important;
                     width: 0 !important;
-                    overflow: hidden !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
+                    height: 0 !important;
+                    position: absolute !important;
+                    z-index: -9999 !important;
                     pointer-events: none !important;
+                    clip: rect(0,0,0,0) !important;
                 }
             `;
-            document.head.appendChild(style);
+            document.head.appendChild(s);
         }
 
-        // 2. DOM 요소 직접 찾아서 인라인 스타일 먹이고 삭제
-        targetIds.forEach(selector => {
-            const targets = document.querySelectorAll(selector);
-            targets.forEach(el => {
-                // 인라인 스타일로 display:none !important 강제 적용 (가장 강력함)
-                el.setAttribute('style', 'display: none !important; opacity: 0 !important; height: 0 !important;');
-                el.style.display = 'none';
-                
-                // DOM에서 제거
-                el.remove();
-            });
-        });
-    }
+        // 2. 현재 존재하는 놈들 즉시 제거
+        const kill = () => {
+            const targets = document.querySelectorAll('#evt-images, .evt-images');
+            targets.forEach(el => el.remove());
+        };
+        kill();
 
-    // 반복적으로 nukeBanner를 실행하는 함수 (3초간 0.1초 간격으로 계속 삭제 시도)
-    function startNukeLoop() {
-        nukeBanner(); // 즉시 실행
-        let count = 0;
-        const interval = setInterval(() => {
-            nukeBanner();
-            count++;
-            if (count > 30) clearInterval(interval); // 3초(30회) 후 중단
-        }, 100);
+        // 3. MutationObserver: 앞으로 생겨날 놈들도 감시해서 제거
+        // DOM 변경을 감지하는 가장 강력한 API
+        const observer = new MutationObserver((mutations) => {
+            let found = false;
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (node.nodeType === 1) { // Element node
+                        // ID나 Class가 일치하는지 확인
+                        if (node.id === 'evt-images' || node.classList.contains('evt-images') || node.querySelector('#evt-images, .evt-images')) {
+                            node.remove ? node.remove() : (node.style.display = 'none');
+                            found = true;
+                        }
+                    }
+                });
+            });
+            // 혹시 모르니 전체 스캔 한번 더
+            if(found) kill();
+        });
+
+        // body 전체를 감시 (자식의 자식까지 모두 포함 subtree: true)
+        observer.observe(document.body, { childList: true, subtree: true });
+        
+        // 4. 안전장치: 0.5초마다 강제 확인 (Interval)
+        // Observer가 놓칠 확률은 0에 가깝지만, 혹시 몰라 추가
+        setInterval(kill, 500);
     }
   
-    // ────────────────────────────────────────────────────────────────
-    // 4) 상품 데이터 로드 및 렌더링
-    // ────────────────────────────────────────────────────────────────
+    // ... (fetchProducts 등 유지) ...
     async function fetchProducts(directNosAttr, category, limit = 300) {
       const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
       
@@ -326,7 +328,7 @@
       } catch (err) {
         console.error('상품 로드 실패:', err);
 
-        // 에러 상태 체크 (409 만료, 404 없음, 기타 에러)
+        // 409(만료), 404, 400, 500 에러 체크
         const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
 
         if (ul.parentNode) {
@@ -337,9 +339,9 @@
           ul.parentNode.insertBefore(errDiv, ul);
         }
 
-        // 에러 발생 시 반복 삭제 시작
+        // ★ 에러 발생 시 궁극기(Observer) 발동
         if (isCriticalError) {
-             startNukeLoop();
+             startEternalDestruction();
         }
 
       } finally {
@@ -352,7 +354,7 @@
   
     function renderProducts(ul, products, cols) {
         ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
-        
+        // ... (renderProducts 내부 코드는 기존과 동일하므로 줄임) ...
         const titleFontSize = `${18 - cols}px`;
         const originalPriceFontSize = `${16 - cols}px`;
         const salePriceFontSize = `${18 - cols}px`;
