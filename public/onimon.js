@@ -291,7 +291,7 @@
              errDiv.style.textAlign = 'center';
              errDiv.style.padding = '100px 0';
              errDiv.innerHTML = `
-                <div style="font-size:16px; color:#333; font-weight:bold; margin-bottom:8px;">기간이 만료 되었습니다.</div>
+                <div style="font-size:16px; color:#333; font-weight:bold; margin-bottom:8px;">프로모션 올인원 사용기간이 종료되었습니다.</div>
              `;
              
              // 3. 깨끗해진 root에 메시지만 추가
