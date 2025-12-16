@@ -20,7 +20,9 @@
     const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
     const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
   
-    // ... (유틸/트래킹 함수 등은 그대로 유지) ...
+    // ────────────────────────────────────────────────────────────────
+    // 1) 유틸/트래킹
+    // ────────────────────────────────────────────────────────────────
     const ua = navigator.userAgent;
     const device = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : 'PC';
     const visitorId = (() => {
@@ -69,6 +71,9 @@
       track(payload);
     });
   
+    // ────────────────────────────────────────────────────────────────
+    // 2) 공통 헬퍼
+    // ────────────────────────────────────────────────────────────────
     function escapeHtml(s = '') { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
     function toBool(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
     
@@ -88,7 +93,9 @@
         return `https://www.youtube.com/embed/${id}?${params.toString()}`;
     }
   
-    // ... (렌더링 함수들) ...
+    // ────────────────────────────────────────────────────────────────
+    // 3) 블록 렌더링 함수들
+    // ────────────────────────────────────────────────────────────────
     function getRootContainer() {
       let root = document.getElementById('evt-root');
       if (!root) {
@@ -210,70 +217,10 @@
       }
       root.appendChild(groupWrapper);
     }
-
-    // ────────────────────────────────────────────────────────────────
-    // ★ [궁극기] MutationObserver: 실시간으로 감시해서 즉결 처형
-    // ────────────────────────────────────────────────────────────────
-    function startEternalDestruction() {
-        console.warn('⚡ ACTIVATING BANNER DESTRUCTION PROTOCOL ⚡');
-
-        // 1. 스타일 태그 주입 (투명망토)
-        if (!document.getElementById('force-kill-css')) {
-            const s = document.createElement('style');
-            s.id = 'force-kill-css';
-            // 모든 속성을 !important로 덮어서 아예 존재감 자체를 없앰
-            s.innerHTML = `
-                #evt-images, .evt-images,
-                #evt-images *, .evt-images * {
-                    display: none !important;
-                    visibility: hidden !important;
-                    opacity: 0 !important;
-                    width: 0 !important;
-                    height: 0 !important;
-                    position: absolute !important;
-                    z-index: -9999 !important;
-                    pointer-events: none !important;
-                    clip: rect(0,0,0,0) !important;
-                }
-            `;
-            document.head.appendChild(s);
-        }
-
-        // 2. 현재 존재하는 놈들 즉시 제거
-        const kill = () => {
-            const targets = document.querySelectorAll('#evt-images, .evt-images');
-            targets.forEach(el => el.remove());
-        };
-        kill();
-
-        // 3. MutationObserver: 앞으로 생겨날 놈들도 감시해서 제거
-        // DOM 변경을 감지하는 가장 강력한 API
-        const observer = new MutationObserver((mutations) => {
-            let found = false;
-            mutations.forEach((mutation) => {
-                mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === 1) { // Element node
-                        // ID나 Class가 일치하는지 확인
-                        if (node.id === 'evt-images' || node.classList.contains('evt-images') || node.querySelector('#evt-images, .evt-images')) {
-                            node.remove ? node.remove() : (node.style.display = 'none');
-                            found = true;
-                        }
-                    }
-                });
-            });
-            // 혹시 모르니 전체 스캔 한번 더
-            if(found) kill();
-        });
-
-        // body 전체를 감시 (자식의 자식까지 모두 포함 subtree: true)
-        observer.observe(document.body, { childList: true, subtree: true });
-        
-        // 4. 안전장치: 0.5초마다 강제 확인 (Interval)
-        // Observer가 놓칠 확률은 0에 가깝지만, 혹시 몰라 추가
-        setInterval(kill, 500);
-    }
   
-    // ... (fetchProducts 등 유지) ...
+    // ────────────────────────────────────────────────────────────────
+    // 4) 상품 데이터 로드 및 렌더링
+    // ────────────────────────────────────────────────────────────────
     async function fetchProducts(directNosAttr, category, limit = 300) {
       const fetchOpts = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
       
@@ -328,20 +275,38 @@
       } catch (err) {
         console.error('상품 로드 실패:', err);
 
-        // 409(만료), 404, 400, 500 에러 체크
+        // 에러 상태 체크 (409 만료, 404 없음, 기타 에러)
         const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
 
+        // ★★★ 여기가 수정된 부분입니다 ★★★
+        // evt-root를 찾아서 내용을 비우고 텍스트만 넣습니다.
+        const rootContainer = document.getElementById('evt-root');
+        
+        if (rootContainer && isCriticalError) {
+             // 1. 기존에 그려진 모든 것(이미지 배너, 비디오, 상품리스트)을 싹 지웁니다.
+             rootContainer.innerHTML = ''; 
+
+             // 2. 안내 메시지 생성
+             const errDiv = document.createElement('div');
+             errDiv.style.textAlign = 'center';
+             errDiv.style.padding = '100px 0';
+             errDiv.innerHTML = `
+                <div style="font-size:16px; color:#333; font-weight:bold; margin-bottom:8px;">이벤트가 종료되었습니다.</div>
+                <div style="font-size:13px; color:#888;">다음에 더 좋은 혜택으로 찾아뵙겠습니다.</div>
+             `;
+             
+             // 3. 깨끗해진 root에 메시지만 추가
+             rootContainer.appendChild(errDiv);
+             return; // 더 이상 실행하지 않음
+        }
+
+        // 혹시 root를 못 찾았거나 기타 에러인 경우 기존 방식대로 ul 위에 메시지 표시
         if (ul.parentNode) {
           const errDiv = document.createElement('div');
           errDiv.style.textAlign = 'center';
           errDiv.style.padding = '50px 0';
-          errDiv.innerHTML = `<p style="color:#666; font-size:14px; margin: 0;">이벤트가 종료되었거나 정보를 불러올 수 없습니다.</p>`;
+          errDiv.innerHTML = `<p style="color:#666; font-size:14px; margin: 0;">정보를 불러올 수 없습니다.</p>`;
           ul.parentNode.insertBefore(errDiv, ul);
-        }
-
-        // ★ 에러 발생 시 궁극기(Observer) 발동
-        if (isCriticalError) {
-             startEternalDestruction();
         }
 
       } finally {
@@ -354,7 +319,7 @@
   
     function renderProducts(ul, products, cols) {
         ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; max-width:800px; margin:24px auto; list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
-        // ... (renderProducts 내부 코드는 기존과 동일하므로 줄임) ...
+        
         const titleFontSize = `${18 - cols}px`;
         const originalPriceFontSize = `${16 - cols}px`;
         const salePriceFontSize = `${18 - cols}px`;
