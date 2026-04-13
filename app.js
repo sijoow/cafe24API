@@ -1,4 +1,4 @@
-// app.js (보안 강화 전체 코드)
+// app.js (보안 및 토큰 경합 문제 해결 적용 버전)
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
 const cron = require('node-cron');
@@ -177,6 +177,30 @@ async function apiRequest(mallId, method, url, data = {}, params = {}) {
         });
         return retry.data;
       } catch (_e) {
+        // ✨ [수정된 부분] 1. 토큰 갱신 경합 방지 로직 (Race Condition)
+        // 갱신 중 에러가 났을 때 바로 지우지 않고 DB를 확인하여 다른 프로세스가 갱신했는지 체크합니다.
+        const currentDoc = await db.collection('token').findOne({ mallId });
+        
+        if (currentDoc && currentDoc.accessToken !== doc.accessToken) {
+          console.log(`♻️ [REFRESH RACE] 다른 요청이 토큰 갱신에 성공했습니다. 새 토큰으로 재시도합니다. (${mallId})`);
+          try {
+            const retryWithNewToken = await axios({
+              method, url, data, params,
+              headers: {
+                Authorization: `Bearer ${currentDoc.accessToken}`,
+                'Content-Type': 'application/json',
+                'X-Cafe24-Api-Version': CAFE24_API_VERSION
+              }
+            });
+            return retryWithNewToken.data;
+          } catch (retryErr) {
+             // 새 토큰으로도 실패하면 진짜 문제가 있는 상태
+             console.warn(`[API FAIL AFTER RETRY] Removing token for ${mallId}`);
+             await db.collection('token').deleteOne({ mallId });
+             throw installRequired(mallId);
+          }
+        }
+
         console.warn(`[REFRESH FAIL] Removing token for ${mallId}`);
         await db.collection('token').deleteOne({ mallId });
         throw installRequired(mallId);
@@ -249,8 +273,9 @@ app.get('/auth/callback', async (req, res) => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${creds}` }
     });  
 
-    const expiresIn = data.expires_in;
-    const expiresAt = new Date(Date.now() + expiresIn * 1000); 
+    // ✨ [수정된 부분] 2. Cafe24 응답(data.expires_at)을 기준으로 정확한 만료 시간 세팅
+    const expiresAt = new Date(data.expires_at);
+    const expiresIn = Math.round((expiresAt.getTime() - Date.now()) / 1000);
 
     await db.collection('token').updateOne(
       { mallId },
@@ -426,7 +451,6 @@ app.post('/api/:mallId/track', checkMallInstallation, async (req, res) => {
 
     // 상품 클릭 통계 (prdClick_)
     if (type === 'click' && element === 'product' && productNo) {
-       // 상품명 가져오기 (만료 시 409 에러 발생 -> catch로 빠짐)
        let productName = null;
        try {
          const pRes = await apiRequest(mallId, 'GET', `https://${mallId}.cafe24api.com/api/v2/admin/products/${productNo}`, {}, {shop_no:1});
@@ -460,7 +484,6 @@ app.post('/api/:mallId/track', checkMallInstallation, async (req, res) => {
     res.sendStatus(204);
   } catch (err) {
     console.error(err);
-    // 409 에러(설치안됨)면 프론트로 전달
     if (err?.installRequired) return res.status(409).json(err.payload);
     res.status(500).json({ error: 'Track failed' });
   }
