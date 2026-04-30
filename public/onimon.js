@@ -103,7 +103,7 @@
     }
 
     /**
-     * [신규] 카페24 상품 URL을 iOS Safari에서 안전한 형태로 정규화
+     * 카페24 상품 URL을 iOS Safari에서 안전한 형태로 정규화
      *
      * 운영자가 등록한 URL 예시:
      *   https://meliens.com/product/💗5월-한정💗.../230/category/24/display/1/
@@ -115,9 +115,12 @@
      * "0KB 파일 다운로드" 화면 이슈를 방지할 수 있음.
      */
     function normalizeHref(rawHref) {
-        if (!rawHref) return rawHref;
+        if (!rawHref) return null;
         let href = String(rawHref).trim();
-        if (!href) return href;
+        if (!href || href === '#') return null;
+
+        // 숫자만 있거나 너무 짧은 비정상 값 차단 (예: "1", "12")
+        if (/^\d+$/.test(href) || href.length < 4) return null;
 
         // 카페24 상품 URL 패턴: /product/{슬러그}/{product_no}/category/{cate_no}/...
         const m = href.match(/\/product\/[^\/]+\/(\d+)(?:\/category\/(\d+))?/);
@@ -129,10 +132,20 @@
                 href = `${u.origin}/product/detail.html?product_no=${productNo}`
                      + (cateNo ? `&cate_no=${cateNo}` : '');
             } catch (e) {
-                // URL 파싱 실패 시 원본 유지
+                return null;
             }
         }
-        return href;
+
+        // 최종 URL 유효성 검증
+        try {
+            const finalUrl = /^https?:\/\//i.test(href) ? href : `https://${href}`;
+            const u = new URL(finalUrl);
+            // 호스트명에 점(.)이 없으면 비정상 (예: https://1)
+            if (!u.hostname.includes('.')) return null;
+            return finalUrl;
+        } catch (e) {
+            return null;
+        }
     }
   
     // ────────────────────────────────────────────────────────────────
@@ -165,13 +178,16 @@
           btn.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; border:none; cursor:pointer; background:transparent;`;
           wrap.appendChild(btn);
         } else if (r.href) {
-          // [수정] 카페24 상품 URL이면 ASCII 단축형으로 자동 변환
+          // 카페24 상품 URL이면 ASCII 단축형으로 자동 변환
           // (운영자가 등록한 이모지/한글 포함 URL이 iOS Safari에서
           //  다운로드 화면으로 빠지는 문제 방지)
           const safeHref = normalizeHref(r.href);
 
+          // 비정상 URL이면 링크 자체를 만들지 않음 (iOS Safari 다운로드 다이얼로그 방지)
+          if (!safeHref) return;
+
           const a = document.createElement('a');
-          a.href = /^https?:\/\//i.test(safeHref) ? safeHref : `https://${safeHref}`;
+          a.href = safeHref;
           a.target = '_blank';
           a.rel = 'noopener noreferrer';
           a.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; display:block;`;
@@ -325,7 +341,6 @@
         // 에러 상태 체크 (409 만료, 404 없음, 기타 에러)
         const isCriticalError = err && (err.status === 409 || err.status === 404 || err.status === 400 || err.status >= 500);
 
-        // ★★★ 여기가 수정된 부분입니다 ★★★
         // evt-root를 찾아서 내용을 비우고 텍스트만 넣습니다.
         const rootContainer = document.getElementById('evt-root');
         
@@ -567,11 +582,41 @@
         });
     };
   
+    /**
+     * 쿠폰 다운로드 (iOS Safari 대응 패치 적용)
+     *
+     * 변경점:
+     *  1) 쿠폰 번호 형식 검증 (영숫자만 허용) — 잘못된 값으로 인한
+     *     카페24 서버의 비정상 응답("1" 등) → iOS 다운로드 다이얼로그 방지
+     *  2) window.open 대신 임시 <a target="_blank"> 태그 클릭 방식 사용
+     *     - iOS Safari에서 사용자 제스처 컨텍스트가 명확히 유지되어
+     *       팝업 차단 / 다운로드 오인 케이스를 줄임
+     */
     window.downloadCoupon = (coupons) => {
         const list = String(coupons || '').split(',').map(s => s.trim()).filter(Boolean);
-        if (list.length === 0) return;
-        const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${encodeURIComponent(list.join(','))}`;
-        window.open(url + `&opener_url=${encodeURIComponent(location.href)}`);
+        if (list.length === 0) {
+            alert('쿠폰 정보가 없습니다.');
+            return;
+        }
+
+        // 쿠폰 번호 형식 검증 (카페24 쿠폰번호는 보통 영숫자 조합)
+        const validCoupons = list.filter(c => /^[a-zA-Z0-9]+$/.test(c));
+        if (validCoupons.length === 0) {
+            alert('유효하지 않은 쿠폰입니다.');
+            return;
+        }
+
+        const url = `/exec/front/newcoupon/IssueDownload?coupon_no=${encodeURIComponent(validCoupons.join(','))}&opener_url=${encodeURIComponent(location.href)}`;
+
+        // iOS Safari 대응: window.open 대신 임시 <a> 태그 클릭 방식
+        // 사용자 제스처 컨텍스트를 명확히 유지하고, target=_blank로 새 탭 처리
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
     };
   
     initializePage();
