@@ -27,12 +27,17 @@
     const device = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : 'PC';
     const visitorId = (() => {
       const key = 'appVisitorId';
-      let id = localStorage.getItem(key);
-      if (!id) {
-        id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
-        localStorage.setItem(key, id);
+      try {
+        let id = localStorage.getItem(key);
+        if (!id) {
+          id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
+          localStorage.setItem(key, id);
+        }
+        return id;
+      } catch (e) {
+        // iOS 시크릿 모드 / ITP 환경 대응
+        return (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
       }
-      return id;
     })();
   
     const pad = n => String(n).padStart(2, '0');
@@ -41,11 +46,15 @@
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     }
     function shouldTrack() {
-      if (/[?&]track=true/.test(location.search)) return true;
-      const key = `tracked_${pageId}_${visitorId}_${today()}`;
-      if (sessionStorage.getItem(key)) return false;
-      sessionStorage.setItem(key, '1');
-      return true;
+      try {
+        if (/[?&]track=true/.test(location.search)) return true;
+        const key = `tracked_${pageId}_${visitorId}_${today()}`;
+        if (sessionStorage.getItem(key)) return false;
+        sessionStorage.setItem(key, '1');
+        return true;
+      } catch (e) {
+        return true;
+      }
     }
     function track(payload) {
       fetch(`${API_BASE}/api/${mallId}/track`, {
@@ -92,6 +101,39 @@
         if (loop) { params.set('loop', '1'); params.set('playlist', id); }
         return `https://www.youtube.com/embed/${id}?${params.toString()}`;
     }
+
+    /**
+     * [신규] 카페24 상품 URL을 iOS Safari에서 안전한 형태로 정규화
+     *
+     * 운영자가 등록한 URL 예시:
+     *   https://meliens.com/product/💗5월-한정💗.../230/category/24/display/1/
+     *
+     * 변환 결과:
+     *   https://meliens.com/product/detail.html?product_no=230&cate_no=24
+     *
+     * 이렇게 변환하면 이모지/한글이 사라져 iOS Safari에서 발생하는
+     * "0KB 파일 다운로드" 화면 이슈를 방지할 수 있음.
+     */
+    function normalizeHref(rawHref) {
+        if (!rawHref) return rawHref;
+        let href = String(rawHref).trim();
+        if (!href) return href;
+
+        // 카페24 상품 URL 패턴: /product/{슬러그}/{product_no}/category/{cate_no}/...
+        const m = href.match(/\/product\/[^\/]+\/(\d+)(?:\/category\/(\d+))?/);
+        if (m) {
+            try {
+                const u = new URL(/^https?:\/\//i.test(href) ? href : `https://${href}`);
+                const productNo = m[1];
+                const cateNo = m[2];
+                href = `${u.origin}/product/detail.html?product_no=${productNo}`
+                     + (cateNo ? `&cate_no=${cateNo}` : '');
+            } catch (e) {
+                // URL 파싱 실패 시 원본 유지
+            }
+        }
+        return href;
+    }
   
     // ────────────────────────────────────────────────────────────────
     // 3) 블록 렌더링 함수들
@@ -123,8 +165,13 @@
           btn.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; border:none; cursor:pointer; background:transparent;`;
           wrap.appendChild(btn);
         } else if (r.href) {
+          // [수정] 카페24 상품 URL이면 ASCII 단축형으로 자동 변환
+          // (운영자가 등록한 이모지/한글 포함 URL이 iOS Safari에서
+          //  다운로드 화면으로 빠지는 문제 방지)
+          const safeHref = normalizeHref(r.href);
+
           const a = document.createElement('a');
-          a.href = /^https?:\/\//i.test(r.href) ? r.href : `https://${r.href}`;
+          a.href = /^https?:\/\//i.test(safeHref) ? safeHref : `https://${safeHref}`;
           a.target = '_blank';
           a.rel = 'noopener noreferrer';
           a.style.cssText = `position:absolute; left:${l}%; top:${t}%; width:${w}%; height:${h}%; display:block;`;
