@@ -381,7 +381,7 @@
               ul.dataset.thumbRadius = block.thumbRadius || 'square';
               ul.dataset.iconPosition = block.iconPosition || 'off';
               ul.dataset.cardStyle = JSON.stringify(block.cardStyle || {});
-              ul.dataset.rolling = JSON.stringify(block.rolling || {});
+              ul.dataset.rolling = JSON.stringify((block.tabRolling && block.tabRolling[i]) || {});
               ul.dataset.soldOutNos = JSON.stringify(block.soldOutNos || []);
               if (block.registerMode === 'direct') {
                   const directNos = (block.tabDirectProducts?.[i] || []).map(p => p.product_no).join(',');
@@ -576,7 +576,7 @@
       const ac = (sw && sw.activeColor) || '#333333';
       const uid = 'spl' + Math.random().toString(36).slice(2, 8);
       rootEl.classList.add(uid);
-      let css = `.${uid} .splide__pagination__page.is-active{background:${ac};}.${uid} .splide__arrow{background:${ac};}.${uid} .splide__arrow svg{fill:#fff;}`;
+      let css = `.${uid} .splide__pagination{position:static;margin-top:10px;}.${uid} .splide__pagination__page{width:6px;height:6px;background:#ddd;opacity:1;border-radius:3px;margin:0 3px;transition:all .2s;}.${uid} .splide__pagination__page.is-active{width:16px;background:${ac};transform:none;border-radius:3px;}.${uid} .splide__arrow{background:${ac};}.${uid} .splide__arrow svg{fill:#fff;}`;
       if (!sw || sw.arrowHover !== false) {
         css += `.${uid} .splide__arrow{opacity:0;transition:opacity .25s;}.${uid}:hover .splide__arrow{opacity:1;}`;
       }
@@ -808,7 +808,7 @@
       const perPage = Math.max(1, Number(sw.perView) || 1);
       const frac = Math.abs(perPage - Math.round(perPage)) > 0.01;
       const opts = {
-        gap: perPage > 1 ? '12px' : '0',
+        gap: (sw.gap != null ? sw.gap : (perPage > 1 ? 12 : 0)) + 'px',
         type: sw.loop !== false ? 'loop' : 'slide',
         arrows: sw.arrows !== false,
         pagination: sw.pagination !== false,
@@ -830,7 +830,7 @@
         const track = rootEl.querySelector('.splide__track');
         const list = rootEl.querySelector('.splide__list');
         if (track) track.style.cssText = 'overflow-x:auto; scroll-snap-type:x mandatory; -webkit-overflow-scrolling:touch;';
-        if (list) list.style.cssText = 'display:flex; gap:12px; list-style:none; padding:0; margin:0;';
+        if (list) list.style.cssText = `display:flex; gap:${sw.gap != null ? sw.gap : 12}px; list-style:none; padding:0; margin:0;`;
         rootEl.querySelectorAll('.splide__slide').forEach(li => { li.style.cssText = `flex:0 0 ${100 / perPage}%; scroll-snap-align:start;`; });
       });
     }
