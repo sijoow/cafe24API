@@ -21,6 +21,9 @@
     let couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
     // 이벤트 전체 페이지 최대 너비 (미설정 시 800px)
     const pageMaxWidth = parseInt(script.dataset.pageMaxWidth, 10) || 800;
+    // 타임세일 카운트다운 기준 시각 보정: 서버(Date 헤더) - 클라이언트. 방문자 PC 시계 조작 방지.
+    let serverTimeOffset = 0;
+    const nowServer = () => Date.now() + serverTimeOffset;
   
     // ────────────────────────────────────────────────────────────────
     // 1) 유틸/트래킹
@@ -258,6 +261,10 @@
       wrapper.style.textAlign = st.align || 'center';
       wrapper.style.marginTop = `${st.mt ?? 16}px`;
       wrapper.style.marginBottom = `${st.mb ?? 16}px`;
+      // 텍스트도 페이지 최대 너비(콘텐츠 컬럼)에 맞춰 정렬되도록 제한 — 화면 전체가 아닌 콘텐츠 기준 중앙/좌/우 정렬
+      wrapper.style.maxWidth = `${pageMaxWidth}px`;
+      wrapper.style.marginLeft = 'auto';
+      wrapper.style.marginRight = 'auto';
       const inner = document.createElement('div');
       inner.style.fontSize = `${st.fontSize || 18}px`;
       inner.style.fontWeight = st.fontWeight || 'normal';
@@ -346,7 +353,7 @@
           const tabsContainer = document.createElement('div');
           tabsContainer.className = `tabs_${pageId}`;
           tabsContainer.style.maxWidth = '100%';
-          tabsContainer.style.margin = '16px 0';
+          tabsContainer.style.margin = '16px 0 8px';
           // tabsPerRow 가 2 이상이면 grid 로 줄바꿈 (탭 줄당 개수)
           if (block.tabsPerRow && Number(block.tabsPerRow) >= 2) {
               const n = Number(block.tabsPerRow);
@@ -638,7 +645,8 @@
         const soldOutSet = new Set((() => { try { return JSON.parse(ul.dataset.soldOutNos || '[]'); } catch (e) { return []; } })().map(String));
         const ipos = iconPosition === 'top-right' ? 'top:8px;right:8px;left:auto;bottom:auto;' : iconPosition === 'bottom-left' ? 'bottom:8px;left:8px;top:auto;right:auto;' : iconPosition === 'bottom-right' ? 'bottom:8px;right:8px;top:auto;left:auto;' : 'top:8px;left:8px;right:auto;bottom:auto;';
         let widthCss;
-        if (widthMode === 'fill' || widthMode === 'full') widthCss = 'width:100%; max-width:100%; margin:24px 0;';
+        if (widthMode === 'fill') widthCss = 'width:100%; max-width:100%; margin:0 0 24px;';
+        else if (widthMode === 'full') widthCss = 'width:100%; max-width:100%; margin:24px 0;';
         else widthCss = `max-width:${pageMaxWidth}px; margin:24px auto;`;
         if (!rolling) ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; ${widthCss} list-style:none; padding:0; font-family:inherit;`;
         
@@ -859,7 +867,7 @@
         const pad = n => String(n).padStart(2, '0');
         let timer = null;
         const tick = () => {
-          let diff = end - Date.now();
+          let diff = end - nowServer();
           if (diff <= 0) { cdEl.textContent = '종료되었습니다'; if (timer) clearInterval(timer); return; }
           const d = Math.floor(diff / 86400000); diff -= d * 86400000;
           const h = Math.floor(diff / 3600000); diff -= h * 3600000;
@@ -885,6 +893,8 @@
       try {
         const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}`);
         if (!response.ok) throw new Error('Event data fetch failed');
+        // 서버 시간 보정(응답 Date 헤더 기준) — 카운트다운을 클라이언트 시계 대신 서버 시각으로 계산
+        try { const sd = response.headers.get('date'); if (sd) { const t = new Date(sd).getTime(); if (isFinite(t)) serverTimeOffset = t - Date.now(); } } catch (e) {}
         const ev = await response.json();
 
         // 쿠폰 런타임 병합 — 이벤트에 저장된 couponNos 를 합쳐 임베드 재복사 없이 "저장만으로" 쿠폰 반영

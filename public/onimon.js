@@ -548,7 +548,7 @@
         const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}`);
         if (!response.ok) throw new Error('Event data fetch failed');
         const ev = await response.json();
-        
+
         const root = getRootContainer();
   
         if (ev.content && Array.isArray(ev.content.blocks)) {

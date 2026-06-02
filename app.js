@@ -1,6 +1,22 @@
 // app.js (보안 및 토큰 경합 문제 해결 적용 버전)
 require('dotenv').config();
 process.env.TZ = 'Asia/Seoul';
+
+// [DNS 가드] 일부 Windows/WSL 환경에서 Node가 DNS 서버를 127.0.0.1로 잡아
+// mongodb+srv 의 SRV 조회가 ECONNREFUSED 로 실패하는 경우가 있다.
+// 시스템 리졸버가 루프백뿐일 때만 공개 DNS로 대체한다. (정상 환경은 그대로 둠)
+{
+  const dns = require('dns');
+  try {
+    const servers = dns.getServers();
+    if (!servers.length || servers.every(s => s === '127.0.0.1' || s === '::1')) {
+      dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+      console.log('[DNS] 시스템 리졸버가 루프백이라 공개 DNS로 대체:', dns.getServers());
+    }
+  } catch (e) {
+    console.warn('[DNS] 설정 확인 실패:', e.message);
+  }
+}
 const cron = require('node-cron');
 const express = require('express');
 const path = require('path');
@@ -370,6 +386,9 @@ app.post('/api/:mallId/events', checkMallInstallation, async (req, res) => {
       gridSize: payload.gridSize,
       layoutType: payload.layoutType || 'none',
       classification: payload.classification || {},
+      couponNos: Array.isArray(payload.couponNos) ? payload.couponNos : [],
+      pageMaxWidth: payload.pageMaxWidth || null,
+      renderer: payload.renderer || null, // 'eventOnimon' = 신규 렌더러. null/없음 = 기존 onimon.js
       createdAt: new Date(), updatedAt: new Date()
     };
     const result = await db.collection('events').insertOne(doc);
@@ -555,8 +574,17 @@ app.get('/api/:mallId/analytics/:pageId/coupon-clicks', checkMallInstallation, a
 app.get('/api/:mallId/analytics/:pageId/urls', checkMallInstallation, async (req, res) => {
     const { mallId, pageId } = req.params;
     try {
-        const urls = await db.collection(`visits_${mallId}`).distinct('pageUrl', { pageId });
-        res.json(urls);
+        // 같은 이벤트가 여러 URL에 깔리는 경우가 많으므로, 최근 방문(lastVisit)이 늦은 URL이
+        // 먼저 오도록 정렬해 반환한다. (대시보드에서 "대표/최근 URL"이 맨 위에 오도록)
+        // 응답 형태는 기존과 동일한 문자열 배열 — 다른 통계 페이지(PageView/InflowEnvironment) 호환 유지.
+        const rows = await db.collection(`visits_${mallId}`).aggregate([
+            { $match: { pageId } },
+            { $group: { _id: '$pageUrl', lastVisit: { $max: '$lastVisit' } } },
+            { $match: { _id: { $ne: null } } },
+            { $sort: { lastVisit: -1 } },
+            { $project: { _id: 0, url: '$_id' } }
+        ]).toArray();
+        res.json(rows.map(r => r.url));
     } catch(e) { res.status(500).json({error: 'Analytics error'}); }
 });
 
@@ -681,6 +709,96 @@ app.get('/api/:mallId/coupons', checkMallInstallation, async (req, res) => {
     } catch(err) { replyInstallGuard(res, err, 'Fail'); }
 });
 
+// 혜택(Benefits) 조회 — 기간할인(타임세일) 등. scope: mall.read_promotion (현재 보유)
+// 타임세일 기능의 실제 Benefits 스키마 확인 + 목록 표시에 사용.
+app.get('/api/:mallId/benefits', checkMallInstallation, async (req, res) => {
+    const { mallId } = req.params;
+    try {
+        // 전체 페이지 조회(혜택이 100개를 넘어도 모두 가져옴). Cafe24 limit 최대 100.
+        const baseParams = { shop_no: 1, limit: 100 };
+        if (req.query.benefit_division) baseParams.benefit_division = req.query.benefit_division;
+        const all = []; let offset = 0;
+        while (true) {
+            const { benefits = [] } = await apiRequest(mallId, 'GET', `https://${mallId}.cafe24api.com/api/v2/admin/benefits`, {}, { ...baseParams, offset });
+            if (!benefits.length) break;
+            all.push(...benefits); offset += benefits.length;
+            if (benefits.length < 100) break;   // 마지막 페이지
+            if (offset >= 5000) break;           // 안전 상한
+        }
+        res.json(all);
+    } catch(err) { replyInstallGuard(res, err, 'Fail'); }
+});
+
+// 혜택(Benefits) 단건 상세 — 할인율/할인액 등 전체 필드 확인용. scope: mall.read_promotion
+app.get('/api/:mallId/benefits/:benefitNo', checkMallInstallation, async (req, res) => {
+    const { mallId, benefitNo } = req.params;
+    try {
+        const data = await apiRequest(mallId, 'GET', `https://${mallId}.cafe24api.com/api/v2/admin/benefits/${benefitNo}`, {}, { shop_no: 1 });
+        res.json(data.benefit || data);
+    } catch(err) { replyInstallGuard(res, err, 'Fail'); }
+});
+
+// 기간할인(타임세일) 생성 — Cafe24 Benefits API. scope: mall.write_promotion (재동의 필요)
+// 실제 yogibo 데이터로 확인한 스키마(benefit_division:D / benefit_type:DP / period_sale) 기반.
+app.post('/api/:mallId/benefits', checkMallInstallation, async (req, res) => {
+  const { mallId } = req.params;
+  try {
+    const {
+      benefit_name,
+      start_date, end_date,           // 'YYYY-MM-DDTHH:mm:ss+09:00'
+      discount_value,                 // 숫자/문자 (예: 20, '20.00')
+      discount_value_unit = 'P',      // 'P'(%) | 'W'(원)
+      product_list = [],              // 대상 상품번호 배열
+      platform_types = ['P', 'M', 'A'],
+    } = req.body || {};
+
+    if (!benefit_name || !start_date || !end_date || discount_value == null || !product_list.length) {
+      return res.status(400).json({ error: 'benefit_name, start_date, end_date, discount_value, product_list(1개 이상) 필수' });
+    }
+
+    // Cafe24 Admin API 표준 바디 래퍼: { shop_no, request: { ... } }
+    const body = {
+      shop_no: 1,
+      request: {
+        shop_no: 1,
+        benefit_name,
+        benefit_division: 'D',        // Discount(할인)
+        benefit_type: 'DP',           // 기간할인
+        use_benefit_period: 'T',
+        benefit_start_date: start_date,
+        benefit_end_date: end_date,
+        platform_types,
+        use_group_binding: 'A',       // 전체 회원
+        product_binding_type: 'P',    // 상품 지정
+        use_except_category: 'F',
+        available_coupon: 'F',
+        period_sale: {
+          product_list: product_list.map(Number),
+          discount_value: String(discount_value),
+          discount_value_unit,        // 'P' | 'W'
+          discount_truncation_unit: 'F',
+        },
+      },
+    };
+
+    const data = await apiRequest(mallId, 'POST', `https://${mallId}.cafe24api.com/api/v2/admin/benefits`, body, {});
+    res.json(data.benefit || data);
+  } catch (err) {
+    replyInstallGuard(res, err, '기간할인 생성 실패 — mall.write_promotion 권한이 필요하며, 앱 재설치(재동의)가 되어 있어야 합니다.');
+  }
+});
+
+// 기간할인(타임세일) 삭제 — scope: mall.write_promotion
+app.delete('/api/:mallId/benefits/:benefitNo', checkMallInstallation, async (req, res) => {
+  const { mallId, benefitNo } = req.params;
+  try {
+    const data = await apiRequest(mallId, 'DELETE', `https://${mallId}.cafe24api.com/api/v2/admin/benefits/${benefitNo}`, {}, { shop_no: 1 });
+    res.json(data);
+  } catch (err) {
+    replyInstallGuard(res, err, '기간할인 삭제 실패 — mall.write_promotion 권한 필요.');
+  }
+});
+
 app.get('/api/:mallId/products', checkMallInstallation, async (req, res) => {
     const { mallId } = req.params;
     try {
@@ -747,10 +865,10 @@ app.get('/api/:mallId/categories/:category_no/products', checkMallInstallation, 
         
         // 쿠폰 계산
         const couponInfos = validCoupons.map(coupon => {
-            const pList = coupon.available_product_list || [];
-            const cList = coupon.available_category_list || [];
-            const prodOk = coupon.available_product==='U' || (coupon.available_product==='I'&&pList.includes(p.product_no)) || (coupon.available_product==='E'&&!pList.includes(p.product_no));
-            const catOk = coupon.available_category==='U' || (coupon.available_category==='I'&&cList.includes(parseInt(category_no))) || (coupon.available_category==='E'&&!cList.includes(parseInt(category_no)));
+            const pList = (coupon.available_product_list || []).map(String);
+            const cList = (coupon.available_category_list || []).map(String);
+            const prodOk = coupon.available_product==='U' || (coupon.available_product==='I'&&pList.includes(String(p.product_no))) || (coupon.available_product==='E'&&!pList.includes(String(p.product_no)));
+            const catOk = coupon.available_category==='U' || (coupon.available_category==='I'&&cList.includes(String(category_no))) || (coupon.available_category==='E'&&!cList.includes(String(category_no)));
             if (!prodOk || !catOk) return null;
             const orig = parseFloat(p.price);
             const pct = parseFloat(coupon.benefit_percentage||0);
@@ -823,8 +941,9 @@ app.get('/api/:mallId/products/:product_no', checkMallInstallation, async (req, 
         const validCoupons = coupons.filter(Boolean);
         let benefit_price = null, benefit_percentage = null;
         validCoupons.forEach(coupon => {
-            const pList = coupon.available_product_list || [];
-            const ok = coupon.available_product==='U' || (coupon.available_product==='I'&&pList.includes(parseInt(product_no))) || (coupon.available_product==='E'&&!pList.includes(parseInt(product_no)));
+            const pList = (coupon.available_product_list || []).map(String);
+            const pNoStr = String(product_no);
+            const ok = coupon.available_product==='U' || (coupon.available_product==='I'&&pList.includes(pNoStr)) || (coupon.available_product==='E'&&!pList.includes(pNoStr));
             if(!ok) return;
             const orig = parseFloat(p.price);
             const pct = parseFloat(coupon.benefit_percentage||0);
@@ -866,7 +985,14 @@ async function forceRefreshAllTokens() {
 
 // ===== Start =====
 initDb().then(async () => {
-  await forceRefreshAllTokens();
-  cron.schedule('*/30 * * * *', runTokenRefreshScheduler);
+  // ⚠️ 로컬 테스트 가드: 운영 DB에 붙는 로컬 인스턴스가 다른 몰들의 토큰을
+  // 동시 갱신하여 라이브 토큰을 깨뜨리지 않도록, .env 에 DISABLE_TOKEN_CRON=1 을
+  // 주면 전체 토큰 갱신/크론을 비활성화한다. (운영에는 이 플래그가 없으므로 기존과 동일하게 동작)
+  if (process.env.DISABLE_TOKEN_CRON === '1') {
+    console.log('⏸️ DISABLE_TOKEN_CRON=1 → 전체 토큰 갱신/크론 비활성화 (로컬 테스트 모드)');
+  } else {
+    await forceRefreshAllTokens();
+    cron.schedule('*/30 * * * *', runTokenRefreshScheduler);
+  }
   app.listen(PORT, () => console.log(`Server on ${PORT}`));
 }).catch(e => { console.error(e); process.exit(1); });
