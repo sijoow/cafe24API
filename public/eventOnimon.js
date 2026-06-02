@@ -339,8 +339,10 @@
       if (block.layoutType === 'tabs') {
           const activeColor = block.activeColor || '#1890ff';
           // 탭 영역(블록 전체) 너비: 기본 98% | 꽉 채움 100% — 탭바·상품 그리드가 이 폭을 함께 채움
-          const blockWidthPct = block.tabWidthMode === 'full' ? '100%' : '98%';
-          groupWrapper.style.cssText = `width:${blockWidthPct}; margin:0 auto;`;
+          // 기본: 페이지 최대 너비(이미지 등 다른 콘텐츠와 동일 정렬) | 꽉 채움: 전체 화면 너비(풀블리드)
+          groupWrapper.style.cssText = block.tabWidthMode === 'full'
+            ? 'width:100%; max-width:100%; margin:0 auto;'
+            : `width:100%; max-width:${pageMaxWidth}px; margin:0 auto;`;
           const tabsContainer = document.createElement('div');
           tabsContainer.className = `tabs_${pageId}`;
           tabsContainer.style.maxWidth = '100%';
