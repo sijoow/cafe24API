@@ -16,9 +16,9 @@
     const API_BASE = script.dataset.apiBase || '';
     const pageId = script.dataset.pageId;
     const mallId = script.dataset.mallId;
-    const couponNos = script.dataset.couponNos || '';
-    const couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
-    const couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
+    let couponNos = script.dataset.couponNos || '';
+    let couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
+    let couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
     // 이벤트 전체 페이지 최대 너비 (미설정 시 800px)
     const pageMaxWidth = parseInt(script.dataset.pageMaxWidth, 10) || 800;
   
@@ -580,7 +580,7 @@
       Array.from(ul.children).forEach(li => li.classList.add('splide__slide'));
       const track = document.createElement('div'); track.className = 'splide__track';
       const rootEl = document.createElement('div'); rootEl.className = 'splide';
-      rootEl.style.cssText = `${widthCss} font-family:'Noto Sans KR', sans-serif;`;
+      rootEl.style.cssText = `${widthCss} font-family:inherit;`;
       ul.parentNode.insertBefore(rootEl, ul);
       track.appendChild(ul);
       rootEl.appendChild(track);
@@ -627,7 +627,7 @@
         let widthCss;
         if (widthMode === 'fill' || widthMode === 'full') widthCss = 'width:100%; max-width:100%; margin:24px 0;';
         else widthCss = `max-width:${pageMaxWidth}px; margin:24px auto;`;
-        if (!rolling) ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; ${widthCss} list-style:none; padding:0; font-family: 'Noto Sans KR', sans-serif;`;
+        if (!rolling) ul.style.cssText = `display:grid; grid-template-columns:repeat(${cols},1fr); gap:16px; ${widthCss} list-style:none; padding:0; font-family:inherit;`;
         
         const titleFontSize = `${18 - cols}px`;
         const originalPriceFontSize = `${16 - cols}px`;
@@ -872,7 +872,16 @@
         const response = await fetch(`${API_BASE}/api/${mallId}/events/${pageId}`);
         if (!response.ok) throw new Error('Event data fetch failed');
         const ev = await response.json();
-        
+
+        // 쿠폰 런타임 병합 — 이벤트에 저장된 couponNos 를 합쳐 임베드 재복사 없이 "저장만으로" 쿠폰 반영
+        try {
+          const evC = Array.isArray(ev.couponNos) ? ev.couponNos.map(c => String(c).trim()).filter(Boolean) : [];
+          const merged = [...new Set([...(couponNos ? couponNos.split(',') : []), ...evC].map(s => String(s).trim()).filter(Boolean))];
+          couponNos = merged.join(',');
+          couponQSStart = couponNos ? `?coupon_no=${couponNos}` : '';
+          couponQSAppend = couponNos ? `&coupon_no=${couponNos}` : '';
+        } catch (e) {}
+
         const root = getRootContainer();
   
         if (ev.content && Array.isArray(ev.content.blocks)) {
