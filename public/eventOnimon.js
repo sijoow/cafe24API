@@ -571,6 +571,18 @@
     }
 
     // 그리드 ul 을 Splide 캐러셀로 변환 + 마운트. 실패 시 네이티브 가로 스크롤로 폴백.
+    // 스와이퍼 버튼 스타일 주입 — 활성 점/화살표 색(activeColor) + 화살표 hover 노출(arrowHover). 인스턴스별 스코프.
+    function applySwiperStyle(rootEl, sw) {
+      const ac = (sw && sw.activeColor) || '#333333';
+      const uid = 'spl' + Math.random().toString(36).slice(2, 8);
+      rootEl.classList.add(uid);
+      let css = `.${uid} .splide__pagination__page.is-active{background:${ac};}.${uid} .splide__arrow{background:${ac};}.${uid} .splide__arrow svg{fill:#fff;}`;
+      if (!sw || sw.arrowHover !== false) {
+        css += `.${uid} .splide__arrow{opacity:0;transition:opacity .25s;}.${uid}:hover .splide__arrow{opacity:1;}`;
+      }
+      const el = document.createElement('style'); el.textContent = css; document.head.appendChild(el);
+    }
+
     function mountRolling(ul, rolling, cols, widthCss) {
       if (ul.parentNode && ul.parentNode.className === 'splide__track') return; // 중복 방지
       const pvNum = Math.max(1, Number(rolling.perView) || cols || 2);
@@ -584,6 +596,7 @@
       ul.parentNode.insertBefore(rootEl, ul);
       track.appendChild(ul);
       rootEl.appendChild(track);
+      applySwiperStyle(rootEl, rolling);
       const opts = {
         gap: '16px',
         type: rolling.loop ? 'loop' : 'slide',
@@ -791,6 +804,7 @@
       rootEl.innerHTML = `<div class="splide__track"><ul class="splide__list">${slides}</ul></div>`;
       wrap.appendChild(rootEl);
       root.appendChild(wrap);
+      applySwiperStyle(rootEl, sw);
       const perPage = Math.max(1, Number(sw.perView) || 1);
       const frac = Math.abs(perPage - Math.round(perPage)) > 0.01;
       const opts = {
